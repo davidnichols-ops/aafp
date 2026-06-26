@@ -1,47 +1,266 @@
-//! Length-prefixed framing for QUIC streams.
+//! AAFP v1 Frame Format (RFC-0002 §3-4)
 //!
-//! Wire format: `[4 bytes: length (u32 BE)] [length bytes: payload]`
-//! Payload is CBOR-encoded application data.
+//! Wire format:
+//! ```text
+//! [24-byte header][extensions][payload]
+//! ```
+//!
+//! Header layout (all big-endian):
+//! - Version:      1 byte  (AAFP protocol version, 1 for v1)
+//! - FrameType:    1 byte  (frame type, see §4)
+//! - Flags:        1 byte  (frame-specific flags)
+//! - Reserved:     1 byte  (MUST be 0, MUST be ignored by receivers)
+//! - Stream ID:    8 bytes (stream this frame belongs to)
+//! - Payload Len:  8 bytes (length of payload section)
+//! - Extension Len:8 bytes (length of extension section)
 
 use bytes::{Buf, BufMut, BytesMut};
 use std::io;
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
 
+/// AAFP protocol version 1.
+pub const AAFP_VERSION: u8 = 1;
+
+/// Maximum payload size: 1 MiB (RFC-0002 §3.4).
+pub const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;
+
+/// Frame header size: 28 bytes.
+///
+/// Per RFC-0002 §3.1 field table:
+///   Version(1) + FrameType(1) + Flags(1) + Reserved(1) +
+///   StreamID(8) + PayloadLen(8) + ExtensionLen(8) = 28 bytes.
+///
+/// NOTE: The RFC prose says "24-byte header" but the field table
+/// specifies 64-bit Stream ID, Payload Length, and Extension Length,
+/// which sums to 28. The field sizes are normative; this is an RFC
+/// text inconsistency to be addressed in a future amendment.
+pub const FRAME_HEADER_SIZE: usize = 28;
+
+/// Frame types (RFC-0002 §4).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[repr(u8)]
+pub enum FrameType {
+    Data = 0x01,
+    Handshake = 0x02,
+    RpcRequest = 0x03,
+    RpcResponse = 0x04,
+    Close = 0x05,
+    Error = 0x06,
+    Ping = 0x07,
+    Pong = 0x08,
+}
+
+impl FrameType {
+    /// Convert from raw u8. Returns None for unknown types.
+    pub fn from_u8(val: u8) -> Option<Self> {
+        match val {
+            0x01 => Some(Self::Data),
+            0x02 => Some(Self::Handshake),
+            0x03 => Some(Self::RpcRequest),
+            0x04 => Some(Self::RpcResponse),
+            0x05 => Some(Self::Close),
+            0x06 => Some(Self::Error),
+            0x07 => Some(Self::Ping),
+            0x08 => Some(Self::Pong),
+            _ => None,
+        }
+    }
+
+    /// Returns true if this is a known frame type.
+    pub fn is_known(self) -> bool {
+        matches!(
+            self,
+            Self::Data
+                | Self::Handshake
+                | Self::RpcRequest
+                | Self::RpcResponse
+                | Self::Close
+                | Self::Error
+                | Self::Ping
+                | Self::Pong
+        )
+    }
+}
+
+/// DATA frame flags (RFC-0002 §4.1).
+pub mod flags {
+    pub const MORE: u8 = 0x01;
+    pub const COMPRESSED: u8 = 0x02;
+    /// Critical bit for unknown frame types (RFC-0006 §4.2).
+    pub const CRITICAL: u8 = 0x80;
+}
+
+/// AAFP frame: header + extensions + payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Frame {
+    pub frame_type: FrameType,
+    pub flags: u8,
+    pub stream_id: u64,
+    pub extensions: Vec<u8>,
+    pub payload: Vec<u8>,
+}
+
+impl Frame {
+    /// Create a new DATA frame.
+    pub fn data(stream_id: u64, payload: Vec<u8>) -> Self {
+        Self {
+            frame_type: FrameType::Data,
+            flags: 0,
+            stream_id,
+            extensions: Vec::new(),
+            payload,
+        }
+    }
+
+    /// Create a new HANDSHAKE frame (always on stream 0).
+    pub fn handshake(payload: Vec<u8>) -> Self {
+        Self {
+            frame_type: FrameType::Handshake,
+            flags: 0,
+            stream_id: 0,
+            extensions: Vec::new(),
+            payload,
+        }
+    }
+
+    /// Create a PING frame.
+    pub fn ping(stream_id: u64) -> Self {
+        Self {
+            frame_type: FrameType::Ping,
+            flags: 0,
+            stream_id,
+            extensions: Vec::new(),
+            payload: Vec::new(),
+        }
+    }
+
+    /// Create a PONG frame (same stream as PING).
+    pub fn pong(stream_id: u64) -> Self {
+        Self {
+            frame_type: FrameType::Pong,
+            flags: 0,
+            stream_id,
+            extensions: Vec::new(),
+            payload: Vec::new(),
+        }
+    }
+
+    /// Set the MORE flag (for DATA frame fragmentation).
+    pub fn with_more(mut self) -> Self {
+        self.flags |= flags::MORE;
+        self
+    }
+
+    /// Check if the MORE flag is set.
+    pub fn has_more(&self) -> bool {
+        self.flags & flags::MORE != 0
+    }
+
+    /// Total wire size of this frame (header + extensions + payload).
+    pub fn wire_size(&self) -> usize {
+        FRAME_HEADER_SIZE + self.extensions.len() + self.payload.len()
+    }
+}
+
+/// Errors that can occur during frame encoding/decoding.
 #[derive(Debug, Error)]
 pub enum FrameError {
-    #[error("frame too large: {0} bytes (max {1})")]
-    TooLarge(usize, usize),
-    #[error("incomplete frame")]
-    Incomplete,
+    #[error("frame too large: payload {0} bytes (max {1})")]
+    PayloadTooLarge(usize, usize),
+    #[error("incomplete frame: need {needed} bytes, have {have}")]
+    Incomplete { needed: usize, have: usize },
+    #[error("invalid frame type: 0x{0:02x}")]
+    UnknownFrameType(u8),
+    #[error("invalid version: {0} (expected {1})")]
+    InvalidVersion(u8, u8),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 }
 
-/// Maximum frame size (1 MiB).
-pub const MAX_FRAME_SIZE: usize = 1024 * 1024;
+/// Encode a frame to bytes (RFC-0002 §3.1 wire format).
+pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, FrameError> {
+    if frame.payload.len() > MAX_PAYLOAD_SIZE {
+        return Err(FrameError::PayloadTooLarge(
+            frame.payload.len(),
+            MAX_PAYLOAD_SIZE,
+        ));
+    }
 
-/// A frame containing arbitrary payload bytes.
-#[derive(Clone, Debug)]
-pub struct Frame {
-    pub payload: Vec<u8>,
+    let ext_len = frame.extensions.len() as u64;
+    let payload_len = frame.payload.len() as u64;
+
+    let mut buf = Vec::with_capacity(FRAME_HEADER_SIZE + frame.extensions.len() + frame.payload.len());
+
+    // Header (24 bytes, big-endian)
+    buf.push(AAFP_VERSION);
+    buf.push(frame.frame_type as u8);
+    buf.push(frame.flags);
+    buf.push(0u8); // Reserved
+    buf.extend_from_slice(&frame.stream_id.to_be_bytes());
+    buf.extend_from_slice(&payload_len.to_be_bytes());
+    buf.extend_from_slice(&ext_len.to_be_bytes());
+
+    // Body: extensions first, then payload (RFC-0002 §3.2)
+    buf.extend_from_slice(&frame.extensions);
+    buf.extend_from_slice(&frame.payload);
+
+    Ok(buf)
 }
 
-/// Length-prefixed frame codec for tokio_util.
+/// Decode a frame from bytes. Returns (frame, bytes_consumed).
+pub fn decode_frame(data: &[u8]) -> Result<(Frame, usize), FrameError> {
+    if data.len() < FRAME_HEADER_SIZE {
+        return Err(FrameError::Incomplete {
+            needed: FRAME_HEADER_SIZE,
+            have: data.len(),
+        });
+    }
+
+    let version = data[0];
+    let frame_type_raw = data[1];
+    let flags = data[2];
+    // data[3] is reserved, ignored per RFC-0002 §3.1
+    let stream_id = u64::from_be_bytes(data[4..12].try_into().unwrap());
+    let payload_len = u64::from_be_bytes(data[12..20].try_into().unwrap()) as usize;
+    let ext_len = u64::from_be_bytes(data[20..28].try_into().unwrap()) as usize;
+    // Header is 28 bytes: 4 (V/T/F/R) + 8 (StreamID) + 8 (PayloadLen) + 8 (ExtLen)
+
+    if version != AAFP_VERSION {
+        return Err(FrameError::InvalidVersion(version, AAFP_VERSION));
+    }
+
+    if payload_len > MAX_PAYLOAD_SIZE {
+        return Err(FrameError::PayloadTooLarge(payload_len, MAX_PAYLOAD_SIZE));
+    }
+
+    let total_body = ext_len + payload_len;
+    if data.len() < FRAME_HEADER_SIZE + total_body {
+        return Err(FrameError::Incomplete {
+            needed: FRAME_HEADER_SIZE + total_body,
+            have: data.len(),
+        });
+    }
+
+    let frame_type = FrameType::from_u8(frame_type_raw).ok_or(FrameError::UnknownFrameType(frame_type_raw))?;
+
+    let extensions = data[FRAME_HEADER_SIZE..FRAME_HEADER_SIZE + ext_len].to_vec();
+    let payload = data[FRAME_HEADER_SIZE + ext_len..FRAME_HEADER_SIZE + ext_len + payload_len].to_vec();
+
+    let frame = Frame {
+        frame_type,
+        flags,
+        stream_id,
+        extensions,
+        payload,
+    };
+
+    Ok((frame, FRAME_HEADER_SIZE + total_body))
+}
+
+/// Tokio codec for AAFP frames over QUIC streams.
 pub struct FrameCodec {
-    max_size: usize,
-}
-
-impl FrameCodec {
-    pub fn new() -> Self {
-        Self {
-            max_size: MAX_FRAME_SIZE,
-        }
-    }
-
-    pub fn with_max_size(max_size: usize) -> Self {
-        Self { max_size }
-    }
+    max_payload: usize,
 }
 
 impl Default for FrameCodec {
@@ -50,31 +269,47 @@ impl Default for FrameCodec {
     }
 }
 
+impl FrameCodec {
+    pub fn new() -> Self {
+        Self {
+            max_payload: MAX_PAYLOAD_SIZE,
+        }
+    }
+
+    pub fn with_max_payload(max: usize) -> Self {
+        Self { max_payload: max }
+    }
+}
+
 impl Decoder for FrameCodec {
     type Item = Frame;
     type Error = FrameError;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Frame>, FrameError> {
-        if buf.len() < 4 {
+        if buf.len() < FRAME_HEADER_SIZE {
             return Ok(None);
         }
 
-        let mut len_bytes = [0u8; 4];
-        len_bytes.copy_from_slice(&buf[..4]);
-        let len = u32::from_be_bytes(len_bytes) as usize;
+        // Peek at header to determine total frame size
+        // Header layout: [0:4] V/T/F/R, [4:12] StreamID, [12:20] PayloadLen, [20:28] ExtLen
+        let payload_len =
+            u64::from_be_bytes(buf[12..20].try_into().unwrap()) as usize;
+        let ext_len =
+            u64::from_be_bytes(buf[20..28].try_into().unwrap()) as usize;
 
-        if len > self.max_size {
-            return Err(FrameError::TooLarge(len, self.max_size));
+        if payload_len > self.max_payload {
+            return Err(FrameError::PayloadTooLarge(payload_len, self.max_payload));
         }
 
-        if buf.len() < 4 + len {
-            buf.reserve(4 + len - buf.len());
+        let total = FRAME_HEADER_SIZE + ext_len + payload_len;
+        if buf.len() < total {
+            buf.reserve(total - buf.len());
             return Ok(None);
         }
 
-        buf.advance(4);
-        let payload = buf.split_to(len).to_vec();
-        Ok(Some(Frame { payload }))
+        let data = buf.split_to(total);
+        let (frame, _) = decode_frame(&data)?;
+        Ok(Some(frame))
     }
 }
 
@@ -82,91 +317,216 @@ impl Encoder<Frame> for FrameCodec {
     type Error = FrameError;
 
     fn encode(&mut self, frame: Frame, buf: &mut BytesMut) -> Result<(), FrameError> {
-        if frame.payload.len() > self.max_size {
-            return Err(FrameError::TooLarge(frame.payload.len(), self.max_size));
+        if frame.payload.len() > self.max_payload {
+            return Err(FrameError::PayloadTooLarge(
+                frame.payload.len(),
+                self.max_payload,
+            ));
         }
-        buf.put_u32(frame.payload.len() as u32);
+
+        let ext_len = frame.extensions.len() as u64;
+        let payload_len = frame.payload.len() as u64;
+
+        buf.reserve(FRAME_HEADER_SIZE + frame.extensions.len() + frame.payload.len());
+
+        // Header
+        buf.put_u8(AAFP_VERSION);
+        buf.put_u8(frame.frame_type as u8);
+        buf.put_u8(frame.flags);
+        buf.put_u8(0); // Reserved
+        buf.put_u64(frame.stream_id);
+        buf.put_u64(payload_len);
+        buf.put_u64(ext_len);
+
+        // Body: extensions then payload
+        buf.put_slice(&frame.extensions);
         buf.put_slice(&frame.payload);
+
         Ok(())
     }
-}
-
-/// Serialize a frame to bytes (length prefix + payload).
-pub fn serialize_frame(payload: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + payload.len());
-    out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-    out.extend_from_slice(payload);
-    out
-}
-
-/// Deserialize a frame from bytes. Returns (payload, remaining_bytes).
-pub fn deserialize_frame(data: &[u8]) -> Result<(&[u8], &[u8]), FrameError> {
-    if data.len() < 4 {
-        return Err(FrameError::Incomplete);
-    }
-    let mut len_bytes = [0u8; 4];
-    len_bytes.copy_from_slice(&data[..4]);
-    let len = u32::from_be_bytes(len_bytes) as usize;
-
-    if data.len() < 4 + len {
-        return Err(FrameError::Incomplete);
-    }
-
-    Ok((&data[4..4 + len], &data[4 + len..]))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_util::codec::{Decoder, Encoder};
 
     #[test]
-    fn serialize_deserialize() {
-        let payload = b"hello world";
-        let frame = serialize_frame(payload);
-        assert_eq!(frame.len(), 4 + 11);
-        let (decoded, remaining) = deserialize_frame(&frame).unwrap();
-        assert_eq!(decoded, payload);
-        assert!(remaining.is_empty());
+    fn test_frame_type_roundtrip() {
+        for ft in [
+            FrameType::Data,
+            FrameType::Handshake,
+            FrameType::RpcRequest,
+            FrameType::RpcResponse,
+            FrameType::Close,
+            FrameType::Error,
+            FrameType::Ping,
+            FrameType::Pong,
+        ] {
+            let raw = ft as u8;
+            assert_eq!(FrameType::from_u8(raw), Some(ft));
+        }
+        assert_eq!(FrameType::from_u8(0x00), None);
+        assert_eq!(FrameType::from_u8(0xFF), None);
     }
 
     #[test]
-    fn multiple_frames() {
-        let mut data = Vec::new();
-        data.extend(serialize_frame(b"first"));
-        data.extend(serialize_frame(b"second"));
-        let (p1, rest) = deserialize_frame(&data).unwrap();
-        assert_eq!(p1, b"first");
-        let (p2, rest2) = deserialize_frame(rest).unwrap();
-        assert_eq!(p2, b"second");
-        assert!(rest2.is_empty());
+    fn test_encode_decode_data_frame() {
+        let frame = Frame::data(4, b"hello world".to_vec());
+        let encoded = encode_frame(&frame).unwrap();
+        assert_eq!(encoded.len(), FRAME_HEADER_SIZE + 11);
+
+        let (decoded, consumed) = decode_frame(&encoded).unwrap();
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(decoded.frame_type, FrameType::Data);
+        assert_eq!(decoded.stream_id, 4);
+        assert_eq!(decoded.payload, b"hello world");
+        assert_eq!(decoded.flags, 0);
+        assert!(decoded.extensions.is_empty());
     }
 
     #[test]
-    fn incomplete_frame() {
-        let data = [0u8; 2];
-        assert!(deserialize_frame(&data).is_err());
+    fn test_encode_decode_handshake_frame() {
+        let payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let frame = Frame::handshake(payload.clone());
+        let encoded = encode_frame(&frame).unwrap();
+
+        let (decoded, _) = decode_frame(&encoded).unwrap();
+        assert_eq!(decoded.frame_type, FrameType::Handshake);
+        assert_eq!(decoded.stream_id, 0); // Handshake always on stream 0
+        assert_eq!(decoded.payload, payload);
     }
 
     #[test]
-    fn codec_roundtrip() {
+    fn test_frame_with_extensions() {
+        let mut frame = Frame::data(4, b"payload".to_vec());
+        frame.extensions = vec![0x00, 0x01, 0x02, 0x03];
+        let encoded = encode_frame(&frame).unwrap();
+
+        let (decoded, _) = decode_frame(&encoded).unwrap();
+        assert_eq!(decoded.extensions, vec![0x00, 0x01, 0x02, 0x03]);
+        assert_eq!(decoded.payload, b"payload");
+    }
+
+    #[test]
+    fn test_more_flag() {
+        let frame = Frame::data(4, b"fragment".to_vec()).with_more();
+        assert!(frame.has_more());
+
+        let encoded = encode_frame(&frame).unwrap();
+        let (decoded, _) = decode_frame(&encoded).unwrap();
+        assert!(decoded.has_more());
+    }
+
+    #[test]
+    fn test_ping_pong() {
+        let ping = Frame::ping(0);
+        let encoded = encode_frame(&ping).unwrap();
+        let (decoded, _) = decode_frame(&encoded).unwrap();
+        assert_eq!(decoded.frame_type, FrameType::Ping);
+        assert!(decoded.payload.is_empty());
+
+        let pong = Frame::pong(0);
+        let encoded = encode_frame(&pong).unwrap();
+        let (decoded, _) = decode_frame(&encoded).unwrap();
+        assert_eq!(decoded.frame_type, FrameType::Pong);
+    }
+
+    #[test]
+    fn test_payload_too_large() {
+        let huge = vec![0u8; MAX_PAYLOAD_SIZE + 1];
+        let frame = Frame::data(4, huge);
+        assert!(matches!(
+            encode_frame(&frame),
+            Err(FrameError::PayloadTooLarge(_, _))
+        ));
+    }
+
+    #[test]
+    fn test_incomplete_frame() {
+        let data = [0u8; 10];
+        assert!(matches!(
+            decode_frame(&data),
+            Err(FrameError::Incomplete { .. })
+        ));
+    }
+
+    #[test]
+    fn test_invalid_version() {
+        let frame = Frame::data(4, b"test".to_vec());
+        let mut encoded = encode_frame(&frame).unwrap();
+        encoded[0] = 99; // Wrong version
+        assert!(matches!(
+            decode_frame(&encoded),
+            Err(FrameError::InvalidVersion(99, 1))
+        ));
+    }
+
+    #[test]
+    fn test_unknown_frame_type() {
+        let mut encoded = encode_frame(&Frame::data(4, b"test".to_vec())).unwrap();
+        encoded[1] = 0xFF; // Unknown frame type
+        assert!(matches!(
+            decode_frame(&encoded),
+            Err(FrameError::UnknownFrameType(0xFF))
+        ));
+    }
+
+    #[test]
+    fn test_multiple_frames_in_buffer() {
+        let f1 = Frame::data(4, b"first".to_vec());
+        let f2 = Frame::data(5, b"second".to_vec());
+        let mut buf = encode_frame(&f1).unwrap();
+        buf.extend(encode_frame(&f2).unwrap());
+
+        let (decoded1, consumed1) = decode_frame(&buf).unwrap();
+        assert_eq!(decoded1.payload, b"first");
+
+        let (decoded2, _) = decode_frame(&buf[consumed1..]).unwrap();
+        assert_eq!(decoded2.payload, b"second");
+    }
+
+    #[test]
+    fn test_codec_roundtrip() {
         let mut codec = FrameCodec::new();
-        let frame = Frame {
-            payload: b"test payload".to_vec(),
-        };
+        let frame = Frame::data(4, b"test payload".to_vec());
         let mut buf = BytesMut::new();
         codec.encode(frame.clone(), &mut buf).unwrap();
         let decoded = codec.decode(&mut buf).unwrap().unwrap();
-        assert_eq!(decoded.payload, frame.payload);
+        assert_eq!(decoded, frame);
     }
 
     #[test]
-    fn too_large() {
-        let mut codec = FrameCodec::with_max_size(10);
-        let frame = Frame {
-            payload: vec![0u8; 100],
-        };
+    fn test_codec_partial_frame() {
+        let mut codec = FrameCodec::new();
+        let frame = Frame::data(4, b"test".to_vec());
         let mut buf = BytesMut::new();
-        assert!(codec.encode(frame, &mut buf).is_err());
+        codec.encode(frame, &mut buf).unwrap();
+
+        // Only provide first 10 bytes
+        let mut partial = buf.split_to(10);
+        assert!(codec.decode(&mut partial).unwrap().is_none());
+
+        // Provide the rest
+        let mut rest = partial;
+        rest.extend_from_slice(&buf);
+        let decoded = codec.decode(&mut rest).unwrap().unwrap();
+        assert_eq!(decoded.payload, b"test");
+    }
+
+    #[test]
+    fn test_header_is_28_bytes() {
+        let frame = Frame::data(4, b"".to_vec());
+        let encoded = encode_frame(&frame).unwrap();
+        assert_eq!(encoded.len(), FRAME_HEADER_SIZE); // No payload, no extensions
+    }
+
+    #[test]
+    fn test_reserved_field_ignored() {
+        let frame = Frame::data(4, b"test".to_vec());
+        let mut encoded = encode_frame(&frame).unwrap();
+        encoded[3] = 0xFF; // Set reserved field to non-zero
+        // Should still decode successfully (reserved is ignored)
+        let (decoded, _) = decode_frame(&encoded).unwrap();
+        assert_eq!(decoded.payload, b"test");
     }
 }

@@ -11,6 +11,6 @@ pub mod swarm;
 pub mod transport;
 
 pub use connection::{ConnectionHandler, FromBehaviour, ToBehaviour};
-pub use error::Error;
+pub use error::{codes, Error, ErrorCategory, ProtocolError, is_always_fatal};
 pub use swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 pub use transport::{Connection, Multiaddr, Stream, Transport, TransportEvent};

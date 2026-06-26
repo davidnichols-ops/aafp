@@ -15,6 +15,7 @@
 pub mod aead;
 pub mod dsa;
 pub mod handshake;
+pub mod handshake_v1;
 pub mod kdf;
 pub mod kem;
 pub mod traits;
@@ -28,6 +29,12 @@ pub use handshake::{
     ClientHello, ClientState, HandshakeResult, PqHandshake, ServerHello, ServerState,
     deserialize_client_hello, deserialize_server_hello, serialize_client_hello,
     serialize_server_hello,
+};
+pub use handshake_v1::{
+    derive_session_id, generate_nonce, compute_receiver_mac, verify_receiver_mac,
+    ClientFinished, ClientHello as ClientHelloV1, HandshakeError, ServerHello as ServerHelloV1,
+    TranscriptHash, DOMAIN_SEPARATOR, KEY_ALG_ML_DSA_65, NONCE_SIZE, PROTOCOL_VERSION,
+    SESSION_ID_SIZE, TLS_EXPORTER_LABEL,
 };
 pub use kdf::{derive_key, hkdf_sha256};
 pub use kem::{HybridKem, X25519Kem};
