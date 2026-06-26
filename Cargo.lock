@@ -98,6 +98,7 @@ dependencies = [
 name = "aafp-identity"
 version = "0.1.0"
 dependencies = [
+ "aafp-cbor",
  "aafp-crypto",
  "ciborium",
  "criterion",

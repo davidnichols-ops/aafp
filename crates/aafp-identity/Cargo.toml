@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aafp-cbor = { workspace = true }
 aafp-crypto = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }
