@@ -1,0 +1,24 @@
+[package]
+name = "aafp-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aafp"
+path = "src/main.rs"
+
+[dependencies]
+aafp-sdk = { workspace = true }
+aafp-identity = { workspace = true }
+aafp-crypto = { workspace = true }
+aafp-transport-quic = { workspace = true }
+aafp-messaging = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = "0.3"
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

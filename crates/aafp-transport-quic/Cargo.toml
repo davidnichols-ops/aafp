@@ -1,0 +1,22 @@
+[package]
+name = "aafp-transport-quic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aafp-core = { workspace = true }
+aafp-crypto = { workspace = true }
+aafp-identity = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }
+aws-lc-rs = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+rcgen = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
