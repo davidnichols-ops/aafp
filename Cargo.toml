@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/aafp-cbor",
     "crates/aafp-crypto",
     "crates/aafp-identity",
     "crates/aafp-core",
@@ -22,6 +23,7 @@ repository = "https://github.com/aafp/aafp"
 
 [workspace.dependencies]
 # Internal crates
+aafp-cbor = { path = "crates/aafp-cbor" }
 aafp-crypto = { path = "crates/aafp-crypto" }
 aafp-identity = { path = "crates/aafp-identity" }
 aafp-core = { path = "crates/aafp-core" }
@@ -42,6 +44,7 @@ ciborium = "0.2"
 blake3 = "1"
 sha2 = "0.10"
 hkdf = "0.12"
+hmac = "0.12"
 chacha20poly1305 = "0.10"
 aes-gcm = "0.10"
 clap = { version = "4", features = ["derive"] }
