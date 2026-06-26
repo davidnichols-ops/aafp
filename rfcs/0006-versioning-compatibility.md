@@ -1,12 +1,14 @@
 # RFC-0006: AAFP Versioning & Compatibility
 
 ```
-Status:         Draft
+Status:         Draft (Revision 2)
 Number:         0006
 Title:          Protocol Versioning, Extension Registry, and
                 Compatibility Rules
 Author:         AAFP Project
 Created:        2025-06-25
+Revised:        2025-06-25 (Revision 2: amendments C3, C6, H8,
+                conformance checklist update)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -310,7 +312,7 @@ An implementation conforms to AAFP version 1 if it:
 2. Negotiates ALPN `aafp/1` during TLS handshake.
 3. Offers `X25519MLKEM768` for TLS key exchange.
 4. Uses the frame format specified in RFC-0002 Section 3.
-5. Derives AgentId as `SHA-256(ML-DSA-65 public key)`.
+5. Derives AgentId as `SHA-256(public_key)` (fixed SHA-256 for v1).
 6. Serializes AgentRecord as CBOR per RFC-0003 Section 3.
 7. Uses CapabilityDescriptor per RFC-0003 Section 4.
 8. Handles unknown fields per Section 6 of this RFC.
@@ -318,6 +320,21 @@ An implementation conforms to AAFP version 1 if it:
 10. Supports all frame types in Section 4.1 of this RFC.
 11. Supports the PING/PONG keepalive mechanism.
 12. Supports the CLOSE frame for connection termination.
+13. Computes the TLS channel binding value and includes it in the
+    handshake transcript hash (per RFC-0002 Section 5.6).
+14. Uses domain separators in all signature computations (per
+    RFC-0003 Section 3.5).
+15. Includes the `key_algorithm` field in ClientHello, ServerHello,
+    and AgentRecord (per RFC-0003 Section 2.3). MUST support
+    ML-DSA-65 (algorithm 1).
+16. Includes the `expires_at` field in ClientHello and ServerHello
+    (per RFC-0002 Sections 5.3, 5.4).
+17. Uses integer keys for all CBOR structures (per RFC-0002 Section
+    8.4).
+18. Computes the Session ID using the normative HKDF derivation
+    (per RFC-0002 Section 5.7).
+19. Uses the handshake extension negotiation protocol (per
+    RFC-0002 Section 6.4).
 
 ### 8.2 Conformance Testing
 
@@ -367,6 +384,12 @@ This RFC defines the following registries:
 - **AAFP Extension Types**: 0x0000–0xFFFF (see Section 3)
 - **AAFP Feature Flags**: 0x00–0xFF (see Section 5)
 - **AAFP Error Codes**: 0x0000–0xFFFF (see RFC-0005)
+- **AAFP Key Algorithm Registry**: Values 1–255 (see RFC-0003
+  Section 2.3)
+- **AAFP Domain Separators**: "aafp-v1-handshake", "aafp-v1-record",
+  "aafp-v1-ucan" (see RFC-0003 Section 3.5)
+- **AAFP Handshake Extension Types**: 0x0001–0x3FFF (see RFC-0002
+  Section 6.4)
 
 All registries use the assignment policies specified in this RFC.
 

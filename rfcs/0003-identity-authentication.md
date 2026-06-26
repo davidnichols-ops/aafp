@@ -1,12 +1,14 @@
 # RFC-0003: AAFP Identity & Authentication
 
 ```
-Status:         Draft
+Status:         Draft (Revision 2)
 Number:         0003
 Title:          Agent Identity, AgentRecord, Capability Descriptors,
                 Authorization, and Session Lifecycle
 Author:         AAFP Project
 Created:        2025-06-25
+Revised:        2025-06-25 (Revision 2: amendments H1, H3, H4, H8,
+                H10, H11, C5, plus crypto verification updates)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -28,27 +30,34 @@ document are to be interpreted as described in RFC 2119.
 
 ### 2.1 AgentId
 
-An AgentId is a 32-byte identifier derived from an agent's ML-DSA-65
-public key:
+An AgentId is a 32-byte identifier derived from an agent's public key:
 
 ```
-AgentId = SHA-256(ML-DSA-65 public key)
+AgentId = SHA-256(public_key)
 ```
+
+The hash function (SHA-256) is fixed for v1. Hash function agility
+is an explicit future design consideration (see Section 2.2).
 
 Properties:
 - **Fixed 32 bytes**: Encoded as a CBOR byte string of length 32.
 - **Quantum-safe**: SHA-256 is resistant to Shor's algorithm.
 - **Collision-resistant**: 128-bit collision resistance.
-- **Decoupled from key format**: If ML-DSA-65 is superseded by a
-  future PQ signature scheme, AgentId derivation remains valid as
-  long as the public key is hashable.
+- **Algorithm-independent**: AgentId derivation does not depend on
+  the signature algorithm. The `key_algorithm` field (Section 2.3)
+  identifies the signature algorithm; AgentId is always SHA-256 of
+  the public key regardless of algorithm.
 
 Implementations MUST verify that a received AgentId matches
 `SHA-256(received_public_key)` during the handshake. If the
 verification fails, the implementation MUST reject the handshake
-with error code `2001` (invalid signature/identity).
+with error code `2007` (INVALID_AGENT_ID).
 
-### 2.2 AgentId Encoding
+If the ML-DSA-65 signature verification fails (the signature does
+not validate against the public key), the implementation MUST
+reject the handshake with error code `2001` (INVALID_SIGNATURE).
+
+### 2.2 AgentId Encoding and Hash Agility
 
 AgentIds are encoded as:
 
@@ -58,7 +67,62 @@ AgentIds are encoded as:
   with `0x` (e.g., `0xa1b2c3d4e5f6a7b8`). Used for display only;
   NOT used for lookup or comparison.
 
-### 2.3 ML-DSA-65 Key Pair
+#### Hash Agility (Future Design Consideration)
+
+The hash function used for AgentId derivation (SHA-256) is fixed
+for v1. Hash function agility is an explicit future design
+consideration, NOT solved by the `key_algorithm` field (which
+addresses signature algorithm agility only).
+
+If SHA-256 needs to be replaced in a future version, the following
+approaches may be considered:
+
+1. **Multihash encoding**: Encode the hash function code in the
+   AgentId (e.g., multihash format with 2-byte prefix). This
+   changes AgentId size from 32 to 34 bytes.
+2. **Hash algorithm field**: Add a `hash_algorithm` field to the
+   handshake and AgentRecord (similar to `key_algorithm`). This
+   preserves AgentId size but adds a field.
+3. **New protocol version**: Define a new AgentId derivation for
+   v2, with a migration path from v1.
+
+The `key_algorithm` field (Section 2.3) addresses signature
+algorithm agility but does NOT address hash function agility.
+These are separate concerns:
+- Signature algorithm: which algorithm signs the data (ML-DSA-65,
+  ML-DSA-44, etc.)
+- Hash function: which hash derives the AgentId (SHA-256, SHA-3,
+  BLAKE3, etc.)
+
+For v1, both are fixed (ML-DSA-65 and SHA-256). Future versions
+may introduce agility for either or both.
+
+### 2.3 Key Algorithm Registry
+
+Each agent's public key is associated with a key algorithm that
+identifies the signature scheme. The key algorithm is carried in
+the handshake (ClientHello/ServerHello field 10) and in the
+AgentRecord (field 9).
+
+Key Algorithm Registry:
+
+| Code | Name       | Public Key Size | Signature Size | Reference |
+|------|------------|-----------------|----------------|-----------|
+| 1    | ML-DSA-65  | 1952 bytes      | 3309 bytes     | FIPS 204  |
+| 2    | ML-DSA-44  | 1312 bytes      | 2420 bytes     | FIPS 204  |
+| 3    | ML-DSA-87  | 2592 bytes      | 4627 bytes     | FIPS 204  |
+| 4    | SLH-DSA-128s | 32 bytes      | 7856 bytes     | FIPS 205  |
+| 5–255| Reserved   | —               | —              | —         |
+
+v1 implementations MUST support ML-DSA-65 (algorithm 1).
+Implementations MAY support additional algorithms.
+
+The AgentId derivation is the same for all algorithms:
+`AgentId = SHA-256(public_key)`. This ensures AgentId stability
+across algorithm changes (though a key rotation to a new algorithm
+produces a new AgentId, since the public key changes).
+
+### 2.4 ML-DSA-65 Key Pair
 
 Each agent generates an ML-DSA-65 (FIPS 204) key pair:
 
@@ -70,7 +134,22 @@ The key pair is generated using the ML-DSA-65 key generation algorithm
 as specified in FIPS 204. Implementations MUST use a cryptographically
 secure random number generator for key generation.
 
-### 2.4 Key Rotation
+#### Signing Mode
+
+FIPS 204 specifies ML-DSA with hedged (randomized) signing as the
+default. Implementations SHOULD use hedged signing as specified by
+`ML-DSA.Sign()` with fresh randomness from an approved random bit
+generator. Hedged signing provides side-channel resistance and is
+essential where fault injection or side-channel attacks are a
+concern.
+
+Implementations MAY use deterministic signing (`ML-DSA.Sign()` with
+the randomness input set to 32 zero bytes) for testing and
+debugging. Deterministic signatures are valid and verifiable by all
+implementations regardless of which mode the signer used; a
+verifier cannot tell them apart.
+
+### 2.5 Key Rotation
 
 Agents MAY rotate their ML-DSA-65 key pair. Rotation produces a new
 AgentId. The old AgentId and new AgentId have no cryptographic
@@ -80,6 +159,37 @@ published to a directory service).
 
 Key rotation is out of scope for AAFP v1. The protocol does not
 provide an in-band key rotation mechanism.
+
+### 2.6 AgentId Fingerprint
+
+For out-of-band identity verification, implementations SHOULD
+display AgentIds in a human-readable fingerprint format:
+
+```
+AAFP-<base32(first_16_bytes_of_AgentId)>-<CRC32>
+```
+
+Where:
+- `base32` is RFC 4648 base32 encoding (no padding, uppercase)
+- `first_16_bytes_of_AgentId` is the first 16 bytes of the 32-byte
+  AgentId
+- `CRC32` is a 4-character hex CRC-32 checksum of the first 16
+  bytes, for typo detection
+
+Example:
+```
+AgentId = 0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
+Fingerprint = AAFP-A7B8C9D0E1F2A3B4C5D6E7F8A9B0C1D2-3E7F8A9B
+```
+
+The fingerprint is for human verification only (e.g., comparing
+displayed fingerprints between agents). It is NOT used for
+protocol-level lookup or comparison. The full 32-byte AgentId is
+used for all protocol operations.
+
+Implementations SHOULD display the fingerprint when a new agent
+connection is established and provide an API for applications to
+retrieve and compare fingerprints.
 
 ## 3. AgentRecord
 
@@ -96,12 +206,15 @@ discovery system (see RFC-0004).
 AgentRecord = {
     1: tstr,          // "record_type": "aafp-record-v1"
     2: bstr,          // "agent_id": 32-byte AgentId
-    3: bstr,          // "public_key": ML-DSA-65 public key (1952 bytes)
+    3: bstr,          // "public_key": public key (size depends on
+                      //   key_algorithm, see field 9)
     4: [ *CapabilityDescriptor ],  // "capabilities"
     5: [ *tstr ],     // "endpoints": multiaddrs
     6: uint,          // "created_at": Unix timestamp (seconds)
     7: uint,          // "expires_at": Unix timestamp (seconds)
     8: bstr,          // "signature": ML-DSA-65 signature
+    9: uint,          // "key_algorithm": Signature algorithm
+                      //   (see Section 2.3). 1 = ML-DSA-65.
 }
 ```
 
@@ -114,40 +227,86 @@ The field key mapping is normative.
 |-----|------|------|----------|-------------|
 | 1 | record_type | tstr | Yes | MUST be `"aafp-record-v1"`. |
 | 2 | agent_id | bstr(32) | Yes | SHA-256 of public_key. |
-| 3 | public_key | bstr(1952) | Yes | ML-DSA-65 public key. |
+| 3 | public_key | bstr | Yes | Public key. Size depends on key_algorithm (field 9). For ML-DSA-65: 1952 bytes. |
 | 4 | capabilities | array | Yes | CapabilityDescriptor array. May be empty. |
 | 5 | endpoints | array | Yes | Multiaddr strings. May be empty. |
 | 6 | created_at | uint | Yes | Unix timestamp when record was created. |
 | 7 | expires_at | uint | Yes | Unix timestamp when record expires. |
-| 8 | signature | bstr(3309) | Yes | ML-DSA-65 signature over the canonical CBOR encoding of fields 1–7. |
+| 8 | signature | bstr | Yes | ML-DSA-65 signature over the canonical CBOR encoding of fields 1–7 and 9 (excluding field 8). Size depends on key_algorithm. For ML-DSA-65: 3309 bytes. |
+| 9 | key_algorithm | uint | Yes | Signature algorithm (see Section 2.3). Included in signature to prevent algorithm substitution attacks. |
 
 ### 3.4 Signature Computation
 
 The signature is computed as follows:
 
-1. Construct a CBOR map containing fields 1 through 7 (excluding
-   field 8, the signature).
+1. Construct a CBOR map containing fields 1 through 7 and field 9
+   (excluding field 8, the signature). The key_algorithm field (9)
+   IS included in the signature to prevent algorithm substitution
+   attacks.
 2. Encode the map using canonical CBOR (see RFC-0002 Section 8).
-3. Sign the resulting byte sequence using ML-DSA-65 with the agent's
-   secret key.
-4. Place the signature in field 8.
+3. Compute the signature input with domain separation:
+   ```
+   sig_input = "aafp-v1-record" || canonical_CBOR_bytes
+   ```
+4. Sign the signature input using ML-DSA-65 with the agent's
+   secret key:
+   ```
+   signature = ML-DSA-65.Sign(secret_key, sig_input)
+   ```
+5. Place the signature in field 8.
 
-### 3.5 Verification
+The `"aafp-v1-record"` prefix is a domain separator that prevents
+this signature from being valid in any other context (see
+Section 3.5).
+
+### 3.5 Domain Separation
+
+All AAFP signatures are prefixed with a domain separator string to
+prevent cross-protocol signature reuse. The domain separator is
+prepended to the signature input before signing.
+
+Defined domain separators:
+- `"aafp-v1-handshake"`: Handshake signatures (ClientHello,
+  ServerHello, ClientFinished) — see RFC-0002 Section 5.6
+- `"aafp-v1-record"`: AgentRecord signatures (Section 3.4)
+- `"aafp-v1-ucan"`: UCAN token signatures (Section 5.4)
+
+Future signature contexts MUST define new domain separators
+following the pattern `"aafp-v<version>-<context>"`.
+
+The domain separator is a UTF-8 string, NOT length-prefixed. The
+signature input is the raw concatenation of the domain separator
+bytes and the message bytes.
+
+The set of domain separators is prefix-free (no separator is a
+prefix of another), satisfying the IETF CFRG requirement for
+domain separation in signature schemes.
+
+### 3.6 Verification
 
 To verify an AgentRecord:
 
 1. Decode the CBOR map.
-2. Verify that `agent_id == SHA-256(public_key)`. If not, reject.
-3. Extract fields 1–7 and re-encode using canonical CBOR.
-4. Verify the ML-DSA-65 signature in field 8 against the re-encoded
-   bytes using the public key in field 3.
-5. Check that `expires_at > current_time`. If expired, reject.
-6. Check that `record_type == "aafp-record-v1"`. If not, reject.
+2. Verify that `agent_id == SHA-256(public_key)`. If not, reject
+   with error code 2007 (INVALID_AGENT_ID).
+3. Extract fields 1–7 and field 9 (key_algorithm), and re-encode
+   using canonical CBOR.
+4. Compute the signature input:
+   `sig_input = "aafp-v1-record" || canonical_CBOR_bytes`
+5. Verify the ML-DSA-65 signature in field 8 against `sig_input`
+   using the public key in field 3. If verification fails, reject
+   with error code 2001 (INVALID_SIGNATURE).
+6. Check that `expires_at > current_time`. If expired, reject with
+   error code 2002 (IDENTITY_EXPIRED).
+7. Check that `record_type == "aafp-record-v1"`. If not, reject.
+8. Check that `key_algorithm` (field 9) is a supported algorithm
+   (see Section 2.3). If not supported, reject with error code
+   2010 (UNSUPPORTED_ALGORITHM).
 
-### 3.6 Forward Compatibility
+### 3.7 Forward Compatibility
 
 Future versions of AgentRecord MAY add new fields with integer keys
-≥ 9. Implementations MUST ignore unknown fields. Implementations
+≥ 10. Implementations MUST ignore unknown fields. Implementations
 MUST NOT reject a record solely because it contains unknown fields.
 
 Field types for existing keys MUST NOT change between versions.
@@ -295,9 +454,19 @@ UcanToken = {
     3: [ *Capability ],  // "capabilities"
     4: uint,          // "expires_at": Unix timestamp
     5: bstr / null,   // "proof": parent token (for delegation chains)
-    6: bstr,          // "signature": ML-DSA-65 signature
+    6: bstr,          // "signature": ML-DSA-65 signature over
+                      //   "aafp-v1-ucan" || canonical_CBOR(fields 1-5)
 }
 ```
+
+The UCAN token signature (field 6) is computed over:
+```
+sig_input = "aafp-v1-ucan" || canonical_CBOR(fields 1-5)
+signature = ML-DSA-65.Sign(secret_key, sig_input)
+```
+
+The `"aafp-v1-ucan"` domain separator prevents this signature from
+being valid in any other context (see Section 3.5).
 
 ### 5.5 Delegation Chains
 
@@ -370,7 +539,7 @@ An established session has the following properties:
 
 | Property | Description |
 |----------|-------------|
-| Session ID | Cryptographically unique identifier (see RFC-0002 Section 5.6) |
+| Session ID | Cryptographically unique identifier (see RFC-0002 Section 5.7) |
 | Peer AgentId | The remote agent's 32-byte AgentId |
 | Peer Public Key | The remote agent's ML-DSA-65 public key |
 | Local AgentId | The local agent's 32-byte AgentId |
@@ -390,20 +559,23 @@ The Session ID MUST satisfy:
 2. **Unpredictability**: An adversary cannot predict the Session ID
    before the handshake completes.
 3. **Binding**: The Session ID is cryptographically bound to both
-   agents' identities and the handshake transcript.
+   agents' identities, the handshake transcript, and the TLS channel
+   binding.
 
-The derivation method is an implementation detail. A RECOMMENDED
-approach is:
+The Session ID derivation is normative and defined in RFC-0002
+Section 5.7:
 
 ```
-Session ID = HKDF-SHA256(
-    input = handshake_transcript,
-    info = "aafp-session-id-v1",
-    length = 32
-)
+prk = HKDF-Extract(
+    salt = client_nonce || server_nonce,
+    IKM  = transcript_hash)
+session_id = HKDF-Expand(prk, info = "aafp-session-id-v1", L = 32)
 ```
 
-Implementations MAY use any method satisfying the above properties.
+All implementations MUST use this exact derivation. The
+`transcript_hash` includes the TLS channel binding value (see
+RFC-0002 Section 5.6), ensuring the Session ID is bound to the
+specific TLS session.
 
 ### 6.4 Session Reconnect (Future)
 
@@ -430,37 +602,56 @@ Client                                          Server
   |  (X25519MLKEM768, ALPN=aafp/1)                |
   |<--------------------------------------------->|
   |                                               |
+  |  Both sides compute:                          |
+  |  tls_binding = TLS-Exporter(                  |
+  |      "EXPORTER-AAFP-Channel-Binding", "", 32) |
+  |  h = SHA-256(tls_binding)                     |
+  |                                               |
   |  HANDSHAKE frame (ClientHello)                |
   |  - protocol_version                           |
   |  - agent_id, public_key, nonce                |
   |  - capabilities                               |
   |  - extensions                                 |
-  |  - signature (over ClientHello fields)        |
+  |  - expires_at                                 |
+  |  - key_algorithm                              |
+  |  - receiver_mac (optional, DoS profile)       |
+  |  - signature (over transcript hash with       |
+  |    domain separator "aafp-v1-handshake")      |
   |---------------------------------------------->|
+  |                                               |
+  |  h = SHA-256(h || CBOR(ClientHello w/o sig,   |
+  |                       receiver_mac))          |
   |                                               |
   |                  HANDSHAKE frame (ServerHello)|
   |                  - protocol_version           |
   |                  - agent_id, public_key, nonce|
   |                  - capabilities               |
-  |                  - extensions                 |
+  |                  - extensions (accepted)      |
   |                  - session_id                 |
-  |                  - signature (over ServerHello|
-  |                    fields)                    |
+  |                  - expires_at                 |
+  |                  - key_algorithm              |
+  |                  - signature (over transcript |
+  |                    hash with domain separator)|
   |<----------------------------------------------|
   |                                               |
+  |  h = SHA-256(h || CBOR(ServerHello w/o sig))  |
+  |                                               |
   |  Verify:                                      |
-  |  - agent_id == SHA-256(public_key)            |
-  |  - signature is valid                         |
-  |  - expires_at > now (if AgentRecord provided) |
-  |  - protocol_version is supported              |
+  |  - agent_id == SHA-256(public_key) [2007]     |
+  |  - signature is valid [2001]                  |
+  |  - expires_at > now [2002]                    |
+  |  - key_algorithm is supported [2010]          |
+  |  - protocol_version is supported [2004]       |
+  |  - session_id derivation matches              |
   |                                               |
   |  HANDSHAKE frame (ClientFinished)             |
   |  - session_id (echoed)                        |
-  |  - signature (over transcript)                |
+  |  - signature (over transcript hash h with     |
+  |    domain separator "aafp-v1-handshake")      |
   |---------------------------------------------->|
   |                                               |
   |                  Verify:                      |
-  |                  - signature is valid         |
+  |                  - signature is valid [2001]  |
   |                  - session_id matches         |
   |                                               |
   |             Session Established                |
@@ -469,24 +660,58 @@ Client                                          Server
 ### 7.2 Authentication Verification Steps
 
 **Client verifies ServerHello:**
-1. `server_agent_id == SHA-256(server_public_key)`
-2. `server_signature` is valid over ServerHello fields (excluding
-   signature)
-3. Server's AgentRecord (if provided via discovery) is valid and
-   not expired
-4. `protocol_version` is supported
-5. `session_id` is present and non-empty
+1. `server_agent_id == SHA-256(server_public_key)`. If not, reject
+   with error code 2007 (INVALID_AGENT_ID).
+2. `server_signature` is valid over the transcript hash (see
+   RFC-0002 Section 5.6) with domain separator "aafp-v1-handshake".
+   If not, reject with error code 2001 (INVALID_SIGNATURE).
+3. `server_expires_at > current_time`. If expired, reject with
+   error code 2002 (IDENTITY_EXPIRED). When the client has the
+   server's AgentRecord (from discovery), the AgentRecord's
+   `expires_at` is authoritative. If the handshake `expires_at`
+   differs from the AgentRecord's `expires_at`, the client SHOULD
+   use the earlier (sooner) expiry.
+4. `server_key_algorithm` is a supported algorithm (see Section 2.3).
+   If not, reject with error code 2010 (UNSUPPORTED_ALGORITHM).
+5. `protocol_version` is supported. If not, reject with error code
+   2004 (VERSION_MISMATCH).
+6. `session_id` is present and correctly derived (see RFC-0002
+   Section 5.7).
+7. Server's AgentRecord (if available from discovery) is valid and
+   not expired.
+
+**Server verifies ClientHello:**
+1. If DoS mitigation profile is active (see RFC-0002 Section 5.8),
+   verify `receiver_mac` first. If invalid, reject with error code
+   2009 (RECEIVER_MAC_INVALID) without performing signature
+   verification.
+2. `client_agent_id == SHA-256(client_public_key)`. If not, reject
+   with error code 2007 (INVALID_AGENT_ID).
+3. `client_signature` is valid over the transcript hash with domain
+   separator "aafp-v1-handshake". If not, reject with error code
+   2001 (INVALID_SIGNATURE).
+4. `client_expires_at > current_time`. If expired, reject with
+   error code 2002 (IDENTITY_EXPIRED). Trust model: the handshake
+   `expires_at` is a self-attested claim. When the server has the
+   client's AgentRecord, the AgentRecord's `expires_at` is
+   authoritative. If they differ, the server SHOULD use the earlier
+   (sooner) expiry.
+5. `client_key_algorithm` is a supported algorithm. If not, reject
+   with error code 2010 (UNSUPPORTED_ALGORITHM).
+6. `protocol_version` is supported. If not, reject with error code
+   2004 (VERSION_MISMATCH).
 
 **Server verifies ClientFinished:**
-1. `client_signature` is valid over the transcript
-   (ClientHello || ServerHello)
-2. `session_id` matches the one sent in ServerHello
+1. `client_signature` is valid over the transcript hash `h` (see
+   RFC-0002 Section 5.6) with domain separator "aafp-v1-handshake".
+   If not, reject with error code 2001 (INVALID_SIGNATURE).
+2. `session_id` matches the one sent in ServerHello.
 
 ### 7.3 Authorization During Handshake
 
 Authorization tokens (e.g., UCAN tokens) MAY be exchanged during the
-handshake via extensions (see RFC-0002 Section 6). The extension
-type for authorization tokens is defined in RFC-0006.
+handshake via handshake extensions (see RFC-0002 Section 6.4). The
+extension type for authorization tokens is defined in RFC-0006.
 
 If authorization tokens are exchanged, the session's `Authorization`
 property is populated. Subsequent operations on the session MAY
@@ -496,9 +721,18 @@ check authorization before processing.
 
 ### 8.1 Identity Binding
 
-The AAFP handshake binds the TLS session to the agents' ML-DSA-65
-identities. Even if the TLS certificate is compromised, the
-application-layer signatures prevent identity forgery.
+The AAFP application-layer handshake binds the TLS session to the
+agents' ML-DSA-65 identities via TLS channel binding. The TLS
+exporter value (RFC 8446 Section 7.5, using the label
+"EXPORTER-AAFP-Channel-Binding" per RFC 9266) is included in the
+handshake transcript hash (RFC-0002 Section 5.6). This prevents
+relay attacks: an attacker who terminates TLS on both sides cannot
+relay AAFP handshake messages because the transcript hashes will
+differ (the TLS sessions differ), causing signature verification
+failure.
+
+Even if the TLS certificate is compromised, the application-layer
+signatures prevent identity forgery.
 
 ### 8.2 Replay Attacks
 
@@ -513,14 +747,18 @@ The TOFU model for TLS certificates is vulnerable to MITM on first
 connection. This is mitigated by:
 
 - The application-layer handshake verifying ML-DSA-65 identity
+- TLS channel binding preventing relay attacks (Section 8.1)
 - AgentRecord signatures providing out-of-band verification
+- AgentId fingerprints (Section 2.6) for human verification
 - Future support for ML-DSA-65 TLS certificates
 
 Implementations SHOULD provide a mechanism for users to verify
-agent identities out-of-band (e.g., by comparing AgentId hex
-strings).
+agent identities out-of-band using the fingerprint format defined
+in Section 2.6. Users compare fingerprints through a trusted
+channel (e.g., voice, QR code, or pre-shared configuration) to
+detect man-in-the-middle attacks on first connection.
 
-### 8.4 Key Compromise
+### 8.4 Key Compromise and Revocation
 
 If an agent's ML-DSA-65 secret key is compromised:
 
@@ -530,8 +768,43 @@ If an agent's ML-DSA-65 secret key is compromised:
    session keys, not ML-DSA-65 keys).
 
 Compromised agents MUST rotate their key pair and publish a new
-AgentRecord. The protocol does not provide a revocation mechanism
-in v1. Revocation is deferred to a future RFC.
+AgentRecord with a new AgentId.
+
+#### Revocation (v1 Limitation)
+
+AAFP v1 does NOT provide a revocation mechanism. A compromised key
+remains valid until the AgentRecord's `expires_at` timestamp. This
+is a known limitation.
+
+To mitigate the impact of key compromise:
+
+1. Implementations SHOULD use short AgentRecord expiry times.
+   RECOMMENDED maximum: 30 days (2,592,000 seconds).
+2. Implementations SHOULD renew AgentRecords frequently (e.g.,
+   every 7 days) to keep the expiry window short.
+3. The `expires_at` field in the handshake (RFC-0002 Sections 5.3,
+   5.4) allows peers to verify expiry without discovery lookup.
+4. Applications SHOULD implement their own revocation checking
+   (e.g., a revocation list published out-of-band) if the threat
+   model requires it.
+
+#### Future Revocation Mechanism
+
+A future RFC will specify a revocation mechanism. The design will
+consider:
+
+- **Revocation lists**: Signed lists of revoked AgentIds, published
+  to bootstrap nodes or a dedicated service.
+- **Short-lived records**: AgentRecords with very short expiry
+  (e.g., 1 hour), requiring frequent renewal. Revocation is
+  achieved by not renewing.
+- **Delegation-based revocation**: A trusted authority signs
+  revocation statements. This requires a trust model that AAFP v1
+  does not define.
+
+The `key_algorithm` field (Section 2.3) and the extension mechanism
+(RFC-0002 Section 6.4) provide the foundation for future revocation
+extensions.
 
 ### 8.5 Delegation Chain Attacks
 
@@ -552,17 +825,29 @@ This RFC defines the following:
 
 - **AgentRecord record_type values**: `"aafp-record-v1"` (future
   versions: `"aafp-record-v2"`, etc.)
+- **AgentRecord field keys**: Integer keys 1–9 defined, 10+ reserved.
 - **CapabilityDescriptor field keys**: Integer keys 1–2 defined,
   3+ reserved.
 - **MetadataValue variant tags**: 0x01–0x05 defined, 0x06+ reserved.
 - **UCAN token field keys**: Integer keys 1–6 defined, 7+ reserved.
+- **Key Algorithm Registry**: Values 1–255 (see Section 2.3)
+- **Domain Separators**: "aafp-v1-handshake", "aafp-v1-record",
+  "aafp-v1-ucan" (see Section 3.5)
 
 Registries are managed per RFC-0006.
 
 ## 10. References
 
 - RFC 2119: Key words for use in RFCs
-- RFC 7049: CBOR
-- FIPS 203: ML-KEM
-- FIPS 204: ML-DSA
+- RFC 8949: Concise Binary Object Representation (CBOR) [obsoletes
+  RFC 7049]
+- RFC 8446: The Transport Layer Security (TLS) Protocol Version 1.3
+- RFC 9266: Channel Bindings for TLS 1.3
+- RFC 4648: The Base16, Base32, and Base64 Data Encodings
+- FIPS 203: Module-Lattice-Based Key-Encapsulation (ML-KEM)
+- FIPS 204: Module-Lattice-Based Digital Signature Standard (ML-DSA)
+- FIPS 205: Stateless Hash-Based Digital Signature Standard (SLH-DSA)
 - UCAN: User-Controlled Authorization Networks
+- RFC-0001: AAFP Protocol Overview
+- RFC-0002: AAFP Transport & Framing
+- RFC-0006: AAFP Versioning & Compatibility

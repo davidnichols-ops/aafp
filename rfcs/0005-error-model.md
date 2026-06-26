@@ -1,11 +1,12 @@
 # RFC-0005: AAFP Error Model
 
 ```
-Status:         Draft
+Status:         Draft (Revision 2)
 Number:         0005
 Title:          Protocol Error Codes, Error Frames, and Error Handling
 Author:         AAFP Project
 Created:        2025-06-25
+Revised:        2025-06-25 (Revision 2: amendments H2, H3, H5)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -92,14 +93,16 @@ Error Code: 0x0000–0xFFFF (16-bit, encoded as uint)
 
 | Code | Name | Description |
 |------|------|-------------|
-| 2001 | INVALID_SIGNATURE | Signature verification failed. |
-| 2002 | IDENTITY_EXPIRED | Agent identity has expired. |
+| 2001 | INVALID_SIGNATURE | ML-DSA-65 signature verification failed. |
+| 2002 | IDENTITY_EXPIRED | Agent identity has expired (`expires_at` in the past). |
 | 2003 | UNKNOWN_AGENT | Agent is not known or not in directory. |
 | 2004 | VERSION_MISMATCH | Protocol version not supported. |
 | 2005 | UNSUPPORTED_EXTENSIONS | Required extension not supported. |
-| 2006 | HANDSHAKE_FAILED | Handshake failed (generic). |
-| 2007 | INVALID_AGENT_ID | AgentId does not match SHA-256(pubkey). |
+| 2006 | HANDSHAKE_FAILED | Handshake failed (generic, including TLS exporter unavailable). |
+| 2007 | INVALID_AGENT_ID | AgentId does not match SHA-256(public_key). |
 | 2008 | NONCE_REUSE | Nonce reuse detected (replay attack). |
+| 2009 | RECEIVER_MAC_INVALID | DoS pre-verification MAC check failed (see RFC-0002 Section 5.8). |
+| 2010 | UNSUPPORTED_ALGORITHM | Key algorithm not supported (see RFC-0003 Section 2.3). |
 
 ### 3.4 Authorization Errors (3xxx)
 
@@ -221,11 +224,15 @@ serialization errors on a single message.
 The following error codes are ALWAYS fatal:
 
 - All 2xxx (Authentication) errors
-- 8001 (FRAME_TOO_LARGE)
 - 8004 (UNKNOWN_CRITICAL_FRAME_TYPE)
 - 8005 (UNKNOWN_CRITICAL_EXTENSION)
 - 8006 (INVALID_VERSION)
 - 8009 (PROTOCOL_VIOLATION)
+
+Error code 8001 (FRAME_TOO_LARGE) is non-fatal by default. The
+sender MAY set the fatal flag to true if the oversized frame
+indicates a connection-level protocol violation (e.g., the peer
+repeatedly sends oversized frames despite prior errors).
 
 All other error codes are non-fatal by default. The sender MAY set
 the `fatal` flag to true for any error code if it determines the
@@ -326,7 +333,8 @@ Common close codes:
 |------|------|-------------|
 | 0000 | OK | Normal close (no error). |
 | 1002 | CONNECTION_TIMEOUT | Connection timed out. |
-| 2001 | INVALID_SIGNATURE | Authentication failure. |
+| 2001 | INVALID_SIGNATURE | Authentication failure (signature verification). |
+| 2007 | INVALID_AGENT_ID | Authentication failure (AgentId mismatch). |
 | 8009 | PROTOCOL_VIOLATION | Protocol violation. |
 
 ## 8. Implementation Requirements
