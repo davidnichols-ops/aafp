@@ -272,20 +272,28 @@ fn decode_value(data: &[u8], pos: &mut usize) -> Result<Value, CborError> {
         }
         MT_BYTE_STRING => {
             let len = arg as usize;
-            if *pos + len > data.len() {
+            let end = (*pos).checked_add(len).ok_or_else(|| CborError::Invalid {
+                offset: *pos,
+                message: "byte string length overflow".to_string(),
+            })?;
+            if end > data.len() {
                 return Err(CborError::UnexpectedEof(*pos));
             }
-            let bytes = data[*pos..*pos + len].to_vec();
-            *pos += len;
+            let bytes = data[*pos..end].to_vec();
+            *pos = end;
             Ok(Value::ByteString(bytes))
         }
         MT_TEXT_STRING => {
             let len = arg as usize;
-            if *pos + len > data.len() {
+            let end = (*pos).checked_add(len).ok_or_else(|| CborError::Invalid {
+                offset: *pos,
+                message: "text string length overflow".to_string(),
+            })?;
+            if end > data.len() {
                 return Err(CborError::UnexpectedEof(*pos));
             }
-            let bytes = &data[*pos..*pos + len];
-            *pos += len;
+            let bytes = &data[*pos..end];
+            *pos = end;
             let s = std::str::from_utf8(bytes).map_err(|e| CborError::Invalid {
                 offset: *pos,
                 message: format!("invalid UTF-8: {e}"),
@@ -294,6 +302,10 @@ fn decode_value(data: &[u8], pos: &mut usize) -> Result<Value, CborError> {
         }
         MT_ARRAY => {
             let len = arg as usize;
+            // Prevent OOM from absurdly large length claims
+            if len > data.len() {
+                return Err(CborError::UnexpectedEof(*pos));
+            }
             let mut arr = Vec::with_capacity(len);
             for _ in 0..len {
                 arr.push(decode_value(data, pos)?);
@@ -302,6 +314,10 @@ fn decode_value(data: &[u8], pos: &mut usize) -> Result<Value, CborError> {
         }
         MT_MAP => {
             let len = arg as usize;
+            // Prevent OOM from absurdly large length claims
+            if len > data.len() {
+                return Err(CborError::UnexpectedEof(*pos));
+            }
             let mut entries: Vec<(Value, Value)> = Vec::with_capacity(len);
             for _ in 0..len {
                 let key = decode_value(data, pos)?;
