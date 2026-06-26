@@ -45,6 +45,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aafp-conformance"
+version = "0.1.0"
+dependencies = [
+ "aafp-cbor",
+ "aafp-core",
+ "aafp-crypto",
+ "aafp-discovery",
+ "aafp-identity",
+ "aafp-messaging",
+ "hex",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "aafp-core"
 version = "0.1.0"
 dependencies = [
