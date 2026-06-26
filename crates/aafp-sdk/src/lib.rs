@@ -42,6 +42,8 @@ pub enum SdkError {
     Handshake(String),
     #[error("messaging error: {0}")]
     Messaging(String),
+    #[error("frame error: {0}")]
+    Frame(#[from] aafp_messaging::FrameError),
     #[error("not connected to peer")]
     NotConnected,
     #[error("agent not started")]

@@ -1,9 +1,9 @@
 //! Agent server: accept incoming connections and handle messages.
 
 use crate::{Agent, SdkError};
-use aafp_identity::AgentId;
-use aafp_messaging::deserialize_frame;
+use aafp_messaging::{decode_frame, encode_frame, Frame, FRAME_HEADER_SIZE};
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -65,8 +65,9 @@ impl AgentServer {
         recv.read_exact(&mut payload).await?;
 
         // Echo back.
-        let frame = aafp_messaging::serialize_frame(&payload);
-        send.write_all(&frame).await?;
+        let resp_frame = Frame::data(0, payload.clone());
+        let resp_bytes = encode_frame(&resp_frame)?;
+        send.write_all(&resp_bytes).await?;
         send.finish();
 
         Ok(())
@@ -83,7 +84,7 @@ impl Default for AgentServer {
 mod tests {
     use super::*;
     use crate::AgentBuilder;
-    use aafp_messaging::serialize_frame;
+    use aafp_messaging::encode_frame;
     use aafp_transport_quic::QuicConfig;
 
     #[tokio::test]
@@ -112,16 +113,30 @@ mod tests {
             let conn = server_agent.transport.accept().await.unwrap();
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
 
-            // Read framed message.
-            let mut len_buf = [0u8; 4];
-            recv.read_exact(&mut len_buf).await.unwrap();
-            let len = u32::from_be_bytes(len_buf) as usize;
-            let mut payload = vec![0u8; len];
-            recv.read_exact(&mut payload).await.unwrap();
+            // Read frame header (28 bytes).
+            let mut header = [0u8; FRAME_HEADER_SIZE];
+            recv.read_exact(&mut header).await.unwrap();
+
+            // Parse header to determine total frame size.
+            let payload_len = u64::from_be_bytes(header[12..20].try_into().unwrap()) as usize;
+            let ext_len = u64::from_be_bytes(header[20..28].try_into().unwrap()) as usize;
+            let body_len = payload_len + ext_len;
+
+            // Read remaining frame data (extensions + payload).
+            let mut body = vec![0u8; body_len];
+            if body_len > 0 {
+                recv.read_exact(&mut body).await.unwrap();
+            }
+
+            // Combine header + body and decode.
+            let mut full_frame = header.to_vec();
+            full_frame.extend_from_slice(&body);
+            let (frame, _) = decode_frame(&full_frame).unwrap();
 
             // Echo back.
-            let frame = serialize_frame(&payload);
-            send.write_all(&frame).await.unwrap();
+            let resp_frame = Frame::data(0, frame.payload.clone());
+            let resp_bytes = encode_frame(&resp_frame).unwrap();
+            send.write_all(&resp_bytes).await.unwrap();
             send.finish();
 
             // Keep connection alive so client can read.
@@ -132,16 +147,16 @@ mod tests {
         let conn = client.dial(&server_addr).await.unwrap();
         let (mut send, mut recv) = conn.open_bi().await.unwrap();
         let msg = b"echo test";
-        send.write_all(&serialize_frame(msg)).await.unwrap();
+        let msg_frame = Frame::data(0, msg.to_vec());
+        let msg_bytes = encode_frame(&msg_frame).unwrap();
+        send.write_all(&msg_bytes).await.unwrap();
         send.finish();
 
-        // Read echo response.
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf).await.unwrap();
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; len];
-        recv.read_exact(&mut payload).await.unwrap();
-        assert_eq!(payload, msg);
+        // Read echo response (full frame).
+        let mut buf = vec![0u8; 1024];
+        let n = recv.read(&mut buf).await.unwrap().unwrap_or(0);
+        let (resp_frame, _) = decode_frame(&buf[..n]).unwrap();
+        assert_eq!(resp_frame.payload, msg);
 
         server_handle.await.unwrap();
         client.close();
