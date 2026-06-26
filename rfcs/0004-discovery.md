@@ -1,12 +1,12 @@
 # RFC-0004: AAFP Discovery
 
 ```
-Status:         Freeze Candidate (Revision 2)
+Status:         Freeze Candidate (Revision 3)
 Number:         0004
 Title:          Discovery: Identity, Capability, Service, and Resource
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 2: amendments C4, H12)
+Revised:        2025-06-25 (Revision 3: amendments A-T5, A-T7)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -83,6 +83,11 @@ A bootstrap node is a well-known agent that provides initial peer
 discovery. Bootstrap nodes are configured statically (via command-line
 flags, configuration files, or DNS records).
 
+Implementations MUST support configuring multiple bootstrap nodes.
+Implementations SHOULD use at least 3 bootstrap nodes from different
+administrational domains to mitigate eclipse attacks and bootstrap
+node compromise (see Section 8.4).
+
 ### 3.2 Bootstrap Protocol
 
 1. The connecting agent opens a QUIC connection to the bootstrap
@@ -156,6 +161,12 @@ on the method.
 - The default `limit` parameter for `lookup` is 5 for
   unauthenticated requests (requests from agents without a valid
   AgentRecord) and 10 for authenticated requests.
+- Bootstrap nodes MUST limit lookup responses to 5 AgentRecords for
+  unauthenticated requests. Authenticated requests MAY receive up
+  to 10 records.
+- Implementations SHOULD enforce a maximum number of concurrent
+  streams per connection (RECOMMENDED: 100) to prevent resource
+  exhaustion.
 
 ## 4. Capability DHT
 
@@ -392,6 +403,33 @@ controlled peers. Mitigations:
 - Use multiple bootstrap nodes from different providers
 - Use PEX with multiple peers to cross-check
 - Future: DHT routing diversity requirements
+
+#### Bootstrap Node Compromise
+
+If a bootstrap node is compromised:
+
+1. **Eclipse attack**: The bootstrap node can return only attacker-
+   controlled peers, isolating the victim from the legitimate network.
+2. **Identity enumeration**: The bootstrap node learns the AgentId,
+   public key, capabilities, and endpoints of all connecting agents.
+3. **DHT poisoning**: The bootstrap node can inject false AgentRecords
+   into the DHT (though all records must be validly signed).
+4. **Discovery disruption**: The bootstrap node can reject legitimate
+   announcements.
+
+Mitigations (normative):
+- Implementations MUST support configuring multiple bootstrap nodes.
+- Implementations SHOULD use at least 3 bootstrap nodes from different
+  administrative domains.
+- Implementations SHOULD use PEX (Section 5) with multiple peers to
+  cross-check bootstrap node responses.
+- Bootstrap nodes SHOULD rate-limit requests (Section 3.4).
+
+Limitations (v1):
+- No protocol-level mechanism to detect a malicious bootstrap node.
+- No mechanism to verify bootstrap node honesty.
+- Bootstrap nodes can enumerate all connecting agents (privacy concern,
+  see Section 8.5).
 
 ### 8.5 Privacy
 

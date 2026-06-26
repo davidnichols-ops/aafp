@@ -1,12 +1,12 @@
 # RFC-0001: AAFP Protocol Overview
 
 ```
-Status:         Freeze Candidate (Revision 2)
+Status:         Freeze Candidate (Revision 3)
 Number:         0001
 Title:          Protocol Overview, Goals, and Layer Architecture
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 2: amendments C5, C6)
+Revised:        2025-06-25 (Revision 3: amendments A-T1, A-T8)
 Type:           Informational
 Obsoletes:      —
 Obsoleted by:   —
@@ -296,6 +296,44 @@ claims.
 
 ## 9. Security Considerations
 
+### 9.0 Trust Model
+
+AAFP v1 uses a **decentralized trust model** with no trusted third
+parties. The following trust assumptions apply:
+
+**Trust Anchor**: Each agent's trust anchor is its own ML-DSA-65 secret
+key. There is no certificate authority, no public key infrastructure,
+and no trusted directory service in v1.
+
+**Self-Attested Identity**: All identity claims are self-attested.
+AgentRecords are self-signed (RFC-0003 Section 3.4). The `expires_at`
+field is self-attested by the key holder.
+
+**Bootstrap Node Trust**: Bootstrap nodes are trusted by configuration
+(out-of-band). The protocol does not verify bootstrap node identity or
+honesty. Implementations MUST support configuring multiple bootstrap
+nodes (see RFC-0004 Section 3.1) to mitigate compromise of any single
+bootstrap node.
+
+**TLS Trust**: TLS certificates are self-signed with trust-on-first-use
+(TOFU). The application-layer handshake provides identity verification
+independent of TLS certificate validation.
+
+**Out-of-Band Verification Required For**:
+- First connection to a new agent (AgentId fingerprint verification,
+  see RFC-0003 Section 2.6)
+- Bootstrap node configuration
+- Revocation checking (if required by threat model)
+
+**NOT Trusted in v1**:
+- No CA or PKI
+- No revocation authority
+- No reputation system
+- No Sybil resistance mechanism
+
+Future versions MAY introduce trusted third parties or delegation-based
+trust, but v1 is fully decentralized.
+
 ### 9.1 Post-Quantum Security
 
 AAFP is designed to be secure against quantum adversaries. All key
@@ -337,6 +375,37 @@ attacks on first connection. This is mitigated by:
 - AgentRecord signatures providing out-of-band verification
 - AgentId fingerprints for human verification (see RFC-0003 Section 2.6)
 - Future support for ML-DSA-65 TLS certificates
+
+### 9.6 Security Limitations (v1)
+
+The following security properties are NOT provided by AAFP v1 and are
+explicitly out of scope:
+
+1. **Network partition tolerance**: No mechanism for detecting or
+   handling network partitions. The v1 DHT is in-memory with no
+   replication or consistency guarantees.
+2. **Traffic analysis resistance**: No padding or obfuscation
+   mechanism. AAFP traffic is identifiable by characteristic
+   handshake sizes (ML-DSA-65 keys and signatures are large).
+3. **Identity hiding**: AgentId is sent to the peer in ClientHello
+   and is public in the DHT. No ephemeral identity mechanism.
+4. **Anonymous bootstrap**: No mechanism for anonymous bootstrap.
+   Bootstrap nodes learn the identity of all connecting agents.
+5. **Application-layer encryption**: No encryption beyond TLS.
+   If TLS confidentiality is broken, all application data is exposed.
+6. **Session resumption**: Deferred to a future RFC.
+7. **NAT traversal**: Deferred to a future RFC.
+8. **Revocation**: No in-protocol revocation mechanism (see RFC-0003
+   Section 8.4).
+9. **Key rotation**: No in-protocol key rotation mechanism (see
+   RFC-0003 Section 2.5).
+10. **Sybil resistance**: No proof-of-work, reputation system, or
+    trusted issuer requirements (see RFC-0004 Section 8.3).
+
+These limitations are documented to set explicit expectations. Future
+RFCs may address some or all of these. Implementations and deployments
+MUST assess whether these limitations are acceptable for their threat
+model.
 
 ## 10. IANA Considerations
 
