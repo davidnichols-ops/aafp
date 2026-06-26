@@ -1,12 +1,13 @@
 # RFC-0005: AAFP Error Model
 
 ```
-Status:         Freeze Candidate (Revision 2)
+Status:         Freeze Candidate (Revision 3)
 Number:         0005
 Title:          Protocol Error Codes, Error Frames, and Error Handling
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 2: amendments H2, H3, H5)
+Revised:        2025-06-25 (Revision 3: no changes, version bump for
+                consistency)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —

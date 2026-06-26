@@ -1,14 +1,14 @@
 # RFC-0006: AAFP Versioning & Compatibility
 
 ```
-Status:         Freeze Candidate (Revision 2)
+Status:         Freeze Candidate (Revision 3)
 Number:         0006
 Title:          Protocol Versioning, Extension Registry, and
                 Compatibility Rules
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 2: amendments C3, C6, H8,
-                conformance checklist update)
+Revised:        2025-06-25 (Revision 3: no changes, version bump for
+                consistency)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —

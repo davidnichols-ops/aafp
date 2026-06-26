@@ -5,8 +5,113 @@ Document:         RFC_CHANGELOG.md
 Date:             2025-06-25
 Status:           Current
 Scope:            Records all changes to AAFP RFCs from initial draft
-                  (Revision 1) through the current revision (Revision 2).
+                  (Revision 1) through the current revision (Revision 3).
 ```
+
+---
+
+## Revision 3 (2025-06-25) — Freeze Candidate (Post-Review)
+
+Revision 3 applies amendments from AMENDMENTS-0002, addressing findings
+from two independent reviews:
+
+- **REVIEW-0003**: Cold-read implementer review (found 4 CRITICAL
+  interoperability bugs, 6 HIGH issues)
+- **REVIEW-0004**: Formal threat model review (found 2 CRITICAL, 8 HIGH
+  normative gaps)
+
+Per the freeze commitment (RFC-0006 Section 2.5), interoperability and
+security issues discovered during freeze justify normative fixes.
+
+### Amendments Applied
+
+21 amendments from AMENDMENTS-0002:
+- 4 CRITICAL interoperability fixes (A-C1, A-C2, A-C3, A-M1)
+- 6 HIGH clarifications (A-H1 through A-H5, A-H6 subsumed by A-C1)
+- 3 MEDIUM clarifications (A-M2, A-M3, plus A-H6 subsumed)
+- 9 normative gap closures from threat model (A-T1 through A-T9)
+
+### Key Changes
+
+**Critical interoperability fixes (RFC-0002)**:
+1. **A-C1**: Unified signature and transcript hash model. All signatures
+   now sign over the running transcript hash AFTER the current message
+   is folded in (TLS 1.3 model). Removed contradictory concatenation
+   formulas.
+2. **A-C2**: Defined canonical CBOR for signature inputs as a NEW map
+   with only included fields (excluded fields omitted entirely).
+3. **A-C3**: Added `critical` field (key 3, bool) to handshake
+   ExtensionEntry to distinguish mandatory from optional extensions.
+4. **A-M1**: Fixed session ID circular dependency. Session ID now
+   derived from transcript hash after ClientHello (not after ServerHello,
+   which contains session_id).
+
+**Threat model normative gaps**:
+5. **A-T1**: Added Trust Model section to RFC-0001 (§9.0).
+6. **A-T2**: Changed fingerprint display from SHOULD to MUST.
+7. **A-T3**: Strengthened key compromise documentation with blast radius.
+8. **A-T4**: Added Key Management Requirements section (§8.6) to RFC-0003.
+9. **A-T5**: Added bootstrap node compromise scenario and multi-node
+   requirement (MUST support, SHOULD use 3+).
+10. **A-T6**: Changed UCAN chain depth from SHOULD to MUST (max 8).
+11. **A-T7**: Changed DoS pre-verification from MAY to SHOULD for
+    Internet-facing deployments.
+12. **A-T8**: Added Security Limitations section to RFC-0001 (§9.6).
+13. **A-T9**: Documented forward secrecy properties in RFC-0003.
+
+### RFC-0001 Changes
+
+| Section | Change | Amendment |
+|---------|--------|-----------|
+| Header | Updated to Revision 3 | — |
+| 9.0 | NEW: Trust Model section | A-T1 |
+| 9.6 | NEW: Security Limitations (v1) section | A-T8 |
+
+### RFC-0002 Changes
+
+| Section | Change | Amendment |
+|---------|--------|-----------|
+| Header | Updated to Revision 3 | — |
+| 5.2 | Added stream 0 lifecycle (remains open, connection-level frames) | A-H5 |
+| 5.6 | Rewritten: unified transcript hash + signature model, signature input encoding rules | A-C1, A-C2 |
+| 5.7 | Fixed session ID derivation (uses h_after_clienthello, not final h); added client verification requirement | A-M1 |
+| 5.8 | Changed MAY to SHOULD for Internet-facing; clarified DoS MAC input matches CH_CBOR | A-T7, A-M3 |
+| 6.1 | Clarified extension concatenation and big-endian data length | A-H1 |
+| 6.4 | Added critical field (key 3) to ExtensionEntry; added parameter negotiation section; updated negotiation rule 4 | A-C3, A-H2 |
+| 8.1 | Clarified integer key sorting with examples; added metadata map exception; clarified float rule | A-H4, A-M2 |
+| 8.4 | Added ExtensionEntry key 3 (critical) to mapping table | A-C3 |
+
+### RFC-0003 Changes
+
+| Section | Change | Amendment |
+|---------|--------|-----------|
+| Header | Updated to Revision 3 | — |
+| 2.6 | Changed fingerprint display from SHOULD to MUST; added rationale | A-T2 |
+| 3.5 | Clarified domain separator encoding (raw UTF-8 bytes, no null terminator, with byte example) | A-H3 |
+| 8.4 | Rewritten: added blast radius (7 items), compromise response, MUST for 30-day max expiry | A-T3 |
+| 8.5 | Changed UCAN chain depth from SHOULD to MUST (max 8); added short expiry recommendation | A-T6 |
+| 8.6 | NEW: Key Management Requirements (generation, storage, rotation, compromise detection, forward secrecy) | A-T4, A-T9 |
+
+### RFC-0004 Changes
+
+| Section | Change | Amendment |
+|---------|--------|-----------|
+| Header | Updated to Revision 3 | — |
+| 3.1 | Added MUST for multiple bootstrap nodes, SHOULD for 3+ from different domains | A-T5 |
+| 3.4 | Added MUST for lookup limit (5 unauthenticated), SHOULD for max concurrent streams | A-T7 |
+| 8.4 | Added Bootstrap Node Compromise subsection with 4 attack scenarios and normative mitigations | A-T5 |
+
+### RFC-0005 Changes
+
+| Section | Change | Amendment |
+|---------|--------|-----------|
+| Header | Updated to Revision 3 (no content changes) | — |
+
+### RFC-0006 Changes
+
+| Section | Change | Amendment |
+|---------|--------|-----------|
+| Header | Updated to Revision 3 (no content changes) | — |
 
 ---
 

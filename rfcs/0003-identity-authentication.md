@@ -1,14 +1,14 @@
 # RFC-0003: AAFP Identity & Authentication
 
 ```
-Status:         Freeze Candidate (Revision 2)
+Status:         Freeze Candidate (Revision 3)
 Number:         0003
 Title:          Agent Identity, AgentRecord, Capability Descriptors,
                 Authorization, and Session Lifecycle
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 2: amendments H1, H3, H4, H8,
-                H10, H11, C5, plus crypto verification updates)
+Revised:        2025-06-25 (Revision 3: amendments A-H3, A-T2, A-T3,
+                A-T4, A-T6, A-T9)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -187,9 +187,20 @@ displayed fingerprints between agents). It is NOT used for
 protocol-level lookup or comparison. The full 32-byte AgentId is
 used for all protocol operations.
 
-Implementations SHOULD display the fingerprint when a new agent
-connection is established and provide an API for applications to
-retrieve and compare fingerprints.
+Implementations MUST display the AgentId fingerprint when a new agent
+connection is established (first connection to an unknown AgentId).
+Implementations MUST provide an API for applications to retrieve and
+compare fingerprints programmatically.
+
+The fingerprint display MUST occur before the application begins
+exchanging sensitive data with the new agent. Applications MAY
+override this requirement if they perform their own out-of-band
+identity verification.
+
+Rationale: The TOFU model is vulnerable to man-in-the-middle attacks
+on first connection. Mandatory fingerprint display ensures users have
+the opportunity to detect MITM by comparing fingerprints through a
+trusted channel (e.g., voice, QR code, pre-shared configuration).
 
 ## 3. AgentRecord
 
@@ -274,9 +285,18 @@ Defined domain separators:
 Future signature contexts MUST define new domain separators
 following the pattern `"aafp-v<version>-<context>"`.
 
-The domain separator is a UTF-8 string, NOT length-prefixed. The
-signature input is the raw concatenation of the domain separator
-bytes and the message bytes.
+The domain separator is encoded as its raw UTF-8 code units (bytes).
+No null terminator, no length prefix, and no CBOR encoding is applied.
+The signature input is the raw byte concatenation:
+
+```
+sig_input = domain_separator_utf8_bytes || message_bytes
+```
+
+For example, the domain separator `"aafp-v1-handshake"` is the 17-byte
+UTF-8 sequence (no null terminator):
+`0x61 0x61 0x66 0x70 0x2D 0x76 0x31 0x2D 0x68 0x61 0x6E 0x64 0x73 0x68
+0x61 0x6B 0x65`
 
 The set of domain separators is prefix-free (no separator is a
 prefix of another), satisfying the IETF CFRG requirement for
@@ -760,38 +780,59 @@ detect man-in-the-middle attacks on first connection.
 
 ### 8.4 Key Compromise and Revocation
 
+#### Blast Radius
+
 If an agent's ML-DSA-65 secret key is compromised:
 
-1. The attacker can impersonate the agent.
+1. The attacker can impersonate the agent to all peers.
 2. The attacker can sign AgentRecords and UCAN tokens.
-3. Existing sessions are NOT compromised (they use TLS-derived
-   session keys, not ML-DSA-65 keys).
+3. The attacker can delegate capabilities to other agents.
+4. The attacker can advertise false capabilities in the DHT.
+5. **Existing sessions are NOT compromised**: they use TLS-derived
+   session keys, not ML-DSA-65 keys. Active sessions remain secure
+   until they expire or are closed.
+6. **Past sessions are NOT compromised**: TLS 1.3 provides forward
+   secrecy for transport-layer traffic. However, if the attacker
+   recorded handshake messages, they can verify (but not forge)
+   past signatures.
+7. **Application-layer identity has NO forward secrecy**: The
+   attacker can forge AgentRecords and UCAN tokens with past
+   timestamps (subject to `expires_at` validation by verifiers).
 
-Compromised agents MUST rotate their key pair and publish a new
-AgentRecord with a new AgentId.
+#### Compromise Response
+
+Compromised agents MUST:
+1. Generate a new ML-DSA-65 key pair.
+2. Publish a new AgentRecord with the new public key and a new
+   AgentId.
+3. Notify known peers out-of-band of the key rotation.
+4. Revoke all UCAN tokens signed by the compromised key (by not
+   renewing them and waiting for expiry).
 
 #### Revocation (v1 Limitation)
 
-AAFP v1 does NOT provide a revocation mechanism. A compromised key
-remains valid until the AgentRecord's `expires_at` timestamp. This
-is a known limitation.
+AAFP v1 does NOT provide an in-protocol revocation mechanism. A
+compromised key remains valid until the AgentRecord's `expires_at`
+timestamp. This is a known limitation.
 
 To mitigate the impact of key compromise:
 
-1. Implementations SHOULD use short AgentRecord expiry times.
-   RECOMMENDED maximum: 30 days (2,592,000 seconds).
-2. Implementations SHOULD renew AgentRecords frequently (e.g.,
-   every 7 days) to keep the expiry window short.
+1. Implementations MUST support AgentRecord expiry no longer than
+   30 days (2,592,000 seconds). Implementations MUST warn users if
+   an AgentRecord's `expires_at` exceeds 30 days from the current
+   time.
+2. Implementations SHOULD renew AgentRecords every 7 days to keep
+   the expiry window short.
 3. The `expires_at` field in the handshake (RFC-0002 Sections 5.3,
    5.4) allows peers to verify expiry without discovery lookup.
-4. Applications SHOULD implement their own revocation checking
+4. Applications SHOULD implement out-of-band revocation checking
    (e.g., a revocation list published out-of-band) if the threat
    model requires it.
 
 #### Future Revocation Mechanism
 
-A future RFC will specify a revocation mechanism. The design will
-consider:
+A future RFC will specify a revocation mechanism (see RFC-0006
+future work registry). The design will consider:
 
 - **Revocation lists**: Signed lists of revoked AgentIds, published
   to bootstrap nodes or a dedicated service.
@@ -816,8 +857,74 @@ UCAN delegation chains are vulnerable to:
   was granted. Mitigation: verification checks that each token in
   the chain delegates a subset of its parent's capabilities.
 - **Chain length attacks**: Very long delegation chains consume
-  verification time. Mitigation: implementations SHOULD enforce a
-  maximum chain depth (RECOMMENDED: 8).
+  verification time. Mitigation: implementations MUST enforce a
+  maximum UCAN delegation chain depth of 8. Tokens that exceed
+  this depth MUST be rejected with error code 3006
+  (DELEGATION_DEPTH_EXCEEDED).
+
+Implementations SHOULD use short UCAN expiry times (RECOMMENDED: 1
+hour / 3600 seconds) to limit the blast radius of token theft.
+
+### 8.6 Key Management Requirements
+
+#### Key Generation
+
+ML-DSA-65 key pairs MUST be generated using the algorithm specified
+in FIPS 204, using a cryptographically secure random number
+generator. Implementations SHOULD use hedged (randomized) signing
+as specified by FIPS 204 for side-channel resistance.
+
+#### Key Storage
+
+Implementations MUST protect ML-DSA-65 secret keys at rest using
+encryption. Implementations SHOULD use hardware-backed key storage
+(e.g., HSM, TPM, Secure Enclave) when available.
+
+Secret keys MUST NOT be logged, transmitted in plaintext, or stored
+in world-readable files. Implementations MUST zeroize secret key
+material from memory when no longer needed.
+
+#### Key Rotation
+
+AAFP v1 does not provide an in-protocol key rotation mechanism (see
+Section 2.5). Key rotation produces a new AgentId, requiring
+out-of-band notification to peers. Applications that require key
+rotation SHOULD:
+
+1. Generate the new key pair before retiring the old key.
+2. Publish the new AgentRecord before notifying peers.
+3. Notify peers out-of-band of the new AgentId.
+4. Maintain the old key until all known peers have migrated.
+
+A future RFC will specify an in-protocol key rotation mechanism.
+
+#### Key Compromise Detection
+
+Implementations SHOULD provide mechanisms to detect key compromise,
+such as:
+- Monitoring for unexpected AgentRecord publications
+- Alerting on connections from unexpected IP addresses
+- Logging all signing operations for audit
+
+These mechanisms are application-specific and not normatively
+specified in AAFP v1.
+
+#### Forward Secrecy Properties
+
+- **Transport-layer traffic**: Forward secrecy is provided by TLS 1.3
+  with X25519MLKEM768. If TLS session keys are compromised in the
+  future, past transport-layer traffic remains confidential.
+- **Application-layer identity**: NO forward secrecy. AgentRecords
+  and UCAN tokens are self-signed with ML-DSA-65. If the secret key
+  is compromised, the attacker can forge records and tokens with
+  arbitrary past timestamps (subject to `expires_at` validation).
+- **Session metadata**: Forward secrecy depends on TLS. If TLS
+  session keys are compromised, session metadata (Session ID,
+  capabilities) can be derived from recorded handshake messages.
+
+The lack of forward secrecy for application-layer identity is a
+known limitation. Short AgentRecord expiry times (30 days max, see
+Section 8.4) limit the window of vulnerability.
 
 ## 9. IANA Considerations
 

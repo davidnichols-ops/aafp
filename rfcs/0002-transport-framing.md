@@ -1,12 +1,12 @@
 # RFC-0002: AAFP Transport & Framing
 
 ```
-Status:         Freeze Candidate (Revision 2)
+Status:         Freeze Candidate (Revision 3)
 Number:         0002
 Title:          Transport, Framing, Stream Multiplexing, and Wire Format
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 2: amendments C1-C5, H1-H2, H4-H6, H8)
+Revised:        2025-06-25 (Revision 3: amendments A-C1, A-C2, A-C3, A-H1, A-H2, A-H4, A-H5, A-M1, A-M2, A-M3, A-T7)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -394,6 +394,16 @@ Client                                          Server
   |             Session Established                |
 ```
 
+Stream 0 remains open for the lifetime of the connection after the
+handshake completes. It is used for connection-level frames:
+- PING / PONG frames (Section 4.7)
+- GOAWAY frames (Section 4.8)
+- ERROR frames with fatal severity (RFC-0005 Section 4.4)
+
+Stream 0 MUST NOT be used for DATA frames or RPC frames after the
+handshake. Application data flows on streams >= 4 (client-initiated)
+or >= 5 (server-initiated).
+
 ### 5.3 ClientHello
 
 ```cbor
@@ -442,80 +452,131 @@ ClientFinished = {
 }
 ```
 
-### 5.6 Transcript Hash
+### 5.6 Transcript Hash and Signature Computation
 
 The handshake transcript hash is a running SHA-256 hash over the
 canonical CBOR encodings of handshake messages, prefixed with the
-TLS channel binding value (see Section 2.5).
+TLS channel binding value (see Section 2.5). Every handshake signature
+is computed over the transcript hash **after** the current message's
+CBOR has been folded into the hash. This is the single source of truth
+for signature inputs — there are no separate concatenation formulas.
 
-The transcript hash is computed as follows:
+#### Signature Input Encoding
 
-1. After TLS handshake completion, both sides compute the TLS
-   channel binding:
-   ```
-   tls_binding = TLS-Exporter("EXPORTER-AAFP-Channel-Binding", "", 32)
-   ```
+When a signature input specification says
+`canonical_CBOR(Message_without_field_X)`, this means:
 
-2. Initialize the transcript hash:
-   ```
-   h = SHA-256(tls_binding)
-   ```
+1. Construct a NEW CBOR map containing exactly the fields of the
+   message EXCLUDING the specified field(s).
+2. Encode this map using canonical CBOR (Section 8.1).
+3. The resulting byte sequence is the signature input component.
 
-3. After sending or receiving ClientHello, update:
-   ```
-   h = SHA-256(h || canonical_CBOR(ClientHello_without_signature_and_receiver_mac))
-   ```
-   Where `canonical_CBOR(ClientHello_without_signature_and_receiver_mac)`
-   is the canonical CBOR encoding of the ClientHello map excluding
-   the signature field (key 7) and the receiver_mac field (key 9).
-   The receiver_mac is excluded because it is verified before the
-   signature (it is a DoS pre-filter, see Section 5.8).
+The excluded fields are omitted entirely — they are not present in
+the map, not encoded as null, and not encoded with zero-length
+values. The map length reflects only the included fields.
 
-4. After sending or receiving ServerHello, update:
-   ```
-   h = SHA-256(h || canonical_CBOR(ServerHello_without_signature))
-   ```
-   Where `canonical_CBOR(ServerHello_without_signature)` is the
-   canonical CBOR encoding of the ServerHello map excluding the
-   signature field (key 8).
+For example, `canonical_CBOR(ClientHello_without_signature_and_receiver_mac)`
+produces a CBOR map with 8 entries (keys 1, 2, 3, 4, 5, 6, 8, 10),
+encoded in canonical form. Keys 7 (signature) and 9 (receiver_mac)
+are absent from the map.
 
-5. The final transcript hash `h` is used for:
-   - ClientFinished signature (Section 5.5)
-   - Session ID derivation (Section 5.7)
-
-#### Signature Computations
+#### Transcript Hash and Signature Procedure
 
 All AAFP signatures use domain separators (see RFC-0003 Section 3.5)
 to prevent cross-protocol signature reuse. The domain separator
 for handshake signatures is `"aafp-v1-handshake"`.
 
-The ClientHello and ServerHello signatures are computed over the
-transcript hash at the point where that message is sent:
+The signature is over the 32-byte transcript hash (prefixed with the
+domain separator), not raw message concatenation. This is important
+for ML-DSA-65 which has a maximum message size.
 
+**Step 1: Initialize**
+
+After TLS handshake completion, both sides compute the TLS channel
+binding and initialize the transcript hash:
 ```
-ClientHello.signature = ML-DSA-65.Sign(
-    secret_key,
-    "aafp-v1-handshake" ||
-    SHA-256(tls_binding || canonical_CBOR(ClientHello_without_sig_and_mac)))
-
-ServerHello.signature = ML-DSA-65.Sign(
-    secret_key,
-    "aafp-v1-handshake" ||
-    SHA-256(tls_binding || CH_CBOR || SH_CBOR_without_sig))
-
-ClientFinished.signature = ML-DSA-65.Sign(
-    secret_key,
-    "aafp-v1-handshake" || h)
+tls_binding = TLS-Exporter("EXPORTER-AAFP-Channel-Binding", "", 32)
+h = SHA-256(tls_binding)
 ```
 
-Where:
-- `CH_CBOR` = `canonical_CBOR(ClientHello_without_sig_and_mac)`
-- `SH_CBOR_without_sig` = `canonical_CBOR(ServerHello_without_signature)`
-- `h` = final transcript hash after both ClientHello and ServerHello
+**Step 2: ClientHello Phase**
 
-The signature is over the 32-byte SHA-256 hash (prefixed with the
-domain separator), not the raw concatenation. This is important for
-ML-DSA-65 which has a maximum message size.
+Sender (client):
+1. Construct ClientHello without signature (key 7) and receiver_mac
+   (key 9).
+2. Compute `CH_CBOR = canonical_CBOR(ClientHello_without_sig_and_mac)`.
+3. Update transcript: `h = SHA-256(h || CH_CBOR)`.
+4. Compute signature:
+   ```
+   ClientHello.signature = ML-DSA-65.Sign(
+       secret_key,
+       "aafp-v1-handshake" || h)
+   ```
+5. Insert signature into ClientHello (key 7).
+6. Send ClientHello.
+
+Receiver (server):
+1. Receive ClientHello.
+2. Extract `CH_CBOR = canonical_CBOR(ClientHello_without_sig_and_mac)`.
+3. Update transcript: `h = SHA-256(h || CH_CBOR)`.
+4. Verify `ClientHello.signature` against `h` using the public key
+   in ClientHello (key 3).
+
+**Step 3: ServerHello Phase**
+
+Sender (server):
+1. Construct ServerHello without signature (key 8).
+2. Compute `SH_CBOR = canonical_CBOR(ServerHello_without_sig)`.
+3. Update transcript: `h = SHA-256(h || SH_CBOR)`.
+4. Compute signature:
+   ```
+   ServerHello.signature = ML-DSA-65.Sign(
+       secret_key,
+       "aafp-v1-handshake" || h)
+   ```
+5. Insert signature into ServerHello (key 8).
+6. Send ServerHello.
+
+Receiver (client):
+1. Receive ServerHello.
+2. Extract `SH_CBOR = canonical_CBOR(ServerHello_without_sig)`.
+3. Update transcript: `h = SHA-256(h || SH_CBOR)`.
+4. Verify `ServerHello.signature` against `h` using the public key
+   in ServerHello (key 3).
+
+**Step 4: ClientFinished Phase**
+
+Sender (client):
+1. Construct ClientFinished without signature (key 2).
+2. Compute `CF_CBOR = canonical_CBOR(ClientFinished_without_sig)`.
+3. Update transcript: `h = SHA-256(h || CF_CBOR)`.
+4. Compute signature:
+   ```
+   ClientFinished.signature = ML-DSA-65.Sign(
+       secret_key,
+       "aafp-v1-handshake" || h)
+   ```
+5. Insert signature into ClientFinished (key 2).
+6. Send ClientFinished.
+
+Receiver (server):
+1. Receive ClientFinished.
+2. Extract `CF_CBOR = canonical_CBOR(ClientFinished_without_sig)`.
+3. Update transcript: `h = SHA-256(h || CF_CBOR)`.
+4. Verify `ClientFinished.signature` against `h`.
+
+**Step 5: Session Established**
+
+The final transcript hash `h` (after Step 4) is used for Session ID
+derivation (Section 5.7).
+
+#### Key Principle
+
+The signature is ALWAYS computed over `"aafp-v1-handshake" || h` where
+`h` is the transcript hash AFTER the current message's CBOR has been
+folded in. The receiver ALWAYS updates the transcript hash BEFORE
+verifying the signature. This ensures both sides have the same `h`
+value at verification time.
 
 ### 5.7 Session ID
 
@@ -530,18 +591,48 @@ authenticated session. It MUST satisfy the following properties:
    agents' identities and the handshake transcript.
 
 The Session ID MUST be derived using HKDF-SHA256 over the transcript
-hash (Section 5.6) and both agents' nonces:
+hash after the ClientHello phase (Section 5.6, Step 2) and both
+agents' nonces:
 
 ```
 prk = HKDF-Extract(
     salt = client_nonce || server_nonce,
-    IKM  = transcript_hash)
+    IKM  = h_after_clienthello)
 session_id = HKDF-Expand(prk, info = "aafp-session-id-v1", L = 32)
 ```
 
-Where `transcript_hash` is the final transcript hash `h` from
-Section 5.6, and `client_nonce` / `server_nonce` are the 32-byte
-nonces from ClientHello (key 4) and ServerHello (key 4).
+Where:
+- `h_after_clienthello` is the transcript hash after Step 2 of
+  Section 5.6 (after ClientHello CBOR is folded in, before ServerHello).
+- `client_nonce` is the 32-byte nonce from ClientHello (key 4).
+- `server_nonce` is the 32-byte nonce from ServerHello (key 4).
+- Nonce concatenation order: `client_nonce` first, then `server_nonce`
+  (64 bytes total).
+- HKDF uses SHA-256 as the hash function.
+- The `info` string `"aafp-session-id-v1"` is encoded as raw UTF-8
+  bytes (no null terminator, no length prefix, no CBOR encoding).
+
+The server computes the Session ID before constructing ServerHello
+(it knows `h_after_clienthello` from receiving ClientHello, and it
+knows both nonces). The server includes the Session ID in ServerHello
+(key 7).
+
+The client computes the Session ID after receiving ServerHello (it
+needs the server's nonce). The client MUST verify that the Session ID
+in ServerHello (key 7) matches its independently derived value. If
+they differ, the client MUST send an ERROR frame with code 2006
+(HANDSHAKE_FAILED) and close the connection.
+
+The Session ID is bound to:
+- The TLS channel binding (via `h_after_clienthello`)
+- The ClientHello content (agent_id, public_key, capabilities,
+  extensions)
+- Both agents' nonces
+
+It is NOT directly bound to ServerHello content, but the ServerHello
+signature covers the full transcript (which includes ServerHello),
+and the ClientFinished signature covers the full transcript including
+ClientFinished. This provides end-to-end binding.
 
 This derivation is normative (MUST). All implementations MUST use
 this exact derivation to ensure session ID interoperability for
@@ -549,15 +640,18 @@ future session resumption features.
 
 ### 5.8 DoS Mitigation Profile (Optional)
 
-Deployments facing DoS threats (e.g., Internet-facing bootstrap
-nodes) MAY implement a pre-verification mechanism to reject invalid
-ClientHello messages before performing expensive ML-DSA-65 signature
-verification.
+Deployments facing DoS threats (e.g., Internet-facing bootstrap nodes,
+public network deployments) SHOULD implement the pre-verification
+mechanism described in this section. Private network deployments or
+authenticated environments MAY omit it.
+
+The DoS mitigation profile provides cheap HMAC verification (~1μs)
+before expensive ML-DSA-65 signature verification (~1ms), reducing
+the cost of rejecting invalid ClientHello messages by ~1000x.
 
 This profile is OPTIONAL. Implementations conforming to AAFP v1 are
-not required to implement it. Deployments that do not face DoS
-threats (e.g., private networks, authenticated environments) MAY
-omit it.
+not required to implement it. However, Internet-facing deployments
+SHOULD enable it.
 
 #### Mechanism
 
@@ -573,6 +667,13 @@ receiver_mac = HMAC-SHA256(
     key  = mac_key,
     data = canonical_CBOR(ClientHello_without_signature_and_receiver_mac))
 ```
+
+The `canonical_CBOR(ClientHello_without_signature_and_receiver_mac)`
+used for the receiver_mac computation is the same byte sequence as
+`CH_CBOR` used in the transcript hash (Section 5.6, Step 2). This is
+the canonical CBOR encoding of a map with keys 1, 2, 3, 4, 5, 6, 8,
+10 (excluding keys 7 and 9), per the signature input encoding rules
+in Section 5.6.
 
 The server verifies the receiver_mac (a cheap HMAC operation, ~1μs)
 before verifying the ML-DSA-65 signature (~1ms). If the MAC is
@@ -649,8 +750,20 @@ Each extension is encoded as:
 | Extension Type | 16 bits | Extension type identifier. See RFC-0006 for registry. |
 | Critical | 8 bits | If 0x01, the extension is critical. Unknown critical extensions MUST cause the frame to be rejected. If 0x00, unknown extensions MUST be skipped. |
 | Reserved | 8 bits | MUST be 0. MUST be ignored by receivers. |
-| Extension Data Length | 32 bits | Length of extension data in bytes. |
+| Extension Data Length | 32 bits | Length of extension data in bytes. Big-endian unsigned integer. |
 | Extension Data | Variable | Extension-type-specific data. |
+
+Multiple extensions are concatenated directly within the Extensions
+section of the frame body. Each extension is self-delimiting via its
+Extension Data Length field. There is no additional framing between
+extensions. The total size of all extensions MUST equal the Extension
+Length field in the frame header.
+
+Example with two extensions:
+```
+[Ext1.Type:2][Ext1.Critical:1][Ext1.Reserved:1][Ext1.DataLen:4][Ext1.Data:N]
+[Ext2.Type:2][Ext2.Critical:1][Ext2.Reserved:1][Ext2.DataLen:4][Ext2.Data:M]
+```
 
 ### 6.2 Extension Ordering
 
@@ -688,6 +801,11 @@ keys (per Section 8):
 ExtensionEntry = {
     1: uint,       // "type": Extension type (see RFC-0006 registry)
     2: bstr,       // "data": Extension-type-specific data
+    3: bool,       // "critical": If true, the extension is mandatory.
+                   //   If the server does not accept it, the handshake
+                   //   MUST fail with error 2005.
+                   //   If false, the extension is optional and the
+                   //   server MAY silently drop it.
 }
 ```
 
@@ -700,6 +818,26 @@ This MUST be a subset of the extensions proposed by the client.
 The server MUST NOT include extensions that the client did not
 propose.
 
+#### Parameter Negotiation
+
+When a client proposes an extension, the extension data (key 2)
+contains the client's proposed parameters. When the server accepts
+the extension, the server's extension data (key 2) contains the
+server's selected parameters, which MAY differ from the client's
+proposal.
+
+The semantics of parameter negotiation are extension-type-specific.
+The extension specification MUST define:
+- What parameters the client proposes
+- What parameters the server may select
+- Whether the server must select a subset of the client's proposal
+  or may choose independently
+
+Example (hypothetical max-frame-size extension, type 0x0003):
+- Client proposes: data = CBOR uint 1048576 (1 MiB)
+- Server selects: data = CBOR uint 262144 (256 KiB)
+- Both sides use 256 KiB as the maximum frame size for the session.
+
 #### Negotiation Rules
 
 1. The client proposes extensions by including ExtensionEntry maps
@@ -710,11 +848,11 @@ propose.
    parameters).
 3. Extensions not included in ServerHello.extensions are NOT active
    for the session.
-4. If the client proposed a mandatory extension (identified by type
-   in the 0x0000–0x3FFF range with the critical bit semantics per
-   RFC-0006) and the server did not accept it, the server MUST send
-   an ERROR frame with code 2005 (UNSUPPORTED_EXTENSIONS) and close
-   the connection.
+4. If the client proposed an extension with `critical = true` (key 3)
+   and the server did not accept it (did not include it in
+   ServerHello.extensions), the server MUST send an ERROR frame with
+   code 2005 (UNSUPPORTED_EXTENSIONS) and close the connection. If
+   `critical = false`, the server MAY silently drop the extension.
 5. Using a non-negotiated extension in a subsequent frame (after the
    handshake) is a protocol error. The receiver MUST send an ERROR
    frame with code 8007 (INVALID_FLAGS) and close the connection.
@@ -777,15 +915,39 @@ All AAFP CBOR structures MUST be encoded using length-first core
 deterministic encoding requirements (RFC 8949 Section 4.2.3) with
 the following rules:
 
-1. Map keys are sorted by length-first canonical byte ordering
-   (shortest encoding first, then bytewise lexicographic).
+1. Map keys are sorted by the length-first canonical byte ordering
+   of their CBOR encoding, as specified in RFC 8949 Section 4.2.3.
+   This means:
+   - Keys with shorter CBOR encodings come before keys with longer
+     encodings.
+   - Within the same encoding length, keys are sorted bytewise
+     lexicographically.
+   
+   For integer keys (CBOR major type 0 or 1):
+   - Integers 0-23: encoded as 1 byte. Sorted numerically.
+   - Integers 24-255: encoded as 2 bytes (0x18 prefix + value).
+     Sorted by value, which is the same as bytewise order.
+   - All 1-byte keys sort before all 2-byte keys.
+   
+   Example: keys 1, 2, 5, 10 sort as 1, 2, 5, 10 (all 1-byte).
+   Example: keys 1, 24, 100 sort as 1 (1-byte), then 24, 100 (2-byte).
 2. Integers use the shortest encoding.
 3. Floating-point values use the shortest encoding that preserves
-   precision.
+   precision. (Note: AAFP v1 does not use floating-point values in
+   any defined structure. This rule is included for completeness and
+   future compatibility.)
 4. Indefinite-length arrays and maps MUST NOT be used.
 5. Text strings use definite-length UTF-8 encoding.
 6. All CBOR maps use integer keys (not string keys). See Section 8.4
    for the normative key mapping table.
+
+**Exception**: The CapabilityDescriptor metadata map (RFC-0003
+Section 4.5) uses text string keys (CBOR major type 3), not integer
+keys. This is because metadata keys are application-defined and
+cannot be pre-assigned integer values. String keys in the metadata
+map are sorted by length-first canonical byte ordering of their
+UTF-8 encoding, consistent with RFC 8949 Section 4.2.3. All other
+AAFP CBOR maps use integer keys.
 
 Note: RFC 8949 obsoletes RFC 7049. The length-first deterministic
 encoding in RFC 8949 Section 4.2.3 is compatible with the canonical
@@ -862,6 +1024,7 @@ keys to field names for all structures defined in this RFC:
 | ClientFinished | 2 | signature |
 | ExtensionEntry | 1 | type |
 | ExtensionEntry | 2 | data |
+| ExtensionEntry | 3 | critical |
 
 For structures defined in other RFCs (AgentRecord, CapabilityDescriptor,
 UcanToken), see the key mapping in those RFCs.
