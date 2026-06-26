@@ -1,11 +1,12 @@
 # RFC-0004: AAFP Discovery
 
 ```
-Status:         Draft
+Status:         Draft (Revision 2)
 Number:         0004
 Title:          Discovery: Identity, Capability, Service, and Resource
 Author:         AAFP Project
 Created:        2025-06-25
+Revised:        2025-06-25 (Revision 2: amendments C4, H12)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -96,32 +97,37 @@ flags, configuration files, or DNS records).
 
 ### 3.3 Bootstrap RPC Methods
 
+RPC params and results use CBOR `any` type with integer keys (per
+RFC-0002 Section 4.3–4.4 and Section 8.4). The structure depends
+on the method.
+
 #### `aafp.discovery.announce`
 
 ```cbor
-// Request params
+// Request params (RpcRequest key 3)
 {
-    "record": AgentRecord,
+    1: AgentRecord,    // "record": The agent's AgentRecord
 }
 
-// Response result
+// Response result (RpcResponse key 2)
 {
-    "peers": [ *AgentRecord ],  // Known peers (may be empty)
+    1: [ *AgentRecord ],  // "peers": Known peers (may be empty)
 }
 ```
 
 #### `aafp.discovery.lookup`
 
 ```cbor
-// Request params
+// Request params (RpcRequest key 3)
 {
-    "capability": tstr,         // Capability name to search for
-    "limit": uint,              // Maximum results (optional, default 10)
+    1: tstr,          // "capability": Capability name to search for
+    2: uint / null,   // "limit": Maximum results (optional, default 5
+                      //   for unauthenticated, 10 for authenticated)
 }
 
-// Response result
+// Response result (RpcResponse key 2)
 {
-    "peers": [ *AgentRecord ],  // Agents with the requested capability
+    1: [ *AgentRecord ],  // "peers": Agents with the requested capability
 }
 ```
 
@@ -133,8 +139,23 @@ flags, configuration files, or DNS records).
   records.
 - Bootstrap nodes SHOULD evict expired records.
 - Bootstrap nodes SHOULD limit the number of records stored to
-  prevent memory exhaustion (RECOMMENDED: 10,000 records).
-- Bootstrap nodes MAY rate-limit announcements and lookups.
+  prevent memory exhaustion (RECOMMENDED: 100,000 records).
+- Bootstrap nodes MUST rate-limit discovery requests per connection:
+  - `announce`: Maximum 1 request per 60 seconds per connection.
+  - `lookup`: Maximum 10 requests per 60 seconds per connection.
+  - `pex`: Maximum 1 request per 60 seconds per connection.
+- Bootstrap nodes MUST verify the requester's AgentRecord signature
+  before responding to `lookup` requests. If the requester's
+  AgentRecord is invalid or expired, the bootstrap node MUST reject
+  the request with error code 4003 (RECORD_INVALID) or 4004
+  (RECORD_EXPIRED).
+- Bootstrap nodes MAY reject requests from agents that have not
+  announced their own AgentRecord.
+- Bootstrap nodes MAY rate-limit at the IP level for connections
+  that exceed per-connection limits.
+- The default `limit` parameter for `lookup` is 5 for
+  unauthenticated requests (requests from agents without a valid
+  AgentRecord) and 10 for authenticated requests.
 
 ## 4. Capability DHT
 
@@ -297,16 +318,16 @@ PEX is performed via RPC after the handshake completes:
 #### `aafp.discovery.pex`
 
 ```cbor
-// Request params
+// Request params (RpcRequest key 3)
 {
-    "known_peers": [ *AgentId ],  // AgentIds the requester already knows
-    "limit": uint,                // Maximum new peers to receive (optional)
+    1: [ *bstr ],     // "known_peers": AgentIds the requester already knows
+    2: uint / null,   // "limit": Maximum new peers to receive (optional)
 }
 
-// Response result
+// Response result (RpcResponse key 2)
 {
-    "peers": [ *AgentRecord ],    // Peers the responder knows that the
-                                  // requester doesn't
+    1: [ *AgentRecord ],  // "peers": Peers the responder knows that the
+                          // requester doesn't
 }
 ```
 

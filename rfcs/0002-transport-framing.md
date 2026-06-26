@@ -1,11 +1,12 @@
 # RFC-0002: AAFP Transport & Framing
 
 ```
-Status:         Draft
+Status:         Draft (Revision 2)
 Number:         0002
 Title:          Transport, Framing, Stream Multiplexing, and Wire Format
 Author:         AAFP Project
 Created:        2025-06-25
+Revised:        2025-06-25 (Revision 2: amendments C1-C5, H1-H2, H4-H6, H8)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -78,13 +79,34 @@ self-signed certificate's integrity.
 
 1. **Connect**: The initiating agent opens a QUIC connection to the
    peer's multiaddr. TLS negotiation occurs, including ALPN and PQ KEX.
-2. **Handshake**: After TLS completes, the AAFP application-layer
-   handshake occurs on stream 0 (see Section 5).
-3. **Established**: The session is authenticated. Agents may open
+2. **Channel Binding**: After TLS completes, both sides compute the
+   TLS channel binding value (see Section 5.6).
+3. **Handshake**: The AAFP application-layer handshake occurs on
+   stream 0 (see Section 5). The channel binding value is included
+   in the handshake transcript hash.
+4. **Established**: The session is authenticated. Agents may open
    additional streams for messaging.
-4. **Close**: Either agent may close the connection. The closing agent
+5. **Close**: Either agent may close the connection. The closing agent
    SHOULD send a close frame (see Section 4.5) before closing the QUIC
    connection.
+
+After TLS handshake completion and before sending the ClientHello,
+both sides MUST compute the TLS channel binding value:
+
+```
+tls_binding = TLS-Exporter("EXPORTER-AAFP-Channel-Binding", "", 32)
+```
+
+The TLS exporter is defined in RFC 8446 Section 7.5. It produces a
+32-byte value unique to the TLS session. Including this value in the
+AAFP transcript hash (Section 5.6) binds the AAFP session to the
+specific TLS channel, preventing relay attacks. See RFC 9266 for
+the standard TLS 1.3 channel binding mechanism.
+
+If the TLS exporter is not available (e.g., the TLS implementation
+does not support RFC 8446 exporters), the implementation MUST NOT
+proceed with the handshake. The connection MUST be closed with
+error code 2006 (HANDSHAKE_FAILED).
 
 ## 3. Frame Format
 
@@ -158,8 +180,11 @@ cross-stream ordering.
 
 The maximum payload size is 1 MiB (1,048,576 bytes). Implementations
 MUST reject frames with payloads larger than this limit by sending an
-error frame (see RFC-0005) with error code `8001` (frame too large)
-and closing the stream.
+ERROR frame (see RFC-0005) with error code `8001` (FRAME_TOO_LARGE)
+and closing the stream. The ERROR frame's fatal flag SHOULD be false
+(non-fatal), allowing the connection to continue for other streams.
+If the peer repeatedly sends oversized frames, the implementation MAY
+set the fatal flag to true and close the connection.
 
 Larger application messages MUST be fragmented across multiple frames
 on the same stream. The `MORE` flag (see Section 4.1) indicates that
@@ -216,13 +241,16 @@ FrameType = 0x03
 Payload:  CBOR-encoded RpcRequest
 ```
 
-The `RpcRequest` CBOR structure:
+The `RpcRequest` CBOR structure (integer keys, per Section 8):
 
 ```cbor
-{
-    "id": uint,          // Correlation ID (unique per connection)
-    "method": tstr,      // Method name
-    "params": bstr,      // Method parameters (opaque bytes)
+RpcRequest = {
+    1: uint,       // "id": Correlation ID (unique per connection)
+    2: tstr,       // "method": Method name
+    3: any,        // "params": Method parameters (CBOR any type)
+                   // Structure depends on the method. See individual
+                   // method definitions (e.g., RFC-0004 Section 3.3).
+                   // For methods with no parameters, use null.
 }
 ```
 
@@ -233,16 +261,17 @@ FrameType = 0x04
 Payload:  CBOR-encoded RpcResponse
 ```
 
-The `RpcResponse` CBOR structure:
+The `RpcResponse` CBOR structure (integer keys, per Section 8):
 
 ```cbor
-{
-    "id": uint,           // Matches the request ID
-    "result": bstr / null,  // Result data (null if error)
-    "error": {
-        "code": uint,     // Protocol error code (see RFC-0005)
-        "message": tstr,  // Human-readable error message
-        "data": bstr / null,  // Optional structured error data
+RpcResponse = {
+    1: uint,                    // "id": Matches the request ID
+    2: any / null,              // "result": Result data (null if error)
+                                // Structure depends on the method.
+    3: {                        // "error": Error object (null if success)
+        1: uint,                //   "code": Error code (see RFC-0005)
+        2: tstr,                //   "message": Human-readable message
+        3: bstr / null,         //   "data": Optional structured data
     } / null,
 }
 ```
@@ -254,12 +283,12 @@ FrameType = 0x05
 Payload:  CBOR-encoded CloseMessage
 ```
 
-The `CloseMessage` CBOR structure:
+The `CloseMessage` CBOR structure (integer keys, per Section 8):
 
 ```cbor
-{
-    "code": uint,       // Close reason code (see RFC-0005)
-    "message": tstr,    // Human-readable close reason
+CloseMessage = {
+    1: uint,       // "code": Close reason code (see RFC-0005)
+    2: tstr,       // "message": Human-readable close reason
 }
 ```
 
@@ -275,14 +304,14 @@ FrameType = 0x06
 Payload:  CBOR-encoded ErrorMessage
 ```
 
-The `ErrorMessage` CBOR structure:
+The `ErrorMessage` CBOR structure (integer keys, per Section 8):
 
 ```cbor
-{
-    "code": uint,        // Protocol error code (see RFC-0005)
-    "message": tstr,     // Human-readable error message
-    "data": bstr / null, // Optional structured error data
-    "fatal": bool,       // If true, the connection must be closed
+ErrorMessage = {
+    1: uint,            // "code": Protocol error code (see RFC-0005)
+    2: tstr,            // "message": Human-readable error message
+    3: bstr / null,     // "data": Optional structured error data
+    4: bool,            // "fatal": If true, the connection must be closed
 }
 ```
 
@@ -297,8 +326,20 @@ FrameType = 0x07
 Payload:  Empty (0 bytes)
 ```
 
-A PING frame is a keepalive probe. The receiver MUST respond with a
-PONG frame on the same stream.
+A PING frame is an application-layer keepalive probe. The receiver
+MUST respond with a PONG frame on the same stream.
+
+PING frames MAY be sent on any open stream, including stream 0
+(the handshake stream, which remains open after the handshake
+completes). Sending PING on stream 0 is RECOMMENDED for
+connection-level keepalive, as it does not require opening a new
+stream.
+
+Note: QUIC provides its own transport-level keepalive mechanism
+(via idle timeout and PING frames at the QUIC layer). AAFP PING/
+PONG frames are for application-layer liveness checks and are
+distinct from QUIC's keepalive. Implementations MAY use either or
+both mechanisms.
 
 ### 4.8 PONG Frame (0x08)
 
@@ -307,7 +348,8 @@ FrameType = 0x08
 Payload:  Empty (0 bytes)
 ```
 
-A PONG frame is the response to a PING frame.
+A PONG frame is the response to a PING frame. It MUST be sent on
+the same stream as the PING frame.
 
 ### 4.9 Reserved Frame Types
 
@@ -355,49 +397,127 @@ Client                                          Server
 ### 5.3 ClientHello
 
 ```cbor
-{
-    "protocol_version": uint,        // AAFP version (1)
-    "agent_id": bstr,                // 32-byte AgentId
-    "public_key": bstr,              // ML-DSA-65 public key (1952 bytes)
-    "nonce": bstr,                   // 32-byte random nonce
-    "capabilities": [ ... ],         // CapabilityDescriptor array
-    "extensions": [ ... ],           // Supported extensions (optional)
-    "signature": bstr,               // ML-DSA-65 signature over the
-                                     // CBOR encoding of this map
-                                     // (excluding "signature" field)
+ClientHello = {
+    1: uint,       // "protocol_version": AAFP version (1)
+    2: bstr,       // "agent_id": 32-byte AgentId
+    3: bstr,       // "public_key": ML-DSA-65 public key (1952 bytes)
+    4: bstr,       // "nonce": 32-byte random nonce
+    5: [ *CapabilityDescriptor ],  // "capabilities"
+    6: [ *ExtensionEntry ],        // "extensions" (see Section 6.4)
+    7: bstr,       // "signature": ML-DSA-65 signature (see Section 5.6)
+    8: uint,       // "expires_at": Unix timestamp (seconds)
+    9: bstr / null, // "receiver_mac": Optional DoS pre-verification
+                    //   MAC (see Section 5.8). Null if DoS profile
+                    //   is not active.
+    10: uint,      // "key_algorithm": Signature algorithm (see
+                   //   RFC-0003 Section 2.3). 1 = ML-DSA-65.
 }
 ```
 
 ### 5.4 ServerHello
 
 ```cbor
-{
-    "protocol_version": uint,        // AAFP version (1)
-    "agent_id": bstr,                // 32-byte AgentId
-    "public_key": bstr,              // ML-DSA-65 public key (1952 bytes)
-    "nonce": bstr,                   // 32-byte random nonce
-    "capabilities": [ ... ],         // CapabilityDescriptor array
-    "extensions": [ ... ],           // Supported extensions (optional)
-    "session_id": bstr,              // Cryptographically unique session
-                                     // identifier (see RFC-0003)
-    "signature": bstr,               // ML-DSA-65 signature over the
-                                     // CBOR encoding of this map
-                                     // (excluding "signature" field)
+ServerHello = {
+    1: uint,       // "protocol_version": AAFP version (1)
+    2: bstr,       // "agent_id": 32-byte AgentId
+    3: bstr,       // "public_key": ML-DSA-65 public key (1952 bytes)
+    4: bstr,       // "nonce": 32-byte random nonce
+    5: [ *CapabilityDescriptor ],  // "capabilities"
+    6: [ *ExtensionEntry ],        // "extensions" (accepted subset,
+                                   //   see Section 6.4)
+    7: bstr,       // "session_id": Session identifier (see Section 5.7)
+    8: bstr,       // "signature": ML-DSA-65 signature (see Section 5.6)
+    9: uint,       // "expires_at": Unix timestamp (seconds)
+    10: uint,      // "key_algorithm": Signature algorithm
 }
 ```
 
 ### 5.5 ClientFinished
 
 ```cbor
-{
-    "session_id": bstr,              // Echoed from ServerHello
-    "signature": bstr,               // ML-DSA-65 signature over
-                                     // (ClientHello || ServerHello)
-                                     // transcript
+ClientFinished = {
+    1: bstr,       // "session_id": Echoed from ServerHello
+    2: bstr,       // "signature": ML-DSA-65 signature over
+                   //   transcript hash (see Section 5.6)
 }
 ```
 
-### 5.6 Session ID
+### 5.6 Transcript Hash
+
+The handshake transcript hash is a running SHA-256 hash over the
+canonical CBOR encodings of handshake messages, prefixed with the
+TLS channel binding value (see Section 2.5).
+
+The transcript hash is computed as follows:
+
+1. After TLS handshake completion, both sides compute the TLS
+   channel binding:
+   ```
+   tls_binding = TLS-Exporter("EXPORTER-AAFP-Channel-Binding", "", 32)
+   ```
+
+2. Initialize the transcript hash:
+   ```
+   h = SHA-256(tls_binding)
+   ```
+
+3. After sending or receiving ClientHello, update:
+   ```
+   h = SHA-256(h || canonical_CBOR(ClientHello_without_signature_and_receiver_mac))
+   ```
+   Where `canonical_CBOR(ClientHello_without_signature_and_receiver_mac)`
+   is the canonical CBOR encoding of the ClientHello map excluding
+   the signature field (key 7) and the receiver_mac field (key 9).
+   The receiver_mac is excluded because it is verified before the
+   signature (it is a DoS pre-filter, see Section 5.8).
+
+4. After sending or receiving ServerHello, update:
+   ```
+   h = SHA-256(h || canonical_CBOR(ServerHello_without_signature))
+   ```
+   Where `canonical_CBOR(ServerHello_without_signature)` is the
+   canonical CBOR encoding of the ServerHello map excluding the
+   signature field (key 8).
+
+5. The final transcript hash `h` is used for:
+   - ClientFinished signature (Section 5.5)
+   - Session ID derivation (Section 5.7)
+
+#### Signature Computations
+
+All AAFP signatures use domain separators (see RFC-0003 Section 3.5)
+to prevent cross-protocol signature reuse. The domain separator
+for handshake signatures is `"aafp-v1-handshake"`.
+
+The ClientHello and ServerHello signatures are computed over the
+transcript hash at the point where that message is sent:
+
+```
+ClientHello.signature = ML-DSA-65.Sign(
+    secret_key,
+    "aafp-v1-handshake" ||
+    SHA-256(tls_binding || canonical_CBOR(ClientHello_without_sig_and_mac)))
+
+ServerHello.signature = ML-DSA-65.Sign(
+    secret_key,
+    "aafp-v1-handshake" ||
+    SHA-256(tls_binding || CH_CBOR || SH_CBOR_without_sig))
+
+ClientFinished.signature = ML-DSA-65.Sign(
+    secret_key,
+    "aafp-v1-handshake" || h)
+```
+
+Where:
+- `CH_CBOR` = `canonical_CBOR(ClientHello_without_sig_and_mac)`
+- `SH_CBOR_without_sig` = `canonical_CBOR(ServerHello_without_signature)`
+- `h` = final transcript hash after both ClientHello and ServerHello
+
+The signature is over the 32-byte SHA-256 hash (prefixed with the
+domain separator), not the raw concatenation. This is important for
+ML-DSA-65 which has a maximum message size.
+
+### 5.7 Session ID
 
 The Session ID is a cryptographically unique identifier bound to the
 authenticated session. It MUST satisfy the following properties:
@@ -409,21 +529,99 @@ authenticated session. It MUST satisfy the following properties:
 3. **Binding**: The Session ID is cryptographically bound to both
    agents' identities and the handshake transcript.
 
-The derivation method is an implementation detail. A RECOMMENDED
-approach is `HKDF-SHA256(handshake_transcript, info="aafp-session-id")`,
-but implementations MAY use any method satisfying the above properties.
+The Session ID MUST be derived using HKDF-SHA256 over the transcript
+hash (Section 5.6) and both agents' nonces:
 
-### 5.7 Handshake Error Handling
+```
+prk = HKDF-Extract(
+    salt = client_nonce || server_nonce,
+    IKM  = transcript_hash)
+session_id = HKDF-Expand(prk, info = "aafp-session-id-v1", L = 32)
+```
+
+Where `transcript_hash` is the final transcript hash `h` from
+Section 5.6, and `client_nonce` / `server_nonce` are the 32-byte
+nonces from ClientHello (key 4) and ServerHello (key 4).
+
+This derivation is normative (MUST). All implementations MUST use
+this exact derivation to ensure session ID interoperability for
+future session resumption features.
+
+### 5.8 DoS Mitigation Profile (Optional)
+
+Deployments facing DoS threats (e.g., Internet-facing bootstrap
+nodes) MAY implement a pre-verification mechanism to reject invalid
+ClientHello messages before performing expensive ML-DSA-65 signature
+verification.
+
+This profile is OPTIONAL. Implementations conforming to AAFP v1 are
+not required to implement it. Deployments that do not face DoS
+threats (e.g., private networks, authenticated environments) MAY
+omit it.
+
+#### Mechanism
+
+When the DoS mitigation profile is active, the ClientHello includes
+field 9 (receiver_mac) containing a receiver MAC:
+
+```
+mac_key = HKDF-SHA256(
+    input = receiver_agent_id,
+    info  = "aafp-v1-dos-mac-key",
+    L     = 32)
+receiver_mac = HMAC-SHA256(
+    key  = mac_key,
+    data = canonical_CBOR(ClientHello_without_signature_and_receiver_mac))
+```
+
+The server verifies the receiver_mac (a cheap HMAC operation, ~1μs)
+before verifying the ML-DSA-65 signature (~1ms). If the MAC is
+invalid, the server rejects the ClientHello with error code 2009
+(RECEIVER_MAC_INVALID) without performing signature verification.
+
+The receiver_mac proves that the sender knows the receiver's
+AgentId. It does NOT authenticate the sender (the sender's identity
+is verified by the ML-DSA-65 signature). The purpose of
+receiver_mac is to allow the server to reject messages from
+attackers who do not know the server's AgentId, without performing
+expensive signature verification.
+
+#### Negotiation
+
+The DoS mitigation profile is negotiated via a handshake extension
+(type 0x0001, "dos-mitigation"). The client includes this extension
+in ClientHello.extensions if it supports the profile. The server
+includes it in ServerHello.extensions if it requires the profile.
+
+If the server requires the profile but the client did not propose
+it, the server MUST send an ERROR frame with code 2005
+(UNSUPPORTED_EXTENSIONS) and close the connection.
+
+If neither side requires the profile, ClientHello field 9
+(receiver_mac) MAY be null. If field 9 is null, the server proceeds
+directly to signature verification.
+
+#### Cookie Mechanism (Future)
+
+A cookie-based mechanism (similar to WireGuard's mac2) for
+proof-of-IP under load is deferred to a future RFC. The current
+profile provides receiver-identity verification but not
+source-address verification.
+
+### 5.9 Handshake Error Handling
 
 If the handshake fails, the detecting side MUST send an ERROR frame
 with an appropriate error code (see RFC-0005) and close the connection.
 
 Handshake error codes:
-- `2001`: Invalid signature
-- `2002`: Expired or revoked identity
+- `2001`: Invalid signature (ML-DSA-65 signature verification failed)
+- `2002`: Expired or revoked identity (`expires_at` is in the past)
 - `2003`: Unknown agent
 - `2004`: Protocol version mismatch
 - `2005`: Unsupported extensions
+- `2006`: Handshake failed (including TLS exporter unavailable)
+- `2007`: Invalid AgentId (AgentId does not match SHA-256(public_key))
+- `2009`: Receiver MAC invalid (DoS pre-verification failed)
 
 ## 6. Extensions
 
@@ -472,7 +670,75 @@ ignored (or rejected if critical).
   receiver to understand the extension. If the receiver does not
   recognize it, the frame MUST be rejected.
 
-See RFC-0006 for the extension negotiation protocol and registry.
+See Section 6.4 for the handshake extension negotiation protocol.
+See RFC-0006 for the extension type registry.
+
+### 6.4 Handshake Extension Negotiation
+
+Extensions are negotiated during the handshake. The ClientHello
+includes a list of proposed extensions; the ServerHello includes a
+list of accepted extensions (a subset of the client's proposals).
+
+#### Extension Entry Format
+
+Each extension entry in the handshake is a CBOR map with integer
+keys (per Section 8):
+
+```cbor
+ExtensionEntry = {
+    1: uint,       // "type": Extension type (see RFC-0006 registry)
+    2: bstr,       // "data": Extension-type-specific data
+}
+```
+
+The ClientHello.extensions field (key 6) is a CBOR array of
+ExtensionEntry maps, listing all extensions the client proposes.
+
+The ServerHello.extensions field (key 6) is a CBOR array of
+ExtensionEntry maps, listing the extensions the server accepts.
+This MUST be a subset of the extensions proposed by the client.
+The server MUST NOT include extensions that the client did not
+propose.
+
+#### Negotiation Rules
+
+1. The client proposes extensions by including ExtensionEntry maps
+   in ClientHello.extensions.
+2. The server accepts a subset by including ExtensionEntry maps in
+   ServerHello.extensions. The server MAY include extension data
+   that differs from the client's proposal (e.g., selecting
+   parameters).
+3. Extensions not included in ServerHello.extensions are NOT active
+   for the session.
+4. If the client proposed a mandatory extension (identified by type
+   in the 0x0000–0x3FFF range with the critical bit semantics per
+   RFC-0006) and the server did not accept it, the server MUST send
+   an ERROR frame with code 2005 (UNSUPPORTED_EXTENSIONS) and close
+   the connection.
+5. Using a non-negotiated extension in a subsequent frame (after the
+   handshake) is a protocol error. The receiver MUST send an ERROR
+   frame with code 8007 (INVALID_FLAGS) and close the connection.
+
+#### Relationship to Frame Extensions
+
+Frame-level extensions (Section 6.1) use a binary encoding in the
+frame body's Extension section. Handshake-level extensions use CBOR
+ExtensionEntry maps in the handshake messages. These are distinct
+mechanisms:
+
+- Handshake extensions negotiate session-wide features.
+- Frame extensions carry per-frame metadata.
+
+A handshake extension MAY correspond to a frame extension type. For
+example, a compression extension negotiated in the handshake would
+enable the COMPRESSED flag in DATA frames.
+
+#### Defined Handshake Extensions
+
+| Type | Name | Description |
+|------|------|-------------|
+| 0x0001 | dos-mitigation | DoS pre-verification profile (Section 5.8) |
+| 0x0002–0x3FFF | Reserved | Standards-track (assigned via RFC) |
 
 ## 7. Stream Multiplexing
 
@@ -507,16 +773,23 @@ built-in flow control.
 
 ### 8.1 Canonical CBOR
 
-All AAFP CBOR structures MUST be encoded using deterministic CBOR
-(RFC 7049 Section 3.9) with the following rules:
+All AAFP CBOR structures MUST be encoded using length-first core
+deterministic encoding requirements (RFC 8949 Section 4.2.3) with
+the following rules:
 
-1. Map keys are sorted by canonical byte ordering of their CBOR
-   encoding (shortest encoding first, then lexicographic).
+1. Map keys are sorted by length-first canonical byte ordering
+   (shortest encoding first, then bytewise lexicographic).
 2. Integers use the shortest encoding.
 3. Floating-point values use the shortest encoding that preserves
    precision.
 4. Indefinite-length arrays and maps MUST NOT be used.
 5. Text strings use definite-length UTF-8 encoding.
+6. All CBOR maps use integer keys (not string keys). See Section 8.4
+   for the normative key mapping table.
+
+Note: RFC 8949 obsoletes RFC 7049. The length-first deterministic
+encoding in RFC 8949 Section 4.2.3 is compatible with the canonical
+CBOR rules in RFC 7049 Section 3.9.
 
 ### 8.2 Why Canonical Encoding
 
@@ -541,6 +814,57 @@ compatibility:
   their original semantics.
 - Field types MUST NOT change. A field that is `uint` in v1 MUST
   remain `uint` in all future versions.
+
+### 8.4 Integer Key Mapping Table
+
+All AAFP CBOR structures use integer keys for compact encoding and
+deterministic canonical ordering. The following table maps integer
+keys to field names for all structures defined in this RFC:
+
+| Structure | Key | Field Name |
+|-----------|-----|------------|
+| RpcRequest | 1 | id |
+| RpcRequest | 2 | method |
+| RpcRequest | 3 | params |
+| RpcResponse | 1 | id |
+| RpcResponse | 2 | result |
+| RpcResponse | 3 | error |
+| RpcResponse.error | 1 | code |
+| RpcResponse.error | 2 | message |
+| RpcResponse.error | 3 | data |
+| CloseMessage | 1 | code |
+| CloseMessage | 2 | message |
+| ErrorMessage | 1 | code |
+| ErrorMessage | 2 | message |
+| ErrorMessage | 3 | data |
+| ErrorMessage | 4 | fatal |
+| ClientHello | 1 | protocol_version |
+| ClientHello | 2 | agent_id |
+| ClientHello | 3 | public_key |
+| ClientHello | 4 | nonce |
+| ClientHello | 5 | capabilities |
+| ClientHello | 6 | extensions |
+| ClientHello | 7 | signature |
+| ClientHello | 8 | expires_at |
+| ClientHello | 9 | receiver_mac |
+| ClientHello | 10 | key_algorithm |
+| ServerHello | 1 | protocol_version |
+| ServerHello | 2 | agent_id |
+| ServerHello | 3 | public_key |
+| ServerHello | 4 | nonce |
+| ServerHello | 5 | capabilities |
+| ServerHello | 6 | extensions |
+| ServerHello | 7 | session_id |
+| ServerHello | 8 | signature |
+| ServerHello | 9 | expires_at |
+| ServerHello | 10 | key_algorithm |
+| ClientFinished | 1 | session_id |
+| ClientFinished | 2 | signature |
+| ExtensionEntry | 1 | type |
+| ExtensionEntry | 2 | data |
+
+For structures defined in other RFCs (AgentRecord, CapabilityDescriptor,
+UcanToken), see the key mapping in those RFCs.
 
 ## 9. Security Considerations
 
@@ -578,8 +902,14 @@ This RFC defines the following registries (managed per RFC-0006):
 ## 11. References
 
 - RFC 2119: Key words for use in RFCs to indicate requirement levels
-- RFC 7049: Concise Binary Object Representation (CBOR)
+- RFC 8949: Concise Binary Object Representation (CBOR) [obsoletes
+  RFC 7049]
 - RFC 9000: QUIC: A UDP-Based Multiplexed and Secure Transport
 - RFC 8446: The Transport Layer Security (TLS) Protocol Version 1.3
+- RFC 9266: Channel Bindings for TLS 1.3
 - FIPS 203: Module-Lattice-Based Key-Encapsulation Mechanism (ML-KEM)
-- FIPS 204: Module-Lattice-Based Digital Signature (ML-DSA)
+- FIPS 204: Module-Lattice-Based Digital Signature Standard (ML-DSA)
+- RFC-0001: AAFP Protocol Overview
+- RFC-0003: AAFP Identity & Authentication
+- RFC-0005: AAFP Error Model
+- RFC-0006: AAFP Versioning & Compatibility

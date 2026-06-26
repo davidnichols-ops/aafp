@@ -1,11 +1,12 @@
 # RFC-0001: AAFP Protocol Overview
 
 ```
-Status:         Draft
+Status:         Draft (Revision 2)
 Number:         0001
 Title:          Protocol Overview, Goals, and Layer Architecture
 Author:         AAFP Project
 Created:        2025-06-25
+Revised:        2025-06-25 (Revision 2: amendments C5, C6)
 Type:           Informational
 Obsoletes:      —
 Obsoleted by:   —
@@ -274,15 +275,13 @@ to the rules in RFC-0006.
 
 ### 7.3 Implementation Conformance
 
-An implementation conforms to AAFP v0.1 if it:
+The normative conformance requirements for AAFP version 1 are
+defined in RFC-0006 Section 8.1. Implementations conforming to
+this RFC series MUST satisfy those requirements.
 
-1. Uses QUIC as the transport protocol
-2. Negotiates `X25519MLKEM768` for TLS key exchange
-3. Derives AgentId as `SHA-256(ML-DSA-65 public key)`
-4. Serializes AgentRecord as CBOR per RFC-0003
-5. Frames messages per RFC-0002
-6. Handles unknown fields per RFC-0006
-7. Returns protocol errors per RFC-0005
+The v0.1 MVP conformance requirements (defined in the pre-RFC
+implementation) are obsolete and MUST NOT be used for conformance
+claims.
 
 ## 8. RFC Organization
 
@@ -311,8 +310,16 @@ today and decrypt it once a quantum computer becomes available.
 ### 9.3 Identity Binding
 
 The AAFP application-layer handshake binds the TLS session to the
-agent's ML-DSA-65 identity. This provides end-to-end authentication
-independent of the TLS certificate chain.
+agent's ML-DSA-65 identity via TLS channel binding. The TLS exporter
+value (RFC 8446 Section 7.5, using the label
+"EXPORTER-AAFP-Channel-Binding" per RFC 9266) is included in the
+handshake transcript hash. This prevents relay attacks: an attacker
+who terminates TLS on both sides cannot relay AAFP handshake
+messages because the transcript hashes will differ (the TLS sessions
+differ), causing signature verification failure.
+
+This provides end-to-end authentication independent of the TLS
+certificate chain.
 
 ### 9.4 Authorization
 
@@ -326,7 +333,9 @@ The TOFU model for TLS certificates is vulnerable to man-in-the-middle
 attacks on first connection. This is mitigated by:
 
 - The application-layer handshake verifying ML-DSA-65 identity
+- TLS channel binding preventing relay attacks (Section 9.3)
 - AgentRecord signatures providing out-of-band verification
+- AgentId fingerprints for human verification (see RFC-0003 Section 2.6)
 - Future support for ML-DSA-65 TLS certificates
 
 ## 10. IANA Considerations
