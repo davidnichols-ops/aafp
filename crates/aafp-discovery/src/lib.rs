@@ -14,8 +14,15 @@
 
 pub mod bootstrap;
 pub mod capability_dht;
+pub mod discovery_v1;
 pub mod regional;
 
 pub use bootstrap::{BootstrapConfig, BootstrapDiscovery};
 pub use capability_dht::{CapabilityDht, DhtError, DhtRecord};
+pub use discovery_v1::{
+    AnnounceParams, AnnounceResult, CapabilityDht as CapabilityDhtV1, DiscoveryError,
+    LookupParams, LookupResult, SharedCapabilityDht, METHOD_ANNOUNCE, METHOD_LOOKUP, METHOD_PEX,
+    DEFAULT_LIMIT_AUTH, DEFAULT_LIMIT_UNAUTH, MAX_CONCURRENT_STREAMS, MAX_RECORDS,
+    RATE_LIMIT_ANNOUNCE, RATE_LIMIT_LOOKUP, shared_dht,
+};
 pub use regional::{RegionalDiscovery, Region};

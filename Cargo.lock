@@ -85,7 +85,9 @@ dependencies = [
 name = "aafp-discovery"
 version = "0.1.0"
 dependencies = [
+ "aafp-cbor",
  "aafp-core",
+ "aafp-crypto",
  "aafp-identity",
  "serde",
  "sha2",
