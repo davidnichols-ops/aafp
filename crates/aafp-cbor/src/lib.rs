@@ -306,6 +306,13 @@ fn decode_value(data: &[u8], pos: &mut usize) -> Result<Value, CborError> {
             for _ in 0..len {
                 let key = decode_value(data, pos)?;
                 let val = decode_value(data, pos)?;
+                // Check for duplicate keys (canonical CBOR requires unique keys)
+                if entries.iter().any(|(k, _)| k == &key) {
+                    return Err(CborError::Invalid {
+                        offset: *pos,
+                        message: "duplicate map key".to_string(),
+                    });
+                }
                 entries.push((key, val));
             }
             // Convert to IntMap or StrMap based on key types
@@ -380,6 +387,15 @@ fn read_argument(data: &[u8], pos: &mut usize, ai: u8) -> Result<u64, CborError>
             }
             let val = data[*pos] as u64;
             *pos += 1;
+            // Canonical check: values 0-23 must use immediate encoding, not AI_ONE_BYTE
+            if val <= 23 {
+                return Err(CborError::Invalid {
+                    offset: *pos - 1,
+                    message: format!(
+                        "non-canonical encoding: value {val} should use immediate encoding, not AI_ONE_BYTE"
+                    ),
+                });
+            }
             Ok(val)
         }
         AI_TWO_BYTES => {
@@ -388,6 +404,15 @@ fn read_argument(data: &[u8], pos: &mut usize, ai: u8) -> Result<u64, CborError>
             }
             let val = u16::from_be_bytes(data[*pos..*pos + 2].try_into().unwrap()) as u64;
             *pos += 2;
+            // Canonical check: values 0-255 should use AI_ONE_BYTE, not AI_TWO_BYTES
+            if val <= 255 {
+                return Err(CborError::Invalid {
+                    offset: *pos - 2,
+                    message: format!(
+                        "non-canonical encoding: value {val} should use shorter encoding"
+                    ),
+                });
+            }
             Ok(val)
         }
         AI_FOUR_BYTES => {
@@ -396,6 +421,15 @@ fn read_argument(data: &[u8], pos: &mut usize, ai: u8) -> Result<u64, CborError>
             }
             let val = u32::from_be_bytes(data[*pos..*pos + 4].try_into().unwrap()) as u64;
             *pos += 4;
+            // Canonical check: values 0-65535 should use AI_TWO_BYTES, not AI_FOUR_BYTES
+            if val <= 65535 {
+                return Err(CborError::Invalid {
+                    offset: *pos - 4,
+                    message: format!(
+                        "non-canonical encoding: value {val} should use shorter encoding"
+                    ),
+                });
+            }
             Ok(val)
         }
         AI_EIGHT_BYTES => {
@@ -404,6 +438,15 @@ fn read_argument(data: &[u8], pos: &mut usize, ai: u8) -> Result<u64, CborError>
             }
             let val = u64::from_be_bytes(data[*pos..*pos + 8].try_into().unwrap());
             *pos += 8;
+            // Canonical check: values 0-4294967295 should use AI_FOUR_BYTES, not AI_EIGHT_BYTES
+            if val <= 4294967295 {
+                return Err(CborError::Invalid {
+                    offset: *pos - 8,
+                    message: format!(
+                        "non-canonical encoding: value {val} should use shorter encoding"
+                    ),
+                });
+            }
             Ok(val)
         }
         AI_BREAK => Err(CborError::Unsupported {

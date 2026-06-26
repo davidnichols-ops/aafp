@@ -18,3 +18,6 @@ pub mod rfc0002;
 pub mod rfc0003;
 pub mod rfc0004;
 pub mod rfc0005;
+pub mod test_vectors;
+pub mod handshake_vectors;
+pub mod negative;
