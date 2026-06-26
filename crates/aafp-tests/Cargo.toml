@@ -1,0 +1,19 @@
+[package]
+name = "aafp-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aafp-crypto = { workspace = true }
+aafp-identity = { workspace = true }
+aafp-discovery = { workspace = true }
+aafp-messaging = { workspace = true }
+aafp-nat = { workspace = true }
+aafp-sdk = { workspace = true }
+aafp-transport-quic = { workspace = true }
+tokio = { workspace = true }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

@@ -1,0 +1,33 @@
+[package]
+name = "aafp-benchmark"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bench]]
+name = "handshake"
+path = "benches/handshake.rs"
+
+[[bench]]
+name = "discovery"
+path = "benches/discovery.rs"
+
+[[bench]]
+name = "messaging"
+path = "benches/messaging.rs"
+
+[dependencies]
+aafp-crypto = { workspace = true }
+aafp-identity = { workspace = true }
+aafp-discovery = { workspace = true }
+aafp-messaging = { workspace = true }
+aafp-sdk = { workspace = true }
+aafp-transport-quic = { workspace = true }
+criterion = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tokio = { workspace = true }
