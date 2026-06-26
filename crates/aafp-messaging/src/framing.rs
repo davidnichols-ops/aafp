@@ -234,10 +234,17 @@ pub fn decode_frame(data: &[u8]) -> Result<(Frame, usize), FrameError> {
         return Err(FrameError::PayloadTooLarge(payload_len, MAX_PAYLOAD_SIZE));
     }
 
-    let total_body = ext_len + payload_len;
-    if data.len() < FRAME_HEADER_SIZE + total_body {
+    let total_body = ext_len.checked_add(payload_len).ok_or(FrameError::PayloadTooLarge(
+        usize::MAX,
+        MAX_PAYLOAD_SIZE,
+    ))?;
+    let total_frame = FRAME_HEADER_SIZE.checked_add(total_body).ok_or(FrameError::PayloadTooLarge(
+        usize::MAX,
+        MAX_PAYLOAD_SIZE,
+    ))?;
+    if data.len() < total_frame {
         return Err(FrameError::Incomplete {
-            needed: FRAME_HEADER_SIZE + total_body,
+            needed: total_frame,
             have: data.len(),
         });
     }
@@ -245,7 +252,7 @@ pub fn decode_frame(data: &[u8]) -> Result<(Frame, usize), FrameError> {
     let frame_type = FrameType::from_u8(frame_type_raw).ok_or(FrameError::UnknownFrameType(frame_type_raw))?;
 
     let extensions = data[FRAME_HEADER_SIZE..FRAME_HEADER_SIZE + ext_len].to_vec();
-    let payload = data[FRAME_HEADER_SIZE + ext_len..FRAME_HEADER_SIZE + ext_len + payload_len].to_vec();
+    let payload = data[FRAME_HEADER_SIZE + ext_len..total_frame].to_vec();
 
     let frame = Frame {
         frame_type,
@@ -255,7 +262,7 @@ pub fn decode_frame(data: &[u8]) -> Result<(Frame, usize), FrameError> {
         payload,
     };
 
-    Ok((frame, FRAME_HEADER_SIZE + total_body))
+    Ok((frame, total_frame))
 }
 
 /// Tokio codec for AAFP frames over QUIC streams.

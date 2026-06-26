@@ -1,0 +1,49 @@
+[package]
+name = "aafp-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+aafp-cbor = { path = "../crates/aafp-cbor" }
+aafp-messaging = { path = "../crates/aafp-messaging" }
+aafp-crypto = { path = "../crates/aafp-crypto" }
+aafp-identity = { path = "../crates/aafp-identity" }
+aafp-discovery = { path = "../crates/aafp-discovery" }
+aafp-core = { path = "../crates/aafp-core" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "fuzz_cbor_decode"
+path = "fuzz_targets/fuzz_cbor_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_frame_decode"
+path = "fuzz_targets/fuzz_frame_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_handshake_cbor"
+path = "fuzz_targets/fuzz_handshake_cbor.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_agent_record_cbor"
+path = "fuzz_targets/fuzz_agent_record_cbor.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_rpc_decode"
+path = "fuzz_targets/fuzz_rpc_decode.rs"
+test = false
+doc = false
