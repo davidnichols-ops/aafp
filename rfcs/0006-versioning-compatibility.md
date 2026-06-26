@@ -1,7 +1,7 @@
 # RFC-0006: AAFP Versioning & Compatibility
 
 ```
-Status:         Draft (Revision 2)
+Status:         Freeze Candidate (Revision 2)
 Number:         0006
 Title:          Protocol Versioning, Extension Registry, and
                 Compatibility Rules
@@ -91,6 +91,54 @@ be closed. There is no in-band version downgrade mechanism.
    SHOULD NOT use it. Existing implementations MAY continue.
 5. **Retired**: Version is no longer supported. ALPN identifiers
    for retired versions MAY be reassigned.
+
+### 2.5 Specification Lifecycle
+
+The RFC documents have a lifecycle distinct from the protocol
+version they specify:
+
+1. **Draft**: RFC is being written and may change significantly.
+   No freeze commitment.
+2. **Freeze Candidate**: RFC is believed complete. No further
+   architectural changes unless an interoperability or security
+   issue is discovered. Implementation may begin, but implementers
+   should expect minor clarifications.
+3. **Proposed**: RFC has passed independent specification review.
+   Two or more implementations are in progress.
+4. **Stable**: RFC has two or more interoperable implementations
+   that pass conformance tests. Changes require a new revision
+   with explicit justification.
+
+Current specification status: **Freeze Candidate (Revision 2)**
+
+The RFCs are designated as Candidate Protocol 0.9. The protocol
+version field remains 1. The "0.9" designation indicates that the
+specification is not yet validated through independent
+implementation. Once two independent implementations achieve
+interoperability, the specification will advance to Proposed and
+the candidate designation will be dropped.
+
+#### Freeze Commitment
+
+During the freeze candidate phase:
+
+- **No new features** will be added to the RFCs.
+- **No architectural changes** will be made unless they address a
+  genuine interoperability or security issue discovered during
+  implementation or review.
+- **Clarifications** (improved wording, additional examples, cross-
+  reference fixes) MAY be made without a new revision if they do
+  not change the normative requirements.
+- **Normative changes** require a new revision (Revision 3) and
+  must be documented in RFC_CHANGELOG.md with justification.
+
+#### Change Control
+
+All proposed changes to the RFCs during the freeze candidate phase
+MUST be documented as an amendment proposal (following the
+AMENDMENTS-0001 pattern) and reviewed through the approval gate
+process (following the AMENDMENT_STATUS.md pattern) before being
+applied.
 
 ## 3. Extension Registry
 
@@ -393,7 +441,91 @@ This RFC defines the following registries:
 
 All registries use the assignment policies specified in this RFC.
 
-## 11. References
+## 11. Governance
+
+### 11.1 RFC Lifecycle
+
+AAFP RFCs follow the specification lifecycle defined in Section 2.5:
+
+1. **Draft** → **Freeze Candidate** → **Proposed** → **Stable**
+
+Transitions require:
+- Draft → Freeze Candidate: Internal review complete, no known
+  architectural issues.
+- Freeze Candidate → Proposed: Independent specification review
+  complete, at least one implementation in progress.
+- Proposed → Stable: Two or more interoperable implementations
+  pass conformance tests.
+
+### 11.2 Amendment Process
+
+Changes to Stable or Freeze Candidate RFCs MUST follow the
+amendment process:
+
+1. **Amendment proposal**: Document the issue, proposed change,
+   rationale, affected RFCs, wire protocol impact, backward
+   compatibility analysis, and answers to the four architecture
+   questions (see AMENDMENTS-0001 for the template).
+2. **Approval gate**: Produce an impact matrix identifying
+   normative/informative status, wire changes, crypto changes,
+   backward compatibility, version impact, risk of future regret,
+   and recommendation (Accept/Defer/Reject). Identify one-way
+   doors. Verify cryptographic choices against current standards.
+3. **Application**: Apply only approved amendments. Generate
+   updated RFCs, RFC_CHANGELOG.md, and AMENDMENT_STATUS.md.
+4. **Revision**: New RFC revision (e.g., Revision 2 → Revision 3)
+   with changelog entry.
+
+### 11.3 Security Disclosure Process
+
+Security vulnerabilities in the AAFP protocol or reference
+implementation SHOULD be reported through the following process:
+
+1. **Report**: Report vulnerabilities privately to the AAFP
+   project maintainers. Do not publicly disclose until a fix is
+   available.
+2. **Acknowledgment**: Maintainers acknowledge receipt within 48
+   hours.
+3. **Assessment**: Maintainers assess the severity and impact
+   within 7 days.
+4. **Fix**: A fix is developed. For protocol-level vulnerabilities,
+   an amendment proposal is drafted following Section 11.2.
+5. **Disclosure**: Coordinated disclosure after the fix is
+   available. A security advisory is published describing the
+   vulnerability, affected versions, and mitigation.
+
+Until a formal security contact is established, reports SHOULD be
+sent through the project's private GitHub security advisories
+feature.
+
+### 11.4 Compatibility Policy
+
+- **Same major version**: Implementations MUST be wire-compatible.
+  Changes within a major version MUST be backward compatible (new
+  fields are optional, existing fields retain semantics).
+- **Cross major version**: No compatibility required. Migration
+  paths SHOULD be documented but are not mandated.
+- **Extension compatibility**: New extensions MUST NOT break
+  implementations that do not support them (per Section 6.1).
+
+### 11.5 Conformance Test Suite
+
+A conformance test suite SHALL be maintained to validate
+implementations against the RFCs. The test suite:
+
+- Is derived from the normative requirements in the RFCs (not from
+  any particular implementation).
+- Tests wire format compliance, handshake correctness, error
+  handling, and extension negotiation.
+- Is versioned alongside the RFCs.
+- MUST be used to validate any implementation claiming conformance
+  to a given AAFP version.
+
+The conformance test suite is out of scope for the current RFC
+series but will be specified in a future RFC once the reference
+implementation is complete.
+
+## 12. References
 
 - RFC 2119: Key words for use in RFCs
 - RFC 7301: Transport Layer Security (TLS) Application-Layer

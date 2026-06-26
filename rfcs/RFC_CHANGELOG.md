@@ -10,10 +10,24 @@ Scope:            Records all changes to AAFP RFCs from initial draft
 
 ---
 
-## Revision 2 (2025-06-25)
+## Revision 2 (2025-06-25) — Freeze Candidate
 
 Revision 2 applies all approved amendments from AMENDMENTS-0001,
 following the approval gate process documented in AMENDMENT_STATUS.md.
+
+**Specification status changed from Draft to Freeze Candidate.**
+
+The RFCs are designated as Candidate Protocol 0.9. No further
+architectural changes will be made unless an interoperability or
+security issue is discovered. See RFC-0006 Section 2.5 for the
+specification lifecycle and freeze commitment.
+
+Governance sections added to RFC-0006 (Section 11):
+- RFC lifecycle (Draft → Freeze Candidate → Proposed → Stable)
+- Amendment process (proposal → approval gate → application → revision)
+- Security disclosure process
+- Compatibility policy
+- Conformance test suite (future)
 
 ### Amendments Applied
 
