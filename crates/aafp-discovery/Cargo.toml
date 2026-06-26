@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aafp-cbor = { workspace = true }
 aafp-core = { workspace = true }
 aafp-identity = { workspace = true }
 thiserror = { workspace = true }
@@ -14,4 +15,5 @@ tracing = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
+aafp-crypto = { workspace = true }
 tokio = { workspace = true }

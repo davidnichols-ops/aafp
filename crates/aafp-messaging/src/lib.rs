@@ -10,6 +10,7 @@ pub mod extensions;
 pub mod framing;
 pub mod pubsub;
 pub mod rpc;
+pub mod rpc_v1;
 pub mod stream;
 
 pub use extensions::{decode_extensions, encode_extensions, Extension, ExtensionError};
@@ -19,4 +20,8 @@ pub use framing::{
 };
 pub use pubsub::{PubSub, Topic, TopicMessage};
 pub use rpc::{RpcClient, RpcRequest, RpcResponse, RpcServer};
+pub use rpc_v1::{
+    CloseMessage, ErrorMessage, RpcError as RpcErrorV1, RpcErrorObject, RpcRequest as RpcRequestV1,
+    RpcResponse as RpcResponseV1,
+};
 pub use stream::{MessageStream, StreamId, StreamManager};
