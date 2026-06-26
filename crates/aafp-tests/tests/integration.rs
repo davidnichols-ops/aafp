@@ -11,7 +11,7 @@
 use aafp_crypto::{MlDsa65, PqHandshake, SignatureScheme};
 use aafp_discovery::CapabilityDht;
 use aafp_identity::{agent_id_to_hex, AgentKeypair, AgentRecord};
-use aafp_messaging::{deserialize_frame, serialize_frame};
+use aafp_messaging::{decode_frame, encode_frame};
 use aafp_sdk::AgentBuilder;
 use aafp_transport_quic::QuicConfig;
 use std::sync::Arc;
@@ -98,16 +98,24 @@ async fn test_quic_message_exchange() {
         let conn = server_agent.transport.accept().await.unwrap();
         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
 
-        // Read framed message.
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf).await.unwrap();
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; len];
-        recv.read_exact(&mut payload).await.unwrap();
+        // Read frame header (28 bytes).
+        let mut header = [0u8; aafp_messaging::FRAME_HEADER_SIZE];
+        recv.read_exact(&mut header).await.unwrap();
+        let payload_len = u64::from_be_bytes(header[12..20].try_into().unwrap()) as usize;
+        let ext_len = u64::from_be_bytes(header[20..28].try_into().unwrap()) as usize;
+        let body_len = payload_len + ext_len;
+        let mut body = vec![0u8; body_len];
+        if body_len > 0 {
+            recv.read_exact(&mut body).await.unwrap();
+        }
+        let mut full_frame = header.to_vec();
+        full_frame.extend_from_slice(&body);
+        let (frame, _) = decode_frame(&full_frame).unwrap();
 
         // Echo back.
-        let frame = serialize_frame(&payload);
-        send.write_all(&frame).await.unwrap();
+        let resp_frame = aafp_messaging::Frame::data(0, frame.payload.clone());
+        let resp_bytes = encode_frame(&resp_frame).unwrap();
+        send.write_all(&resp_bytes).await.unwrap();
         send.finish();
 
         // Keep alive.
@@ -118,16 +126,16 @@ async fn test_quic_message_exchange() {
     let conn = client.dial(&server_addr).await.unwrap();
     let (mut send, mut recv) = conn.open_bi().await.unwrap();
     let msg = b"integration test message";
-    send.write_all(&serialize_frame(msg)).await.unwrap();
+    let msg_frame = aafp_messaging::Frame::data(0, msg.to_vec());
+    let msg_bytes = encode_frame(&msg_frame).unwrap();
+    send.write_all(&msg_bytes).await.unwrap();
     send.finish();
 
-    // Read echo response.
-    let mut len_buf = [0u8; 4];
-    recv.read_exact(&mut len_buf).await.unwrap();
-    let len = u32::from_be_bytes(len_buf) as usize;
-    let mut payload = vec![0u8; len];
-    recv.read_exact(&mut payload).await.unwrap();
-    assert_eq!(payload, msg);
+    // Read echo response (full frame).
+    let mut buf = vec![0u8; 1024];
+    let n = recv.read(&mut buf).await.unwrap().unwrap_or(0);
+    let (resp_frame, _) = decode_frame(&buf[..n]).unwrap();
+    assert_eq!(resp_frame.payload, msg);
 
     server_handle.await.unwrap();
     client.close();

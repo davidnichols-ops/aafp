@@ -1,9 +1,8 @@
 //! Agent client: connect to peers, send messages, perform RPC.
 
 use crate::{Agent, SdkError};
-use aafp_crypto::{Aead, AeadAlgorithm};
 use aafp_identity::AgentId;
-use aafp_messaging::{serialize_frame, Frame};
+use aafp_messaging::{encode_frame, Frame};
 use aafp_transport_quic::QuicConnection;
 use sha2::Digest;
 use std::collections::HashMap;
@@ -67,8 +66,9 @@ impl AgentClient {
             .ok_or(SdkError::NotConnected)?;
 
         let (mut send, _recv) = peer.conn.open_bi().await?;
-        let frame = serialize_frame(data);
-        send.write_all(&frame).await?;
+        let frame = Frame::data(0, data.to_vec());
+        let frame_bytes = encode_frame(&frame)?;
+        send.write_all(&frame_bytes).await?;
         send.finish();
         Ok(())
     }
@@ -85,8 +85,9 @@ impl AgentClient {
             .ok_or(SdkError::NotConnected)?;
 
         let (mut send, mut recv) = peer.conn.open_bi().await?;
-        let frame = serialize_frame(data);
-        send.write_all(&frame).await?;
+        let frame = Frame::data(0, data.to_vec());
+        let frame_bytes = encode_frame(&frame)?;
+        send.write_all(&frame_bytes).await?;
         send.finish();
 
         // Read response frame.

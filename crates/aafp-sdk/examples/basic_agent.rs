@@ -1,7 +1,7 @@
 //! Basic AAFP agent example: create two agents, connect them, and exchange a message.
 
 use aafp_sdk::{AgentBuilder, AgentClient};
-use aafp_messaging::serialize_frame;
+use aafp_messaging::encode_frame;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -34,8 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Server received: {}", String::from_utf8_lossy(&payload));
 
         // Echo back.
-        let frame = serialize_frame(&payload);
-        send.write_all(&frame).await.unwrap();
+        let resp_frame = aafp_messaging::Frame::data(0, payload.clone());
+        let resp_bytes = encode_frame(&resp_frame).unwrap();
+        send.write_all(&resp_bytes).await.unwrap();
         send.finish();
 
         // Keep connection alive so client can read.
