@@ -1,7 +1,7 @@
 # RFC-0004: AAFP Discovery
 
 ```
-Status:         Draft (Revision 2)
+Status:         Freeze Candidate (Revision 2)
 Number:         0004
 Title:          Discovery: Identity, Capability, Service, and Resource
 Author:         AAFP Project
