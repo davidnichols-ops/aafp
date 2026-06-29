@@ -1,11 +1,47 @@
 //! Agent server: accept incoming connections and handle messages.
+//!
+//! All incoming connections require a completed AAFP v1 handshake before
+//! application messages can be processed. There is no code path where an
+//! unauthenticated peer can send application messages.
 
 use crate::{Agent, SdkError};
+use crate::handshake_driver;
+use aafp_core::{AuthorizationProvider, Session, SessionState};
+use aafp_identity::AgentId;
 use aafp_messaging::{decode_frame, encode_frame, Frame, FRAME_HEADER_SIZE};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tracing::info;
+
+/// A server-side authenticated peer connection.
+pub struct ServerPeerConnection {
+    pub session: Session,
+    pub conn: aafp_transport_quic::QuicConnection,
+}
+
+impl ServerPeerConnection {
+    /// Current session state.
+    pub fn session_state(&self) -> SessionState {
+        self.session.state()
+    }
+
+    /// Verified peer AgentId.
+    pub fn peer_agent_id(&self) -> Option<&AgentId> {
+        self.session.peer_agent_id()
+    }
+
+    /// Whether messaging is active.
+    pub fn is_messaging_active(&self) -> bool {
+        self.session.state().is_messaging_active()
+    }
+
+    /// Check if the peer is authorized for a capability.
+    pub fn is_authorized(&self, capability: &str) -> bool {
+        self.session.is_authorized(capability)
+    }
+}
 
 /// Server-side operations for an agent.
 pub struct AgentServer {
@@ -13,15 +49,26 @@ pub struct AgentServer {
     running: Arc<Mutex<bool>>,
     /// Number of connections accepted.
     accepted_count: Arc<Mutex<u64>>,
+    /// Active authenticated peer connections.
+    connections: Arc<Mutex<HashMap<AgentId, ServerPeerConnection>>>,
+    /// Authorization provider (pluggable: UCAN, OIDC, custom, testing).
+    auth_provider: Arc<dyn AuthorizationProvider>,
 }
 
 impl AgentServer {
-    /// Create a new server.
-    pub fn new() -> Self {
+    /// Create a new server with the given authorization provider.
+    pub fn with_auth_provider(auth_provider: Arc<dyn AuthorizationProvider>) -> Self {
         Self {
             running: Arc::new(Mutex::new(false)),
             accepted_count: Arc::new(Mutex::new(0)),
+            connections: Arc::new(Mutex::new(HashMap::new())),
+            auth_provider,
         }
+    }
+
+    /// Create a new server with a testing auth provider (allows all).
+    pub fn new() -> Self {
+        Self::with_auth_provider(Arc::new(aafp_core::TestingAuthProvider))
     }
 
     /// Start accepting connections (runs in background).
@@ -46,31 +93,86 @@ impl AgentServer {
         *self.accepted_count.lock().await
     }
 
-    /// Accept one incoming connection and handle it.
+    /// Accept one incoming connection, perform the AAFP v1 handshake,
+    /// authorize the peer, and store the authenticated connection.
     ///
-    /// For MVP, this reads a single framed message and echoes it back.
-    /// A production version would perform the AAFP handshake and route
-    /// messages to the appropriate handler.
-    pub async fn accept_one(&self, agent: &Agent) -> Result<(), SdkError> {
+    /// This performs the full server-side handshake:
+    /// 1. Accept QUIC connection
+    /// 2. Extract TLS channel binding
+    /// 3. Drive server-side handshake (ClientHello → ServerHello → ClientFinished)
+    /// 4. Verify peer identity (agent_id == SHA-256(public_key))
+    /// 5. Run authorization via the configured provider
+    /// 6. Transition session to MessagingEnabled
+    /// 7. Store the authenticated connection
+    ///
+    /// Returns the verified peer AgentId on success.
+    pub async fn accept_one(&self, agent: &Agent) -> Result<AgentId, SdkError> {
         let conn = agent.transport.accept().await?;
         *self.accepted_count.lock().await += 1;
 
-        let (mut send, mut recv) = conn.accept_bi().await?;
+        // Extract TLS channel binding
+        let mut tls_binding = [0u8; 32];
+        conn.raw()
+            .export_keying_material(
+                &mut tls_binding,
+                aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(),
+                &[],
+            )
+            .map_err(|e| SdkError::Handshake(format!("TLS exporter failed: {e:?}")))?;
 
-        // Read a framed message.
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf).await?;
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; len];
-        recv.read_exact(&mut payload).await?;
+        // Drive the AAFP v1 handshake
+        let (mut session, conn, peer_info) =
+            handshake_driver::drive_server_handshake(conn, &agent.keypair, tls_binding)
+                .await?;
 
-        // Echo back.
-        let resp_frame = Frame::data(0, payload.clone());
-        let resp_bytes = encode_frame(&resp_frame)?;
-        send.write_all(&resp_bytes).await?;
-        send.finish();
+        // Run authorization
+        let auth_ctx = self
+            .auth_provider
+            .authorize(&peer_info.agent_id, &peer_info.public_key)
+            .await
+            .map_err(|e| SdkError::Handshake(format!("authorization denied: {e}")))?;
 
-        Ok(())
+        session
+            .on_authorization_verified(auth_ctx)
+            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
+
+        // Transition to Authenticated → MessagingEnabled
+        session
+            .on_authenticated()
+            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
+        session
+            .on_messaging_enabled()
+            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
+
+        let peer_id = peer_info.agent_id;
+
+        // Store the authenticated connection
+        let server_conn = ServerPeerConnection { session, conn };
+        self.connections
+            .lock()
+            .await
+            .insert(peer_id, server_conn);
+
+        Ok(peer_id)
+    }
+
+    /// Get all authenticated peer IDs.
+    pub async fn connected_peers(&self) -> Vec<AgentId> {
+        self.connections.lock().await.keys().copied().collect()
+    }
+
+    /// Get the number of authenticated connections.
+    pub async fn connection_count(&self) -> usize {
+        self.connections.lock().await.len()
+    }
+
+    /// Get the session state for a peer.
+    pub async fn session_state(&self, peer_id: &AgentId) -> Option<SessionState> {
+        self.connections
+            .lock()
+            .await
+            .get(peer_id)
+            .map(|p| p.session_state())
     }
 }
 
@@ -109,6 +211,9 @@ mod tests {
         let client = aafp_transport_quic::QuicTransport::new(client_config).unwrap();
 
         // Spawn server to accept one connection and echo.
+        // NOTE: This test uses the raw transport (no AAFP handshake) to
+        // verify that the QUIC layer still works. The full handshake
+        // integration is tested in the handshake_driver tests.
         let server_handle = tokio::spawn(async move {
             let conn = server_agent.transport.accept().await.unwrap();
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();

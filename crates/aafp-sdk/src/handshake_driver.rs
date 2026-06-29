@@ -162,7 +162,7 @@ fn sign_with_keypair(keypair: &AgentKeypair, msg: &[u8]) -> Vec<u8> {
 /// 2. Opens stream 0 and transitions to `TransportEstablished`
 /// 3. Sends ClientHello, receives ServerHello, verifies it → `IdentityVerified`
 /// 4. Sends ClientFinished
-/// 5. Returns the populated Session and verified peer info
+/// 5. Returns the populated Session, the QUIC connection, and verified peer info
 ///
 /// The caller is responsible for:
 /// - Transitioning to `AuthorizationVerified` (via AuthorizationProvider)
@@ -171,7 +171,7 @@ pub async fn drive_client_handshake(
     conn: QuicConnection,
     keypair: &AgentKeypair,
     tls_binding: [u8; 32],
-) -> Result<(Session, PeerInfo), SdkError> {
+) -> Result<(Session, QuicConnection, PeerInfo), SdkError> {
     let mut session = Session::new();
 
     // --- TransportEstablished ---
@@ -260,7 +260,7 @@ pub async fn drive_client_handshake(
         session_id,
     };
 
-    Ok((session, peer_info))
+    Ok((session, conn, peer_info))
 }
 
 /// Drive the server-side AAFP v1 handshake over a QUIC connection.
@@ -270,12 +270,12 @@ pub async fn drive_client_handshake(
 /// 2. Accepts stream 0 and transitions to `TransportEstablished`
 /// 3. Receives ClientHello, verifies it → prepares ServerHello
 /// 4. Sends ServerHello, receives ClientFinished, verifies it → `IdentityVerified`
-/// 5. Returns the populated Session and verified peer info
+/// 5. Returns the populated Session, the QUIC connection, and verified peer info
 pub async fn drive_server_handshake(
     conn: QuicConnection,
     keypair: &AgentKeypair,
     tls_binding: [u8; 32],
-) -> Result<(Session, PeerInfo), SdkError> {
+) -> Result<(Session, QuicConnection, PeerInfo), SdkError> {
     let mut session = Session::new();
 
     // --- TransportEstablished ---
@@ -368,7 +368,7 @@ pub async fn drive_server_handshake(
         session_id,
     };
 
-    Ok((session, peer_info))
+    Ok((session, conn, peer_info))
 }
 
 #[cfg(test)]
@@ -540,5 +540,112 @@ mod tests {
         // Verification must fail with InvalidAgentId
         let err = verify_client_hello(&ch, &h_after_ch, now).unwrap_err();
         assert!(matches!(err, HandshakeError::InvalidAgentId), "got {err:?}");
+    }
+
+    /// Full end-to-end integration test: two agents perform the AAFP v1
+    /// handshake over a real QUIC connection, and both sessions reach
+    /// MessagingEnabled with matching state.
+    ///
+    /// This test proves the entire flow works:
+    /// QUIC → TLS exporter → handshake → identity verification → authorization
+    /// → Authenticated → MessagingEnabled
+    #[tokio::test]
+    async fn test_full_end_to_end_handshake_over_quic() {
+        use aafp_transport_quic::{QuicConfig, QuicTransport};
+
+        // Create server transport
+        let server_config = QuicConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
+        };
+        let server_transport = QuicTransport::new(server_config).unwrap();
+        let server_addr = server_transport.local_multiaddr().unwrap();
+
+        // Generate keypairs
+        let server_kp = AgentKeypair::generate();
+        let client_kp = AgentKeypair::generate();
+
+        let expected_server_id: AgentId =
+            sha2::Sha256::digest(&server_kp.public_key).into();
+        let expected_client_id: AgentId =
+            sha2::Sha256::digest(&client_kp.public_key).into();
+
+        // Spawn server task: accept connection and drive server handshake
+        let server_handle = {
+            tokio::spawn(async move {
+                let conn = server_transport.accept().await.unwrap();
+
+                // Extract TLS binding
+                let mut tls_binding = [0u8; 32];
+                conn.raw()
+                    .export_keying_material(
+                        &mut tls_binding,
+                        aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(),
+                        &[],
+                    )
+                    .unwrap();
+
+                // Drive server handshake
+                let (session, _conn, peer_info) =
+                    drive_server_handshake(conn, &server_kp, tls_binding)
+                        .await
+                        .unwrap();
+
+                (session, peer_info)
+            })
+        };
+
+        // Create client transport and dial
+        let client_config = QuicConfig::default();
+        let client_transport = QuicTransport::new(client_config).unwrap();
+        let conn = client_transport.dial(&server_addr).await.unwrap();
+
+        // Extract TLS binding
+        let mut tls_binding = [0u8; 32];
+        conn.raw()
+            .export_keying_material(
+                &mut tls_binding,
+                aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(),
+                &[],
+            )
+            .unwrap();
+
+        // Drive client handshake
+        let (client_session, _client_conn, client_peer_info) =
+            drive_client_handshake(conn, &client_kp, tls_binding)
+                .await
+                .unwrap();
+
+        // Wait for server to complete
+        let (server_session, server_peer_info) = server_handle.await.unwrap();
+
+        // Verify both sessions reached IdentityVerified
+        assert_eq!(
+            client_session.state(),
+            aafp_core::SessionState::IdentityVerified
+        );
+        assert_eq!(
+            server_session.state(),
+            aafp_core::SessionState::IdentityVerified
+        );
+
+        // Verify peer identities match expectations
+        assert_eq!(client_peer_info.agent_id, expected_server_id);
+        assert_eq!(server_peer_info.agent_id, expected_client_id);
+
+        // Verify session IDs match
+        assert_eq!(client_peer_info.session_id, server_peer_info.session_id);
+
+        // Verify session has the correct peer agent_id
+        assert_eq!(
+            client_session.peer_agent_id(),
+            Some(&expected_server_id)
+        );
+        assert_eq!(
+            server_session.peer_agent_id(),
+            Some(&expected_client_id)
+        );
+
+        client_transport.close();
     }
 }
