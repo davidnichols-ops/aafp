@@ -1,18 +1,24 @@
 //! ML-DSA-65 signature scheme (FIPS 204, L3 post-quantum security).
 //!
-//! Wraps `pqcrypto-mldsa` to implement the `SignatureScheme` trait.
+//! Wraps the `fips204` crate to implement the `SignatureScheme` trait.
 //! Public key = 1952 bytes, signature = 3309 bytes.
+//!
+//! This replaced the unmaintained `pqcrypto-mldsa` (RUSTSEC-2026-0162/0163/0166)
+//! with a pure-Rust, FIPS 204-compliant implementation. Key and signature byte
+//! formats are identical (raw FIPS 204 encoding), so wire compatibility is
+//! preserved. An empty context string (`&[]`) is used for signing and
+//! verification, matching the previous pqcrypto/PQClean behavior.
 
 use crate::traits::{CryptoError, SignatureScheme};
-use pqcrypto_mldsa::mldsa65;
-use pqcrypto_traits::sign::{DetachedSignature, PublicKey, SecretKey};
+use fips204::ml_dsa_65;
+use fips204::traits::{KeyGen, SerDes, Signer, Verifier};
 
 /// ML-DSA-65 public key bytes (FIPS 204).
-pub const ML_DSA_65_PUBKEY_LEN: usize = 1952;
+pub const ML_DSA_65_PUBKEY_LEN: usize = ml_dsa_65::PK_LEN;
 /// ML-DSA-65 secret key bytes.
-pub const ML_DSA_65_SECRETKEY_LEN: usize = 4032;
+pub const ML_DSA_65_SECRETKEY_LEN: usize = ml_dsa_65::SK_LEN;
 /// ML-DSA-65 detached signature bytes.
-pub const ML_DSA_65_SIGNATURE_LEN: usize = 3309;
+pub const ML_DSA_65_SIGNATURE_LEN: usize = ml_dsa_65::SIG_LEN;
 
 /// ML-DSA-65 signature scheme.
 #[derive(Debug, Clone)]
@@ -57,9 +63,12 @@ impl MlDsa65PublicKey {
                 actual: bytes.len(),
             });
         }
-        // Validate by attempting to construct the pqcrypto type.
-        let _ = mldsa65::PublicKey::from_bytes(bytes)
-            .map_err(|e| CryptoError::Decode(format!("mldsa65 pubkey: {:?}", e)))?;
+        // Validate by attempting to construct the fips204 type.
+        let arr: [u8; ML_DSA_65_PUBKEY_LEN] = bytes
+            .try_into()
+            .map_err(|_| CryptoError::Decode("mldsa65 pubkey: length mismatch".into()))?;
+        let _ = ml_dsa_65::PublicKey::try_from_bytes(arr)
+            .map_err(|e| CryptoError::Decode(format!("mldsa65 pubkey: {e}")))?;
         Ok(Self(bytes.to_vec()))
     }
 }
@@ -73,8 +82,11 @@ impl MlDsa65SecretKey {
                 actual: bytes.len(),
             });
         }
-        let _ = mldsa65::SecretKey::from_bytes(bytes)
-            .map_err(|e| CryptoError::Decode(format!("mldsa65 secretkey: {:?}", e)))?;
+        let arr: [u8; ML_DSA_65_SECRETKEY_LEN] = bytes
+            .try_into()
+            .map_err(|_| CryptoError::Decode("mldsa65 secretkey: length mismatch".into()))?;
+        let _ = ml_dsa_65::PrivateKey::try_from_bytes(arr)
+            .map_err(|e| CryptoError::Decode(format!("mldsa65 secretkey: {e}")))?;
         Ok(Self(bytes.to_vec()))
     }
 }
@@ -98,29 +110,40 @@ impl SignatureScheme for MlDsa65 {
     type Signature = MlDsa65Signature;
 
     fn keypair() -> (Self::PublicKey, Self::SecretKey) {
-        let (pk, sk) = mldsa65::keypair();
+        let (pk, sk) = ml_dsa_65::KG::try_keygen().expect("ML-DSA-65 keygen must succeed");
         (
-            MlDsa65PublicKey(pk.as_bytes().to_vec()),
-            MlDsa65SecretKey(sk.as_bytes().to_vec()),
+            MlDsa65PublicKey(pk.into_bytes().to_vec()),
+            MlDsa65SecretKey(sk.into_bytes().to_vec()),
         )
     }
 
     fn sign(secret: &Self::SecretKey, msg: &[u8]) -> Self::Signature {
-        let sk = mldsa65::SecretKey::from_bytes(&secret.0).expect("valid secret key");
-        let sig = mldsa65::detached_sign(msg, &sk);
-        MlDsa65Signature(sig.as_bytes().to_vec())
+        let arr: [u8; ML_DSA_65_SECRETKEY_LEN] = secret
+            .0
+            .as_slice()
+            .try_into()
+            .expect("valid secret key length");
+        let sk = ml_dsa_65::PrivateKey::try_from_bytes(arr).expect("valid secret key");
+        // Empty context string matches PQClean's detached_sign behavior.
+        let sig = sk.try_sign(msg, &[]).expect("ML-DSA-65 signing must succeed");
+        MlDsa65Signature(sig.to_vec())
     }
 
     fn verify(public: &Self::PublicKey, msg: &[u8], sig: &Self::Signature) -> bool {
-        let pk = match mldsa65::PublicKey::from_bytes(&public.0) {
+        let pk_arr: [u8; ML_DSA_65_PUBKEY_LEN] = match public.0.as_slice().try_into() {
+            Ok(arr) => arr,
+            Err(_) => return false,
+        };
+        let pk = match ml_dsa_65::PublicKey::try_from_bytes(pk_arr) {
             Ok(pk) => pk,
             Err(_) => return false,
         };
-        let sig = match mldsa65::DetachedSignature::from_bytes(&sig.0) {
-            Ok(s) => s,
+        let sig_arr: [u8; ML_DSA_65_SIGNATURE_LEN] = match sig.0.as_slice().try_into() {
+            Ok(arr) => arr,
             Err(_) => return false,
         };
-        mldsa65::verify_detached_signature(&sig, msg, &pk).is_ok()
+        // Empty context string matches PQClean's detached_sign behavior.
+        pk.verify(msg, &sig_arr, &[])
     }
 
     fn algorithm_name() -> &'static str {

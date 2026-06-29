@@ -59,8 +59,7 @@ bytes = "1"
 futures = "0.3"
 async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["codec"] }
-pqcrypto-mldsa = "0.1"
-pqcrypto-traits = "0.3"
+fips204 = { version = "0.4", default-features = false, features = ["ml-dsa-65", "default-rng"] }
 rand = "0.8"
 rand_core = "0.6"
 hex = "0.4"
