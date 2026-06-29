@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 aafp-core = { workspace = true }
+aafp-cbor = { workspace = true }
 aafp-crypto = { workspace = true }
 aafp-identity = { workspace = true }
 aafp-transport-quic = { workspace = true }
