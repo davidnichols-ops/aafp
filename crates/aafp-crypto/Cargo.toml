@@ -8,8 +8,7 @@ license.workspace = true
 aafp-cbor = { workspace = true }
 rustls = { workspace = true }
 aws-lc-rs = { workspace = true }
-pqcrypto-mldsa = { workspace = true }
-pqcrypto-traits = { workspace = true }
+fips204 = { workspace = true }
 aead = "0.5"
 sha2 = { workspace = true }
 hkdf = { workspace = true }
