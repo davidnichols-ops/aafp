@@ -21,6 +21,7 @@
 use aafp_cbor::{int_map, Value};
 use crate::dsa::{MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature};
 use crate::kdf::hkdf_sha256;
+use crate::traits::SignatureScheme;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 
@@ -422,6 +423,184 @@ fn expect_array(val: Option<&Value>, field: &'static str) -> Result<Vec<Value>, 
     }
 }
 
+// --- Handshake message verification ---
+
+/// Verify the agent_id ↔ public_key invariant for a hello message.
+///
+/// This is the single invariant that protects every higher layer:
+///   claimed AgentId == SHA-256(public_key)
+///
+/// Returns the verified AgentId as a fixed-size array on success.
+fn verify_agent_id_binding(
+    agent_id: &[u8],
+    public_key: &[u8],
+) -> Result<[u8; AGENT_ID_SIZE], HandshakeError> {
+    if agent_id.len() != AGENT_ID_SIZE {
+        return Err(HandshakeError::InvalidField {
+            field: "agent_id",
+            message: format!("expected {} bytes, got {}", AGENT_ID_SIZE, agent_id.len()),
+        });
+    }
+    let computed = Sha256::digest(public_key);
+    if computed.as_slice() != agent_id {
+        return Err(HandshakeError::InvalidAgentId);
+    }
+    let mut id = [0u8; AGENT_ID_SIZE];
+    id.copy_from_slice(agent_id);
+    Ok(id)
+}
+
+/// Verify a ClientHello message (RFC-0002 §5.3).
+///
+/// Checks (in order):
+/// 1. protocol_version matches PROTOCOL_VERSION
+/// 2. key_algorithm matches KEY_ALG_ML_DSA_65
+/// 3. agent_id == SHA-256(public_key)  [the identity invariant]
+/// 4. public_key is a valid ML-DSA-65 key
+/// 5. signature verifies over (domain_separator || transcript_hash)
+/// 6. expires_at is in the future
+///
+/// Returns the verified AgentId on success.
+pub fn verify_client_hello(
+    ch: &ClientHello,
+    transcript_hash: &[u8; 32],
+    now: u64,
+) -> Result<[u8; AGENT_ID_SIZE], HandshakeError> {
+    // 1. Protocol version
+    if ch.protocol_version != PROTOCOL_VERSION {
+        return Err(HandshakeError::VersionMismatch {
+            expected: PROTOCOL_VERSION,
+            got: ch.protocol_version,
+        });
+    }
+
+    // 2. Key algorithm
+    if ch.key_algorithm != KEY_ALG_ML_DSA_65 {
+        return Err(HandshakeError::UnsupportedAlgorithm(ch.key_algorithm));
+    }
+
+    // 3. AgentId ↔ public_key invariant
+    let verified_agent_id = verify_agent_id_binding(&ch.agent_id, &ch.public_key)?;
+
+    // 4. Public key validity
+    let pk = MlDsa65PublicKey::from_bytes(&ch.public_key)
+        .map_err(|_| HandshakeError::InvalidField {
+            field: "public_key",
+            message: "invalid ML-DSA-65 public key".into(),
+        })?;
+
+    // 5. Signature verification
+    let sig = MlDsa65Signature::from_bytes(&ch.signature)
+        .map_err(|_| HandshakeError::InvalidField {
+            field: "signature",
+            message: format!("expected {} bytes", crate::dsa::ML_DSA_65_SIGNATURE_LEN),
+        })?;
+    let sig_input = signature_input(transcript_hash);
+    if !MlDsa65::verify(&pk, &sig_input, &sig) {
+        return Err(HandshakeError::SignatureVerificationFailed);
+    }
+
+    // 6. Expiry
+    if ch.expires_at <= now {
+        return Err(HandshakeError::IdentityExpired {
+            expires_at: ch.expires_at,
+            now,
+        });
+    }
+
+    Ok(verified_agent_id)
+}
+
+/// Verify a ServerHello message (RFC-0002 §5.4).
+///
+/// Same checks as `verify_client_hello`, plus the session_id is returned
+/// for the caller to use.
+///
+/// Returns (verified AgentId, session_id) on success.
+pub fn verify_server_hello(
+    sh: &ServerHello,
+    transcript_hash: &[u8; 32],
+    now: u64,
+) -> Result<([u8; AGENT_ID_SIZE], [u8; SESSION_ID_SIZE]), HandshakeError> {
+    // 1. Protocol version
+    if sh.protocol_version != PROTOCOL_VERSION {
+        return Err(HandshakeError::VersionMismatch {
+            expected: PROTOCOL_VERSION,
+            got: sh.protocol_version,
+        });
+    }
+
+    // 2. Key algorithm
+    if sh.key_algorithm != KEY_ALG_ML_DSA_65 {
+        return Err(HandshakeError::UnsupportedAlgorithm(sh.key_algorithm));
+    }
+
+    // 3. AgentId ↔ public_key invariant
+    let verified_agent_id = verify_agent_id_binding(&sh.agent_id, &sh.public_key)?;
+
+    // 4. Public key validity
+    let pk = MlDsa65PublicKey::from_bytes(&sh.public_key)
+        .map_err(|_| HandshakeError::InvalidField {
+            field: "public_key",
+            message: "invalid ML-DSA-65 public key".into(),
+        })?;
+
+    // 5. Signature verification
+    let sig = MlDsa65Signature::from_bytes(&sh.signature)
+        .map_err(|_| HandshakeError::InvalidField {
+            field: "signature",
+            message: format!("expected {} bytes", crate::dsa::ML_DSA_65_SIGNATURE_LEN),
+        })?;
+    let sig_input = signature_input(transcript_hash);
+    if !MlDsa65::verify(&pk, &sig_input, &sig) {
+        return Err(HandshakeError::SignatureVerificationFailed);
+    }
+
+    // 6. Expiry
+    if sh.expires_at <= now {
+        return Err(HandshakeError::IdentityExpired {
+            expires_at: sh.expires_at,
+            now,
+        });
+    }
+
+    Ok((verified_agent_id, sh.session_id))
+}
+
+/// Verify a ClientFinished message (RFC-0002 §5.5).
+///
+/// Checks that the signature verifies against the client's public key
+/// (from the previously-verified ClientHello) over the transcript hash.
+pub fn verify_client_finished(
+    cf: &ClientFinished,
+    transcript_hash: &[u8; 32],
+    client_public_key: &[u8],
+    expected_session_id: &[u8; SESSION_ID_SIZE],
+) -> Result<(), HandshakeError> {
+    // 1. Session ID must match the one derived from the handshake
+    if cf.session_id != *expected_session_id {
+        return Err(HandshakeError::SessionIdMismatch);
+    }
+
+    // 2. Signature verification
+    let pk = MlDsa65PublicKey::from_bytes(client_public_key)
+        .map_err(|_| HandshakeError::InvalidField {
+            field: "client_public_key",
+            message: "invalid ML-DSA-65 public key".into(),
+        })?;
+    let sig = MlDsa65Signature::from_bytes(&cf.signature)
+        .map_err(|_| HandshakeError::InvalidField {
+            field: "signature",
+            message: format!("expected {} bytes", crate::dsa::ML_DSA_65_SIGNATURE_LEN),
+        })?;
+    let sig_input = signature_input(transcript_hash);
+    if !MlDsa65::verify(&pk, &sig_input, &sig) {
+        return Err(HandshakeError::SignatureVerificationFailed);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -770,5 +949,225 @@ mod tests {
         let bytes1 = aafp_cbor::encode(&cbor1).unwrap();
         let bytes2 = aafp_cbor::encode(&cbor2).unwrap();
         assert_eq!(bytes1, bytes2, "CBOR encoding must be deterministic");
+    }
+
+    // --- Tests for verify_client_hello / verify_server_hello / verify_client_finished ---
+
+    /// Build a valid ClientHello with correct agent_id ↔ public_key binding.
+    fn build_valid_client_hello() -> (ClientHello, MlDsa65SecretKey, [u8; 32]) {
+        let (pk, sk) = MlDsa65::keypair();
+        let agent_id = Sha256::digest(&pk.0).to_vec();
+        let tls_binding = [0x42u8; 32];
+        let mut th = TranscriptHash::from_tls_binding(&tls_binding);
+
+        let mut ch = ClientHello {
+            protocol_version: PROTOCOL_VERSION,
+            agent_id,
+            public_key: pk.0.clone(),
+            nonce: generate_nonce(),
+            capabilities: vec![],
+            extensions: vec![],
+            signature: vec![],
+            expires_at: 1700000000,
+            receiver_mac: None,
+            key_algorithm: KEY_ALG_ML_DSA_65,
+        };
+
+        let ch_cbor = ch.to_cbor_without_sig_and_mac();
+        let ch_cbor_bytes = aafp_cbor::encode(&ch_cbor).unwrap();
+        let h_after_ch = th.fold(&ch_cbor_bytes);
+
+        let sig_input = signature_input(&h_after_ch);
+        let sig = MlDsa65::sign(&sk, &sig_input);
+        ch.signature = sig.0;
+
+        (ch, sk, h_after_ch)
+    }
+
+    #[test]
+    fn test_verify_client_hello_valid() {
+        let (ch, _sk, h_after_ch) = build_valid_client_hello();
+        let agent_id = verify_client_hello(&ch, &h_after_ch, 0).unwrap();
+        assert_eq!(agent_id.as_slice(), ch.agent_id);
+    }
+
+    #[test]
+    fn test_verify_client_hello_rejects_mismatched_agent_id() {
+        let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
+        // Tamper with agent_id — this breaks the SHA-256(public_key) binding
+        ch.agent_id[0] ^= 0xff;
+        let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
+        assert!(matches!(err, HandshakeError::InvalidAgentId), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_client_hello_rejects_wrong_public_key() {
+        let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
+        // Replace public_key with a different key — agent_id no longer matches
+        let (pk2, _) = MlDsa65::keypair();
+        ch.public_key = pk2.0.clone();
+        let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
+        assert!(matches!(err, HandshakeError::InvalidAgentId), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_client_hello_rejects_bad_signature() {
+        let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
+        // Tamper with signature
+        ch.signature[0] ^= 0xff;
+        let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
+        assert!(matches!(err, HandshakeError::SignatureVerificationFailed), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_client_hello_rejects_version_mismatch() {
+        let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
+        ch.protocol_version = 99;
+        let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
+        assert!(matches!(err, HandshakeError::VersionMismatch { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_client_hello_rejects_expired() {
+        let (ch, _sk, h_after_ch) = build_valid_client_hello();
+        // expires_at=1700000000, so now=1700000001 should reject
+        let err = verify_client_hello(&ch, &h_after_ch, 1700000001).unwrap_err();
+        assert!(matches!(err, HandshakeError::IdentityExpired { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_client_hello_rejects_wrong_key_algorithm() {
+        let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
+        ch.key_algorithm = 99;
+        let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
+        assert!(matches!(err, HandshakeError::UnsupportedAlgorithm(_)), "got {err:?}");
+    }
+
+    /// Build a valid ServerHello with correct agent_id ↔ public_key binding.
+    fn build_valid_server_hello() -> (ServerHello, MlDsa65SecretKey, [u8; 32], [u8; SESSION_ID_SIZE]) {
+        let (pk, sk) = MlDsa65::keypair();
+        let agent_id = Sha256::digest(&pk.0).to_vec();
+        let tls_binding = [0x42u8; 32];
+        let mut th = TranscriptHash::from_tls_binding(&tls_binding);
+
+        // Need a ClientHello first to derive session_id
+        let client_nonce = generate_nonce();
+        let ch_cbor = ClientHello {
+            protocol_version: PROTOCOL_VERSION,
+            agent_id: vec![0xAA; 32],
+            public_key: vec![0xBB; 1952],
+            nonce: client_nonce,
+            capabilities: vec![],
+            extensions: vec![],
+            signature: vec![],
+            expires_at: 1700000000,
+            receiver_mac: None,
+            key_algorithm: KEY_ALG_ML_DSA_65,
+        }
+        .to_cbor_without_sig_and_mac();
+        let ch_cbor_bytes = aafp_cbor::encode(&ch_cbor).unwrap();
+        let h_after_ch = th.fold(&ch_cbor_bytes);
+
+        let server_nonce = generate_nonce();
+        let session_id = derive_session_id(&h_after_ch, &client_nonce, &server_nonce);
+
+        let mut sh = ServerHello {
+            protocol_version: PROTOCOL_VERSION,
+            agent_id,
+            public_key: pk.0.clone(),
+            nonce: server_nonce,
+            capabilities: vec![],
+            extensions: vec![],
+            session_id,
+            signature: vec![],
+            expires_at: 1700000000,
+            key_algorithm: KEY_ALG_ML_DSA_65,
+        };
+
+        let sh_cbor = sh.to_cbor_without_sig();
+        let sh_cbor_bytes = aafp_cbor::encode(&sh_cbor).unwrap();
+        let h_after_sh = th.fold(&sh_cbor_bytes);
+
+        let sig_input = signature_input(&h_after_sh);
+        let sig = MlDsa65::sign(&sk, &sig_input);
+        sh.signature = sig.0;
+
+        (sh, sk, h_after_sh, session_id)
+    }
+
+    #[test]
+    fn test_verify_server_hello_valid() {
+        let (sh, _sk, h_after_sh, expected_sid) = build_valid_server_hello();
+        let (agent_id, sid) = verify_server_hello(&sh, &h_after_sh, 0).unwrap();
+        assert_eq!(agent_id.as_slice(), sh.agent_id);
+        assert_eq!(sid, expected_sid);
+    }
+
+    #[test]
+    fn test_verify_server_hello_rejects_mismatched_agent_id() {
+        let (mut sh, _sk, h_after_sh, _) = build_valid_server_hello();
+        sh.agent_id[0] ^= 0xff;
+        let err = verify_server_hello(&sh, &h_after_sh, 0).unwrap_err();
+        assert!(matches!(err, HandshakeError::InvalidAgentId), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_server_hello_rejects_bad_signature() {
+        let (mut sh, _sk, h_after_sh, _) = build_valid_server_hello();
+        sh.signature[0] ^= 0xff;
+        let err = verify_server_hello(&sh, &h_after_sh, 0).unwrap_err();
+        assert!(matches!(err, HandshakeError::SignatureVerificationFailed), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_client_finished_valid() {
+        let (pk, sk) = MlDsa65::keypair();
+        let session_id = [0xCCu8; 32];
+        let h = [0xDDu8; 32];
+
+        let cf = ClientFinished {
+            session_id,
+            signature: MlDsa65::sign(&sk, &signature_input(&h)).0,
+        };
+
+        verify_client_finished(&cf, &h, &pk.0, &session_id).unwrap();
+    }
+
+    #[test]
+    fn test_verify_client_finished_rejects_session_id_mismatch() {
+        let (pk, sk) = MlDsa65::keypair();
+        let h = [0xDDu8; 32];
+
+        let cf = ClientFinished {
+            session_id: [0xCCu8; 32],
+            signature: MlDsa65::sign(&sk, &signature_input(&h)).0,
+        };
+
+        let err = verify_client_finished(&cf, &h, &pk.0, &[0xEEu8; 32]).unwrap_err();
+        assert!(matches!(err, HandshakeError::SessionIdMismatch), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_client_finished_rejects_bad_signature() {
+        let (pk, _sk) = MlDsa65::keypair();
+        let session_id = [0xCCu8; 32];
+        let h = [0xDDu8; 32];
+
+        let mut cf = ClientFinished {
+            session_id,
+            signature: vec![0u8; crate::dsa::ML_DSA_65_SIGNATURE_LEN],
+        };
+        cf.signature[0] ^= 0xff;
+
+        let err = verify_client_finished(&cf, &h, &pk.0, &session_id).unwrap_err();
+        assert!(matches!(err, HandshakeError::SignatureVerificationFailed), "got {err:?}");
+    }
+
+    #[test]
+    fn test_verify_client_hello_rejects_short_agent_id() {
+        let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
+        ch.agent_id = vec![0xAA; 16]; // wrong length
+        let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
+        assert!(matches!(err, HandshakeError::InvalidField { field: "agent_id", .. }), "got {err:?}");
     }
 }

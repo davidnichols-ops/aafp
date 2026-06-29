@@ -32,6 +32,7 @@ pub use handshake::{
 };
 pub use handshake_v1::{
     derive_session_id, generate_nonce, compute_receiver_mac, verify_receiver_mac,
+    verify_client_hello, verify_server_hello, verify_client_finished,
     ClientFinished, ClientHello as ClientHelloV1, HandshakeError, ServerHello as ServerHelloV1,
     TranscriptHash, DOMAIN_SEPARATOR, KEY_ALG_ML_DSA_65, NONCE_SIZE, PROTOCOL_VERSION,
     SESSION_ID_SIZE, TLS_EXPORTER_LABEL,
