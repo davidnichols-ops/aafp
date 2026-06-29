@@ -12,12 +12,17 @@ pub mod ucan;
 pub use agent_id::{
     agent_id_from_hex, agent_id_short, agent_id_to_hex, derive_agent_id, verify_agent_id, AgentId,
 };
-pub use agent_record::AgentRecord;
+// v1 RFC-compliant types (integer keys, canonical CBOR per RFC-0003).
+// Use these for wire serialization.
 pub use identity_v1::{
-    AgentId as AgentIdV1, AgentRecord as AgentRecordV1, CapabilityDescriptor,
-    CapabilityDescriptor as CapabilityDescriptorV1, IdentityError as IdentityErrorV1,
-    MetadataValue, RECORD_DOMAIN_SEPARATOR, RECORD_TYPE_V1, UCAN_DOMAIN_SEPARATOR,
-    KEY_ALG_ML_DSA_65, MAX_RECORD_EXPIRY, RECOMMENDED_RENEWAL,
+    AgentRecord as AgentRecordV1, CapabilityDescriptor, CapabilityDescriptor as CapabilityDescriptorV1,
+    IdentityError as IdentityErrorV1, MetadataValue, RECORD_DOMAIN_SEPARATOR,
+    RECORD_TYPE_V1, UCAN_DOMAIN_SEPARATOR, KEY_ALG_ML_DSA_65, MAX_RECORD_EXPIRY,
+    RECOMMENDED_RENEWAL,
 };
+// Legacy MVP types — uses serde with string keys. Suitable for local state
+// management but NOT RFC-compliant for wire serialization. Use AgentRecordV1
+// for any data that goes over the network.
+pub use agent_record::AgentRecord;
 pub use keypair::{AgentKeypair, IdentityError};
 pub use ucan::{Capability, UcanHeader, UcanPayload, UcanToken};

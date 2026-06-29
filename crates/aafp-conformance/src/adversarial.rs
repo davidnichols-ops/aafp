@@ -156,6 +156,24 @@ mod oversized_lengths {
         let result = decode_frame(&header);
         assert!(result.is_err(), "length overflow must be rejected");
     }
+
+    /// A frame with extensions exceeding MAX_EXTENSION_SIZE (64 KiB) must
+    /// be rejected per SA-0006.
+    #[test]
+    fn extensions_exceeding_max_extension_size_rejected() {
+        let mut header = [0u8; FRAME_HEADER_SIZE];
+        header[0] = 1;
+        header[1] = 0x01;
+        header[2] = 0;
+        header[3] = 0;
+        header[4..12].copy_from_slice(&0u64.to_be_bytes());
+        header[12..20].copy_from_slice(&0u64.to_be_bytes()); // Payload = 0
+        // Extension length = 64 KiB + 1
+        header[20..28].copy_from_slice(&((aafp_messaging::MAX_EXTENSION_SIZE as u64) + 1).to_be_bytes());
+
+        let result = decode_frame(&header);
+        assert!(result.is_err(), "extensions exceeding MAX_EXTENSION_SIZE must be rejected");
+    }
 }
 
 // ===========================================================================

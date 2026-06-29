@@ -148,6 +148,68 @@ impl AgentRecord {
         ciborium::into_writer(&unsigned, &mut buf).expect("cbor serialization");
         buf
     }
+
+    /// Convert to an RFC-0003 compliant v1 AgentRecord for wire serialization.
+    ///
+    /// The v1 record uses integer-keyed canonical CBOR and CapabilityDescriptor
+    /// (structured capabilities with metadata). This conversion produces a
+    /// record that can be serialized to RFC-compliant wire bytes via
+    /// `AgentRecordV1::to_cbor()` / `aafp_cbor::encode()`.
+    ///
+    /// The signature is NOT recomputed — the existing signature is carried over.
+    /// If the legacy record was signed with the legacy unsigned_cbor() format
+    /// (string keys), the v1 signature will NOT verify against the v1 CBOR
+    /// encoding. Call `sign()` on the v1 record to re-sign with the correct
+    /// v1 signature input.
+    pub fn to_v1(&self) -> crate::identity_v1::AgentRecord {
+        use crate::identity_v1::{AgentRecord as V1Record, CapabilityDescriptor, KEY_ALG_ML_DSA_65};
+
+        let caps: Vec<CapabilityDescriptor> = self
+            .capabilities
+            .iter()
+            .map(|name| CapabilityDescriptor::new(name))
+            .collect();
+
+        let mut record = V1Record::new(
+            &self.public_key,
+            caps,
+            self.endpoints.clone(),
+            self.timestamp,
+            self.timestamp + 86400, // 24-hour expiry default
+            KEY_ALG_ML_DSA_65,
+        );
+        // Carry over the existing signature (may need re-signing for v1 format)
+        record.signature = self.signature.clone();
+        record
+    }
+
+    /// Convert to an RFC-0003 compliant v1 AgentRecord and re-sign it
+    /// with the v1 signature format (domain-separated, integer-keyed CBOR).
+    ///
+    /// This produces a fully valid v1 record with a correct signature.
+    pub fn to_v1_signed(&self, keypair: &AgentKeypair) -> Result<crate::identity_v1::AgentRecord, IdentityError> {
+        use crate::identity_v1::{AgentRecord as V1Record, CapabilityDescriptor, KEY_ALG_ML_DSA_65};
+
+        let caps: Vec<CapabilityDescriptor> = self
+            .capabilities
+            .iter()
+            .map(|name| CapabilityDescriptor::new(name))
+            .collect();
+
+        let mut record = V1Record::new(
+            &self.public_key,
+            caps,
+            self.endpoints.clone(),
+            self.timestamp,
+            self.timestamp + 86400,
+            KEY_ALG_ML_DSA_65,
+        );
+
+        // Sign with v1 format: "aafp-v1-record" || canonical_CBOR(fields 1-7,9)
+        let sk = keypair.secret_key()?;
+        record.sign(&sk);
+        Ok(record)
+    }
 }
 
 #[cfg(test)]
