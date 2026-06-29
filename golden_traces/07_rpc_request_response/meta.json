@@ -1,0 +1,36 @@
+{
+  "name": "07_rpc_request_response",
+  "description": "Canonical RPC request/response exchange on stream 42",
+  "rfc_reference": "RFC-0002 §4, RPC v1",
+  "total_bytes": 114,
+  "outcome": "success",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 66,
+      "type": "0x03",
+      "type_name": "RPC_REQUEST",
+      "flags": "0x00",
+      "stream_id": 42,
+      "payload_length": 38,
+      "extension_length": 0,
+      "description": "RPC request: inference.generate(id=1)"
+    },
+    {
+      "index": 1,
+      "offset": 66,
+      "length": 48,
+      "type": "0x04",
+      "type_name": "RPC_RESPONSE",
+      "flags": "0x00",
+      "stream_id": 42,
+      "payload_length": 20,
+      "extension_length": 0,
+      "description": "RPC response: success, output=\"world\""
+    }
+  ],
+  "transcript_hashes": [
+  ],
+  "session_id": null
+}

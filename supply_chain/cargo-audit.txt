@@ -1,0 +1,37 @@
+    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 1138 security advisories (from /Users/david/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (251 crate dependencies)
+Crate:     paste
+Version:   1.0.15
+Warning:   unmaintained
+Title:     paste - no longer maintained
+Date:      2024-10-07
+ID:        RUSTSEC-2024-0436
+URL:       https://rustsec.org/advisories/RUSTSEC-2024-0436
+
+Crate:     pqcrypto-internals
+Version:   0.2.11
+Warning:   unmaintained
+Title:     `pqcrypto-internals` is unmaintained: upstream PQClean project being archived
+Date:      2026-06-04
+ID:        RUSTSEC-2026-0163
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0163
+
+Crate:     pqcrypto-mldsa
+Version:   0.1.2
+Warning:   unmaintained
+Title:     `pqcrypto-mldsa` is unmaintained: upstream PQClean project being archived
+Date:      2026-06-04
+ID:        RUSTSEC-2026-0166
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0166
+
+Crate:     pqcrypto-traits
+Version:   0.3.5
+Warning:   unmaintained
+Title:     `pqcrypto-traits` is unmaintained: upstream PQClean project being archived
+Date:      2026-06-04
+ID:        RUSTSEC-2026-0162
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0162
+
+warning: 4 allowed warnings found

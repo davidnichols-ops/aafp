@@ -1,0 +1,48 @@
+{
+  "name": "08_error_exchange",
+  "description": "RPC error response followed by graceful CLOSE",
+  "rfc_reference": "RFC-0002 §4, RFC-0005 §3",
+  "total_bytes": 159,
+  "outcome": "session terminated (graceful close)",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 50,
+      "type": "0x03",
+      "type_name": "RPC_REQUEST",
+      "flags": "0x00",
+      "stream_id": 7,
+      "payload_length": 22,
+      "extension_length": 0,
+      "description": "RPC request: unknown.method(id=99)"
+    },
+    {
+      "index": 1,
+      "offset": 50,
+      "length": 60,
+      "type": "0x04",
+      "type_name": "RPC_RESPONSE",
+      "flags": "0x00",
+      "stream_id": 7,
+      "payload_length": 32,
+      "extension_length": 0,
+      "description": "RPC response: error 9001 (method not found)"
+    },
+    {
+      "index": 2,
+      "offset": 110,
+      "length": 49,
+      "type": "0x05",
+      "type_name": "CLOSE",
+      "flags": "0x80",
+      "stream_id": 7,
+      "payload_length": 21,
+      "extension_length": 0,
+      "description": "CLOSE (graceful shutdown)"
+    }
+  ],
+  "transcript_hashes": [
+  ],
+  "session_id": null
+}

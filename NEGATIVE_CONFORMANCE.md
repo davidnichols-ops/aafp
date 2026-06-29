@@ -64,8 +64,8 @@ handle invalid inputs, leading to interoperability failures.
 | N-REC-003 | Tampered signature | RFC-0003 §3 | SignatureVerificationFailed |
 | N-REC-004 | Expired record | RFC-0003 §8.4 | Expired error |
 | N-REC-005 | Wrong record_type | RFC-0003 §3 | InvalidRecordType error |
-| N-REC-006 | Wrong key_algorithm | RFC-0003 §3 | Spec gap (documented) |
-| N-REC-007 | Expiry exceeds 30-day max | RFC-0003 §8.4 | Spec gap (documented) |
+| N-REC-006 | Wrong key_algorithm | RFC-0003 §3.6 step 8 | UnsupportedAlgorithm error (enforced) |
+| N-REC-007 | Expiry exceeds 30-day max | RFC-0003 §8.4 (Rev 5) | Accepted by verify() (warning, not rejection) |
 | N-REC-008 | Empty public key | RFC-0003 §2 | InvalidAgentId error |
 
 ### 4. Invalid Signatures (6 tests)
@@ -128,22 +128,25 @@ The CBOR decoder now rejects non-canonical encodings per RFC 8949 §4.2.1:
 
 ## Spec Gaps Identified
 
-The following gaps were identified during negative testing and should be
-addressed in RFC Revision 4:
+The following gaps were identified during negative testing:
 
-1. **N-REC-006**: AgentRecord verification does not check `key_algorithm`
-   against a known set. The RFC should specify whether unknown algorithms
-   are rejected or ignored.
+1. **N-REC-006** (resolved): AgentRecord verification now checks
+   `key_algorithm` against the known set (ML-DSA-65 = 1) per
+   RFC-0003 §3.6 step 8, rejecting unknown algorithms with
+   `UnsupportedAlgorithm`. The test now asserts rejection.
 
-2. **N-REC-007**: AgentRecord verification does not enforce the 30-day
-   maximum expiry (`MAX_RECORD_EXPIRY`). The RFC should specify whether
-   this is a MUST or a SHOULD, and whether verification should reject
-   records with expiry exceeding the maximum.
+2. **N-REC-007** (resolved in RFC Revision 5, SA-0003): The 30-day
+   maximum expiry is a deployment warning, not a verification-rejection
+   requirement. RFC-0003 §8.4 (Rev 5) clarifies that `verify()` does
+   NOT reject records whose lifetime exceeds 30 days; callers SHOULD
+   use `exceeds_max_expiry_warning(now)` to warn users. The test now
+   asserts that `verify()` accepts an unexpired >30-day record while
+   the warning predicate fires. See `SPEC_AMBIGUITIES.md` SA-0003.
 
 ## Summary
 
-- **54 negative conformance tests** added
+- **54 negative conformance tests** (N-REC-006 and N-REC-007 updated
+  to reflect resolved semantics in RFC Revision 5)
 - **0 failures** — all tests pass
-- **2 spec gaps** identified for RFC Revision 4
+- **0 open spec gaps** (both N-REC-006 and N-REC-007 resolved)
 - **CBOR decoder hardened** with canonical encoding validation
-- Total workspace: **379 tests pass**, 0 failures

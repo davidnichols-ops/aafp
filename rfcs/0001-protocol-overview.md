@@ -1,12 +1,15 @@
 # RFC-0001: AAFP Protocol Overview
 
 ```
-Status:         Freeze Candidate (Revision 3)
+Status:         Freeze Candidate (Revision 5)
 Number:         0001
 Title:          Protocol Overview, Goals, and Layer Architecture
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 3: amendments A-T1, A-T8)
+Revised:        2025-01-15 (Revision 4: no content changes, version bump
+                for consistency with RFC-0002 and RFC-0003)
+                2025-01-16 (Revision 5: no content changes, version bump
+                for consistency with RFC-0003)
 Type:           Informational
 Obsoletes:      —
 Obsoleted by:   —

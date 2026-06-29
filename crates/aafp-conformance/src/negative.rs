@@ -200,7 +200,7 @@ mod invalid_frames {
     fn test_nframe_001_reject_wrong_version() {
         let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
         bytes[0] = 0x02; // Wrong version (should be 1)
-        bytes[1] = FrameType::Data as u8;
+        bytes[1] = FrameType::Data.to_u8();
         let result = decode_frame(&bytes);
         assert!(result.is_err(), "wrong version must be rejected");
         match result.unwrap_err() {
@@ -212,14 +212,21 @@ mod invalid_frames {
         }
     }
 
-    /// N-FRAME-002: Frame with unknown type (non-critical) MUST be rejected.
+    /// N-FRAME-002: Frame with unknown non-critical type MUST be skipped (not rejected).
+    /// Per RFC-0006 §4.2: non-critical unknown frame types MUST be skipped.
+    /// The decoder should succeed; the caller is responsible for skipping.
     #[test]
     fn test_nframe_002_reject_unknown_type() {
         let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
         bytes[0] = AAFP_VERSION;
-        bytes[1] = 0x0F; // Unknown type, no critical bit
+        bytes[1] = 0x0F; // Unknown type, no critical bit (flags byte is 0)
         let result = decode_frame(&bytes);
-        assert!(result.is_err(), "unknown frame type must be rejected");
+        // Per RFC-0006 §4.2, non-critical unknown types should decode
+        // successfully so the caller can skip them.
+        assert!(result.is_ok(), "non-critical unknown frame type should decode (for skipping), got: {:?}", result);
+        let (frame, _) = result.unwrap();
+        assert!(frame.frame_type.is_unknown(), "frame type should be Unknown");
+        assert!(!frame.frame_type.is_known(), "frame type should not be known");
     }
 
     /// N-FRAME-003: Frame with unknown critical type (0xFF | 0x80) MUST be rejected.
@@ -246,7 +253,7 @@ mod invalid_frames {
     fn test_nframe_005_reject_oversized_payload() {
         let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
         bytes[0] = AAFP_VERSION;
-        bytes[1] = FrameType::Data as u8;
+        bytes[1] = FrameType::Data.to_u8();
         // Set payload_len to MAX_PAYLOAD_SIZE + 1
         let oversized = (MAX_PAYLOAD_SIZE as u64) + 1;
         bytes[12..20].copy_from_slice(&oversized.to_be_bytes());
@@ -259,7 +266,7 @@ mod invalid_frames {
     fn test_nframe_006_reject_payload_len_mismatch() {
         let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
         bytes[0] = AAFP_VERSION;
-        bytes[1] = FrameType::Data as u8;
+        bytes[1] = FrameType::Data.to_u8();
         bytes[12..20].copy_from_slice(&100u64.to_be_bytes()); // Claims 100 bytes
         // But only 28 bytes total (header only, no payload)
         let result = decode_frame(&bytes);
@@ -271,7 +278,7 @@ mod invalid_frames {
     fn test_nframe_007_reject_ext_len_mismatch() {
         let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
         bytes[0] = AAFP_VERSION;
-        bytes[1] = FrameType::Data as u8;
+        bytes[1] = FrameType::Data.to_u8();
         bytes[20..28].copy_from_slice(&50u64.to_be_bytes()); // Claims 50 bytes of extensions
         let result = decode_frame(&bytes);
         assert!(result.is_err(), "extension length mismatch must be rejected");
@@ -372,21 +379,25 @@ mod invalid_agent_records {
         assert!(matches!(err, IdentityError::InvalidRecordType { .. }));
     }
 
-    /// N-REC-006: Wrong key_algorithm MUST fail verification.
+    /// N-REC-006: Wrong key_algorithm MUST fail verification (RFC-0003 §3.6 step 8).
     #[test]
     fn test_nrec_006_wrong_key_algorithm() {
         let mut record = make_valid_record();
         record.key_algorithm = 99;
-        let err = record.verify(1735689600);
-        // This may or may not fail depending on whether key_algorithm is checked
-        // during verification. If it doesn't fail, it's a spec gap to document.
-        // For now, just verify it doesn't crash.
-        let _ = err;
+        let err = record.verify(1735689600).unwrap_err();
+        assert!(
+            matches!(err, IdentityError::UnsupportedAlgorithm { .. }),
+            "verify() MUST reject unsupported key_algorithm per RFC-0003 §3.6 step 8"
+        );
     }
 
-    /// N-REC-007: Record with expiry > MAX_RECORD_EXPIRY from created_at.
+    /// N-REC-007: Record with lifetime > 30 days MUST still be accepted by
+    /// verify() (RFC-0003 §8.4, clarified in Revision 5). The 30-day limit
+    /// is a deployment warning, not a verification rejection. The warning
+    /// predicate (expires_at - now > 30d) is tested separately in rfc0003.rs
+    /// (R5-002..R5-004).
     #[test]
-    fn test_nrec_007_expiry_exceeds_max() {
+    fn test_nrec_007_expiry_exceeds_max_accepted_by_verify() {
         let (pk, sk) = MlDsa65::keypair();
         let now = 1735689600u64;
         let mut record = AgentRecord::new(
@@ -394,13 +405,22 @@ mod invalid_agent_records {
             vec![],
             vec![],
             now,
-            now + MAX_RECORD_EXPIRY + 1, // Exceeds 30 days
+            now + MAX_RECORD_EXPIRY + 86400, // 31 days lifetime, unexpired
             1,
         );
         record.sign(&sk);
-        // Verification should either fail or this should be flagged
-        // This is a spec compliance question — the RFC says max 30 days
-        let _ = record.verify(now);
+        // verify() must accept: unexpired, and §3.6 has no 30-day rejection step.
+        let result = record.verify(now);
+        assert!(
+            result.is_ok(),
+            "verify() must accept unexpired record with >30-day lifetime per RFC-0003 §8.4 (Rev 5): {:?}",
+            result
+        );
+        // The warning predicate must fire (caller responsibility, not verify()).
+        assert!(
+            record.exceeds_max_expiry_warning(now),
+            "exceeds_max_expiry_warning(now) must fire for >30-day future expiry"
+        );
     }
 
     /// N-REC-008: Empty public key MUST fail.

@@ -1,0 +1,36 @@
+{
+  "name": "09_discovery_announce",
+  "description": "Discovery announce request/response with AgentRecord and peer list",
+  "rfc_reference": "RFC-0004 §3",
+  "total_bytes": 10815,
+  "outcome": "success",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 5407,
+      "type": "0x03",
+      "type_name": "RPC_REQUEST",
+      "flags": "0x00",
+      "stream_id": 1,
+      "payload_length": 5379,
+      "extension_length": 0,
+      "description": "Discovery announce request"
+    },
+    {
+      "index": 1,
+      "offset": 5407,
+      "length": 5408,
+      "type": "0x04",
+      "type_name": "RPC_RESPONSE",
+      "flags": "0x00",
+      "stream_id": 1,
+      "payload_length": 5380,
+      "extension_length": 0,
+      "description": "Discovery announce response (1 peer)"
+    }
+  ],
+  "transcript_hashes": [
+  ],
+  "session_id": null
+}

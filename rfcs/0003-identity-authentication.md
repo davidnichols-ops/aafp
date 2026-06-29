@@ -1,14 +1,18 @@
 # RFC-0003: AAFP Identity & Authentication
 
 ```
-Status:         Freeze Candidate (Revision 3)
+Status:         Freeze Candidate (Revision 5)
 Number:         0003
 Title:          Agent Identity, AgentRecord, Capability Descriptors,
                 Authorization, and Session Lifecycle
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 3: amendments A-H3, A-T2, A-T3,
-                A-T4, A-T6, A-T9)
+Revised:        2025-01-15 (Revision 4: SA-0001 and SA-0002
+                clarifications — metadata field presence and empty
+                CBOR map key-type)
+                2025-01-16 (Revision 5: SA-0003 clarification —
+                AgentRecord 30-day expiry is a deployment warning,
+                not a verification-rejection requirement)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -344,7 +348,7 @@ optional metadata (used for capability negotiation and filtering).
 ```cbor
 CapabilityDescriptor = {
     1: tstr,                    // "name": capability name
-    2: { *tstr => MetadataValue },  // "metadata": optional
+    2: { *tstr => MetadataValue },  // "metadata": MUST be present, MAY be empty
 }
 ```
 
@@ -365,7 +369,15 @@ MetadataValue = (
 | Key | Name | Type | Required | Description |
 |-----|------|------|----------|-------------|
 | 1 | name | tstr | Yes | Capability name (e.g., "inference", "translation"). |
-| 2 | metadata | map | No | Optional metadata. May be absent or empty. |
+| 2 | metadata | map | Yes | Metadata map. MUST be present. MAY be empty. When empty, encoded as an empty CBOR map (`a0`, major type 5, 0 entries). See Section 4.5 for key type and ordering rules. |
+
+**Clarification (Revision 4)**: The `metadata` field (key 2) MUST
+always be present in every CapabilityDescriptor on the wire. An
+empty metadata map MUST be encoded as `a0` (empty CBOR map), not
+omitted. This ensures deterministic encoding across implementations
+and prevents signature verification failures caused by inconsistent
+field presence. Implementations MUST NOT omit key 2, even when the
+metadata map is empty.
 
 ### 4.5 Metadata Map
 
@@ -376,6 +388,17 @@ for deterministic serialization. This is critical for:
   CapabilityDescriptors. Non-deterministic map ordering would break
   cross-implementation signature verification.
 - **Caching**: Deterministic encoding enables byte-level comparison.
+
+**Empty map key type (Revision 4 clarification)**: The metadata map
+is defined as `map<tstr, MetadataValue>` (string-keyed). When the
+map is empty, CBOR encodes it as `a0` (major type 5, 0 entries).
+Because CBOR does not distinguish between empty int-keyed maps and
+empty string-keyed maps in the encoded byte `0xa0`, the key type
+MUST be determined from the enclosing schema, not from the CBOR
+encoding. Decoders MUST interpret an empty map in the metadata field
+(key 2) as a string-keyed map, regardless of the CBOR major type
+implied by the `a0` encoding. This rule applies to all AAFP fields
+with a schema-defined key type (see RFC-0002 §8.1).
 
 ### 4.6 Why Typed Values Instead of Opaque Bytes
 
@@ -821,6 +844,13 @@ To mitigate the impact of key compromise:
    30 days (2,592,000 seconds). Implementations MUST warn users if
    an AgentRecord's `expires_at` exceeds 30 days from the current
    time.
+
+   The 30-day limit in point 1 is a deployment mitigation, not a
+   verification requirement. The verification procedure in §3.6
+   does NOT reject records whose lifetime exceeds 30 days.
+   Implementations MUST warn users when
+   `expires_at - current_time > 2,592,000`. The warning predicate
+   is computed from the current time, not from `created_at`.
 2. Implementations SHOULD renew AgentRecords every 7 days to keep
    the expiry window short.
 3. The `expires_at` field in the handshake (RFC-0002 Sections 5.3,

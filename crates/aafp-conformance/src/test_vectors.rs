@@ -314,7 +314,7 @@ pub fn frame_vectors() -> Vec<TestVector> {
                 // stream_id=0, payload_len=0, ext_len=0
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
-                bytes[1] = FrameType::Data as u8;
+                bytes[1] = FrameType::Data.to_u8();
                 TestVector::hash(&bytes)
             },
             notes: "Minimal frame: 28-byte header, no payload, no extensions",
@@ -328,7 +328,7 @@ pub fn frame_vectors() -> Vec<TestVector> {
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
-                bytes[1] = FrameType::Data as u8;
+                bytes[1] = FrameType::Data.to_u8();
                 bytes[4..12].copy_from_slice(&42u64.to_be_bytes());
                 bytes[12..20].copy_from_slice(&4u64.to_be_bytes()); // payload_len
                 bytes.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
@@ -351,7 +351,7 @@ pub fn frame_vectors() -> Vec<TestVector> {
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
-                bytes[1] = FrameType::Handshake as u8;
+                bytes[1] = FrameType::Handshake.to_u8();
                 bytes[12..20].copy_from_slice(&8u64.to_be_bytes());
                 bytes.extend_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
                 TestVector::hash(&bytes)
@@ -373,7 +373,7 @@ pub fn frame_vectors() -> Vec<TestVector> {
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
-                bytes[1] = FrameType::RpcRequest as u8;
+                bytes[1] = FrameType::RpcRequest.to_u8();
                 bytes[4..12].copy_from_slice(&4u64.to_be_bytes());
                 bytes[12..20].copy_from_slice(&3u64.to_be_bytes());
                 bytes.extend_from_slice(&[0xA1, 0x01, 0x02]);
@@ -396,7 +396,7 @@ pub fn frame_vectors() -> Vec<TestVector> {
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
-                bytes[1] = FrameType::Ping as u8;
+                bytes[1] = FrameType::Ping.to_u8();
                 TestVector::hash(&bytes)
             },
             notes: "PING frames are control frames on stream 0",
@@ -416,7 +416,7 @@ pub fn frame_vectors() -> Vec<TestVector> {
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
-                bytes[1] = FrameType::Data as u8;
+                bytes[1] = FrameType::Data.to_u8();
                 bytes[2] = 0x01; // flags = MORE
                 bytes[4..12].copy_from_slice(&8u64.to_be_bytes());
                 bytes[12..20].copy_from_slice(&1u64.to_be_bytes());

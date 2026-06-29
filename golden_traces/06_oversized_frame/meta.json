@@ -1,0 +1,36 @@
+{
+  "name": "06_oversized_frame",
+  "description": "Frame claiming payload > 1 MiB → rejected with ERROR 8001 (FRAME_TOO_LARGE)",
+  "rfc_reference": "RFC-0002 §3.3, RFC-0005 §3.9",
+  "total_bytes": 114,
+  "outcome": "failure: error 8001 (non-fatal)",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 32,
+      "type": "0x01",
+      "type_name": "DATA",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 1048577,
+      "extension_length": 0,
+      "description": "Frame claiming payload_len=1048577 (exceeds 1 MiB max)"
+    },
+    {
+      "index": 1,
+      "offset": 32,
+      "length": 82,
+      "type": "0x06",
+      "type_name": "ERROR",
+      "flags": "0x80",
+      "stream_id": 0,
+      "payload_length": 54,
+      "extension_length": 0,
+      "description": "ERROR 8001 (FRAME_TOO_LARGE, non-fatal)"
+    }
+  ],
+  "transcript_hashes": [
+  ],
+  "session_id": null
+}

@@ -38,36 +38,57 @@ pub const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;
 pub const FRAME_HEADER_SIZE: usize = 28;
 
 /// Frame types (RFC-0002 §4).
+///
+/// The `Unknown` variant is used for frame types not in the v1 registry.
+/// Per RFC-0006 §4.2, the receiver checks the critical bit (0x80) in the
+/// flags field to decide whether to reject (critical) or skip (non-critical)
+/// unknown frame types.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-#[repr(u8)]
 pub enum FrameType {
-    Data = 0x01,
-    Handshake = 0x02,
-    RpcRequest = 0x03,
-    RpcResponse = 0x04,
-    Close = 0x05,
-    Error = 0x06,
-    Ping = 0x07,
-    Pong = 0x08,
+    Data,
+    Handshake,
+    RpcRequest,
+    RpcResponse,
+    Close,
+    Error,
+    Ping,
+    Pong,
+    /// An unknown frame type. The raw byte is preserved for logging/error reporting.
+    Unknown(u8),
 }
 
 impl FrameType {
-    /// Convert from raw u8. Returns None for unknown types.
-    pub fn from_u8(val: u8) -> Option<Self> {
+    /// Convert from raw u8. Returns `Unknown(val)` for types not in the v1 registry.
+    pub fn from_u8(val: u8) -> Self {
         match val {
-            0x01 => Some(Self::Data),
-            0x02 => Some(Self::Handshake),
-            0x03 => Some(Self::RpcRequest),
-            0x04 => Some(Self::RpcResponse),
-            0x05 => Some(Self::Close),
-            0x06 => Some(Self::Error),
-            0x07 => Some(Self::Ping),
-            0x08 => Some(Self::Pong),
-            _ => None,
+            0x01 => Self::Data,
+            0x02 => Self::Handshake,
+            0x03 => Self::RpcRequest,
+            0x04 => Self::RpcResponse,
+            0x05 => Self::Close,
+            0x06 => Self::Error,
+            0x07 => Self::Ping,
+            0x08 => Self::Pong,
+            other => Self::Unknown(other),
         }
     }
 
-    /// Returns true if this is a known frame type.
+    /// Convert to raw u8.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Data => 0x01,
+            Self::Handshake => 0x02,
+            Self::RpcRequest => 0x03,
+            Self::RpcResponse => 0x04,
+            Self::Close => 0x05,
+            Self::Error => 0x06,
+            Self::Ping => 0x07,
+            Self::Pong => 0x08,
+            Self::Unknown(raw) => raw,
+        }
+    }
+
+    /// Returns true if this is a known frame type (in the v1 registry).
     pub fn is_known(self) -> bool {
         matches!(
             self,
@@ -80,6 +101,11 @@ impl FrameType {
                 | Self::Ping
                 | Self::Pong
         )
+    }
+
+    /// Returns true if this is an unknown frame type.
+    pub fn is_unknown(self) -> bool {
+        matches!(self, Self::Unknown(_))
     }
 }
 
@@ -194,7 +220,7 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, FrameError> {
 
     // Header (24 bytes, big-endian)
     buf.push(AAFP_VERSION);
-    buf.push(frame.frame_type as u8);
+    buf.push(frame.frame_type.to_u8());
     buf.push(frame.flags);
     buf.push(0u8); // Reserved
     buf.extend_from_slice(&frame.stream_id.to_be_bytes());
@@ -249,7 +275,14 @@ pub fn decode_frame(data: &[u8]) -> Result<(Frame, usize), FrameError> {
         });
     }
 
-    let frame_type = FrameType::from_u8(frame_type_raw).ok_or(FrameError::UnknownFrameType(frame_type_raw))?;
+    let frame_type = FrameType::from_u8(frame_type_raw);
+
+    // Per RFC-0006 §4.2:
+    // - Unknown + critical bit set: reject with error (caller sends ERROR 8004)
+    // - Unknown + critical bit clear: decode succeeds, caller MUST skip
+    if frame_type.is_unknown() && (flags & flags::CRITICAL) != 0 {
+        return Err(FrameError::UnknownFrameType(frame_type_raw));
+    }
 
     let extensions = data[FRAME_HEADER_SIZE..FRAME_HEADER_SIZE + ext_len].to_vec();
     let payload = data[FRAME_HEADER_SIZE + ext_len..total_frame].to_vec();
@@ -338,7 +371,7 @@ impl Encoder<Frame> for FrameCodec {
 
         // Header
         buf.put_u8(AAFP_VERSION);
-        buf.put_u8(frame.frame_type as u8);
+        buf.put_u8(frame.frame_type.to_u8());
         buf.put_u8(frame.flags);
         buf.put_u8(0); // Reserved
         buf.put_u64(frame.stream_id);
@@ -369,11 +402,13 @@ mod tests {
             FrameType::Ping,
             FrameType::Pong,
         ] {
-            let raw = ft as u8;
-            assert_eq!(FrameType::from_u8(raw), Some(ft));
+            let raw = ft.to_u8();
+            assert_eq!(FrameType::from_u8(raw), ft);
         }
-        assert_eq!(FrameType::from_u8(0x00), None);
-        assert_eq!(FrameType::from_u8(0xFF), None);
+        // Unknown types return Unknown variant
+        assert!(FrameType::from_u8(0x00).is_unknown());
+        assert!(FrameType::from_u8(0xFF).is_unknown());
+        assert!(FrameType::from_u8(0x80).is_unknown());
     }
 
     #[test]
@@ -470,8 +505,20 @@ mod tests {
 
     #[test]
     fn test_unknown_frame_type() {
+        // Unknown non-critical frame type: should decode successfully (caller skips)
         let mut encoded = encode_frame(&Frame::data(4, b"test".to_vec())).unwrap();
         encoded[1] = 0xFF; // Unknown frame type
+        encoded[2] = 0x00; // No critical bit
+        let result = decode_frame(&encoded);
+        assert!(result.is_ok(), "non-critical unknown type should decode");
+        let (frame, _) = result.unwrap();
+        assert!(frame.frame_type.is_unknown());
+        assert_eq!(frame.frame_type.to_u8(), 0xFF);
+
+        // Unknown critical frame type: should be rejected
+        let mut encoded = encode_frame(&Frame::data(4, b"test".to_vec())).unwrap();
+        encoded[1] = 0xFF; // Unknown frame type
+        encoded[2] = 0x80; // Critical bit set
         assert!(matches!(
             decode_frame(&encoded),
             Err(FrameError::UnknownFrameType(0xFF))

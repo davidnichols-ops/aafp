@@ -205,3 +205,257 @@ fn test_r3_030_record_cbor_roundtrip() {
     assert_eq!(record2.capabilities.len(), 1);
     assert!(record2.verify(1700000000).is_ok());
 }
+
+// ===========================================================================
+// Revision 4 Conformance Tests (SA-0001 and SA-0002)
+// ===========================================================================
+
+/// R4-001 (SA-0001): CapabilityDescriptor metadata (key 2) MUST always
+/// be present on the wire, even when empty.
+#[test]
+fn test_r4_001_metadata_always_present() {
+    let cap = CapabilityDescriptor::new("inference");
+    let cbor = cap.to_cbor();
+    // Key 2 MUST be present
+    assert!(
+        aafp_cbor::int_map_get(&cbor, 2).is_some(),
+        "metadata (key 2) MUST always be present per RFC-0003 §4.4 (Revision 4)"
+    );
+}
+
+/// R4-002 (SA-0001): Empty metadata MUST be encoded as an empty CBOR map
+/// (`a0`), not omitted.
+#[test]
+fn test_r4_002_empty_metadata_encoded_as_empty_map() {
+    let cap = CapabilityDescriptor::new("inference");
+    let cbor = cap.to_cbor();
+    let metadata = aafp_cbor::int_map_get(&cbor, 2).expect("key 2 must be present");
+
+    // Empty metadata must be an empty StrMap (encoded as 0xa0 on the wire)
+    match metadata {
+        Value::StrMap(entries) => {
+            assert!(
+                entries.is_empty(),
+                "empty metadata must have zero entries"
+            );
+        }
+        Value::IntMap(entries) => {
+            assert!(
+                entries.is_empty(),
+                "empty metadata must have zero entries"
+            );
+        }
+        _ => panic!(
+            "metadata must be a map, got {:?}",
+            metadata
+        ),
+    }
+
+    // Verify the encoded bytes contain 0xa0 for the empty map
+    let encoded = aafp_cbor::encode(&cbor).unwrap();
+    // The empty map byte 0xa0 must appear in the encoding
+    assert!(
+        encoded.contains(&0xa0),
+        "encoded bytes must contain 0xa0 for empty metadata map"
+    );
+}
+
+/// R4-003 (SA-0001): Two CapabilityDescriptors with empty metadata must
+/// produce identical CBOR byte sequences (deterministic encoding).
+#[test]
+fn test_r4_003_empty_metadata_deterministic() {
+    let cap1 = CapabilityDescriptor::new("inference");
+    let cap2 = CapabilityDescriptor::new("inference");
+
+    let encoded1 = aafp_cbor::encode(&cap1.to_cbor()).unwrap();
+    let encoded2 = aafp_cbor::encode(&cap2.to_cbor()).unwrap();
+
+    assert_eq!(
+        encoded1, encoded2,
+        "two CapabilityDescriptors with same name and empty metadata must produce identical bytes"
+    );
+}
+
+/// R4-004 (SA-0001): AgentRecord with empty-metadata CapabilityDescriptor
+/// must round-trip and preserve the metadata field.
+#[test]
+fn test_r4_004_record_with_empty_metadata_roundtrip() {
+    let (pk, sk) = MlDsa65::keypair();
+    let mut record = AgentRecord::new(
+        &pk.0,
+        vec![CapabilityDescriptor::new("inference")],
+        vec!["/ip4/127.0.0.1/tcp/4001".to_string()],
+        1700000000,
+        1700000000 + 86400,
+        1,
+    );
+    record.sign(&sk);
+
+    let encoded = aafp_cbor::encode(&record.to_cbor()).unwrap();
+    let (decoded, _) = aafp_cbor::decode(&encoded).unwrap();
+    let record2 = AgentRecord::from_cbor(&decoded).unwrap();
+
+    // The CapabilityDescriptor must still have metadata present
+    assert_eq!(record2.capabilities.len(), 1);
+    let cap = &record2.capabilities[0];
+    assert_eq!(cap.name, "inference");
+    assert!(
+        cap.metadata.is_empty(),
+        "metadata should be empty after roundtrip"
+    );
+    // Verify the record still verifies (signature covers the CBOR with key 2 present)
+    assert!(record2.verify(1700000000).is_ok());
+}
+
+/// R4-005 (SA-0002): An empty CBOR map in the metadata field must be
+/// decoded as a string-keyed map, not rejected as a type mismatch.
+/// This tests the schema-driven key-type interpretation rule.
+#[test]
+fn test_r4_005_empty_map_schema_driven_keytype() {
+    // Manually construct a CapabilityDescriptor CBOR with an empty map
+    // at key 2. The empty map encodes as 0xa0 (major type 5).
+    // Per RFC-0002 §8.1 (Revision 4), the decoder must interpret this
+    // as a string-keyed map because the schema says map<tstr, MetadataValue>.
+    let cbor = Value::IntMap(vec![
+        (1, Value::TextString("inference".to_string())),
+        (2, Value::StrMap(vec![])), // empty string-keyed map
+    ]);
+
+    let encoded = aafp_cbor::encode(&cbor).unwrap();
+    let (decoded, _) = aafp_cbor::decode(&encoded).unwrap();
+    let cap = CapabilityDescriptor::from_cbor(&decoded).expect(
+        "decoder must accept empty metadata map per SA-0002",
+    );
+
+    assert_eq!(cap.name, "inference");
+    assert!(cap.metadata.is_empty());
+}
+
+/// R4-006 (SA-0002): An empty CBOR map encoded as IntMap (major type 5)
+/// in a string-keyed schema field must also be accepted, since the
+/// schema defines the key type, not the CBOR major type.
+#[test]
+fn test_r4_006_empty_intmap_in_string_field_accepted() {
+    // Construct CBOR with key 2 as an empty IntMap instead of StrMap.
+    // On the wire, both encode as 0xa0. The decoder must accept either
+    // representation in a schema-defined string-keyed field.
+    let cbor = Value::IntMap(vec![
+        (1, Value::TextString("inference".to_string())),
+        (2, Value::IntMap(vec![])), // empty int-keyed map (same bytes as empty StrMap)
+    ]);
+
+    let encoded = aafp_cbor::encode(&cbor).unwrap();
+    let (decoded, _) = aafp_cbor::decode(&encoded).unwrap();
+
+    // The decoder should accept this because:
+    // 1. On the wire, empty IntMap and empty StrMap are both 0xa0
+    // 2. The schema says key 2 is map<tstr, MetadataValue>
+    // 3. Per SA-0002, the key type comes from the schema, not the major type
+    let cap = CapabilityDescriptor::from_cbor(&decoded).expect(
+        "decoder must accept empty map regardless of CBOR major type per SA-0002",
+    );
+
+    assert_eq!(cap.name, "inference");
+    assert!(cap.metadata.is_empty());
+}
+
+// =============================================================================
+// RFC Revision 5 Conformance Tests (SA-0003: 30-day expiry clarification)
+//
+// RFC-0003 §8.4 (Revision 5) clarifies that the 30-day limit is a deployment
+// mitigation (warn users), NOT a verification-rejection requirement. The
+// verification procedure in §3.6 does NOT reject records whose lifetime
+// exceeds 30 days. The warning predicate is expires_at - now > 30 days.
+// =============================================================================
+
+/// R5-001: verify() MUST accept an unexpired record whose lifetime
+/// (expires_at - created_at) exceeds 30 days. Per RFC-0003 §8.4 (Rev 5),
+/// the 30-day limit is a warning, not a verification rejection.
+#[test]
+fn test_r5_001_verify_accepts_over_30day_lifetime_unexpired_record() {
+    let (pk, sk) = MlDsa65::keypair();
+    let now = 1735689600u64; // 2025-01-01
+    // Lifetime = 60 days, well over the 30-day advisory, but unexpired.
+    let mut record = AgentRecord::new(
+        &pk.0,
+        vec![CapabilityDescriptor::new("inference")],
+        vec!["/ip4/127.0.0.1/tcp/4001".to_string()],
+        now,
+        now + 60 * 86400,
+        KEY_ALG_ML_DSA_65,
+    );
+    record.sign(&sk);
+
+    // verify() must accept this: it is unexpired, and §3.6 has no
+    // 30-day rejection step.
+    let result = record.verify(now);
+    assert!(
+        result.is_ok(),
+        "verify() must accept unexpired record with >30-day lifetime per RFC-0003 §8.4 (Rev 5): {:?}",
+        result
+    );
+}
+
+/// R5-002: exceeds_max_expiry_warning(now) MUST return true when
+/// expires_at - now > 30 days (2,592,000 seconds).
+#[test]
+fn test_r5_002_warning_true_when_exceeds_30_days_from_now() {
+    let (pk, _) = MlDsa65::keypair();
+    let now = 1735689600u64;
+    let record = AgentRecord::new(
+        &pk.0,
+        vec![],
+        vec![],
+        now,
+        now + MAX_RECORD_EXPIRY + 1, // 30 days + 1 second
+        KEY_ALG_ML_DSA_65,
+    );
+    assert!(
+        record.exceeds_max_expiry_warning(now),
+        "warning must fire when expires_at - now > 30 days"
+    );
+}
+
+/// R5-003: exceeds_max_expiry_warning(now) MUST return false when
+/// expires_at - now <= 30 days (boundary inclusive).
+#[test]
+fn test_r5_003_warning_false_when_within_30_days_from_now() {
+    let (pk, _) = MlDsa65::keypair();
+    let now = 1735689600u64;
+
+    // Exactly 30 days: boundary, not exceeding
+    let record = AgentRecord::new(
+        &pk.0,
+        vec![],
+        vec![],
+        now,
+        now + MAX_RECORD_EXPIRY,
+        KEY_ALG_ML_DSA_65,
+    );
+    assert!(
+        !record.exceeds_max_expiry_warning(now),
+        "warning must NOT fire at exactly 30 days (boundary)"
+    );
+
+    // 7 days: well within
+    let record = AgentRecord::new(&pk.0, vec![], vec![], now, now + 7 * 86400, KEY_ALG_ML_DSA_65);
+    assert!(
+        !record.exceeds_max_expiry_warning(now),
+        "warning must NOT fire for 7-day record"
+    );
+}
+
+/// R5-004: exceeds_max_expiry_warning(now) MUST return false for an
+/// already-expired record (expires_at <= now). The warning is about
+/// future lifetime, not past records.
+#[test]
+fn test_r5_004_warning_false_for_already_expired_record() {
+    let (pk, _) = MlDsa65::keypair();
+    let now = 1735689600u64;
+    // Record that expired 1 second ago
+    let record = AgentRecord::new(&pk.0, vec![], vec![], now - 86400, now - 1, KEY_ALG_ML_DSA_65);
+    assert!(
+        !record.exceeds_max_expiry_warning(now),
+        "warning must NOT fire for an already-expired record (saturates to 0)"
+    );
+}
