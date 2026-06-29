@@ -2,7 +2,7 @@
 //!
 //! Wire format:
 //! ```text
-//! [24-byte header][extensions][payload]
+//! [28-byte header][extensions][payload]
 //! ```
 //!
 //! Header layout (all big-endian):
@@ -30,11 +30,6 @@ pub const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;
 /// Per RFC-0002 §3.1 field table:
 ///   Version(1) + FrameType(1) + Flags(1) + Reserved(1) +
 ///   StreamID(8) + PayloadLen(8) + ExtensionLen(8) = 28 bytes.
-///
-/// NOTE: The RFC prose says "24-byte header" but the field table
-/// specifies 64-bit Stream ID, Payload Length, and Extension Length,
-/// which sums to 28. The field sizes are normative; this is an RFC
-/// text inconsistency to be addressed in a future amendment.
 pub const FRAME_HEADER_SIZE: usize = 28;
 
 /// Frame types (RFC-0002 §4).
@@ -218,7 +213,7 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, FrameError> {
 
     let mut buf = Vec::with_capacity(FRAME_HEADER_SIZE + frame.extensions.len() + frame.payload.len());
 
-    // Header (24 bytes, big-endian)
+    // Header (28 bytes, big-endian)
     buf.push(AAFP_VERSION);
     buf.push(frame.frame_type.to_u8());
     buf.push(frame.flags);

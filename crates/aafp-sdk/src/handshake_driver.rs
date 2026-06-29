@@ -75,35 +75,89 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// Read a length-prefixed CBOR message from a QUIC receive stream.
+/// Read an AAFP HANDSHAKE frame from a QUIC receive stream and return
+/// the CBOR payload.
 ///
-/// Format: 4-byte big-endian length prefix, then CBOR bytes.
-async fn read_message(
+/// The frame uses the standard AAFP v1 frame format (RFC-0002 §3):
+/// 28-byte header + extensions + payload. For handshake frames,
+/// extensions are empty and the payload is the CBOR-encoded handshake
+/// message.
+async fn read_handshake_frame(
     recv: &mut aafp_transport_quic::QuicRecvStream,
 ) -> Result<Vec<u8>, SdkError> {
     use tokio::io::AsyncReadExt;
-    let mut len_buf = [0u8; 4];
-    recv.read_exact(&mut len_buf).await?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > 1024 * 1024 {
+
+    // Read the 28-byte frame header
+    let mut header = [0u8; aafp_messaging::FRAME_HEADER_SIZE];
+    recv.read_exact(&mut header).await?;
+
+    // Parse header fields (all big-endian)
+    let version = header[0];
+    let frame_type = header[1];
+    let _flags = header[2];
+    let _reserved = header[3];
+    let _stream_id = u64::from_be_bytes(header[4..12].try_into().unwrap());
+    let payload_len = u64::from_be_bytes(header[12..20].try_into().unwrap()) as usize;
+    let ext_len = u64::from_be_bytes(header[20..28].try_into().unwrap()) as usize;
+
+    // Validate frame
+    if version != PROTOCOL_VERSION as u8 {
         return Err(SdkError::Handshake(format!(
-            "handshake message too large: {len} bytes"
+            "frame version mismatch: expected {PROTOCOL_VERSION}, got {version}"
         )));
     }
-    let mut buf = vec![0u8; len];
-    recv.read_exact(&mut buf).await?;
-    Ok(buf)
+    if frame_type != 0x02 {
+        return Err(SdkError::Handshake(format!(
+            "expected HANDSHAKE frame (0x02), got 0x{frame_type:02x}"
+        )));
+    }
+    if ext_len > 0 {
+        return Err(SdkError::Handshake(
+            "handshake frames MUST NOT carry extensions".into(),
+        ));
+    }
+    if payload_len > 1024 * 1024 {
+        return Err(SdkError::Handshake(format!(
+            "handshake payload too large: {payload_len} bytes"
+        )));
+    }
+
+    // Read extensions (should be empty) + payload
+    if ext_len > 0 {
+        let mut ext = vec![0u8; ext_len];
+        recv.read_exact(&mut ext).await?;
+    }
+    let mut payload = vec![0u8; payload_len];
+    recv.read_exact(&mut payload).await?;
+    Ok(payload)
 }
 
-/// Write a length-prefixed CBOR message to a QUIC send stream.
-async fn write_message(
+/// Write an AAFP HANDSHAKE frame to a QUIC send stream with the given
+/// CBOR payload.
+///
+/// The frame uses the standard AAFP v1 frame format (RFC-0002 §3):
+/// 28-byte header (frame type 0x02, stream 0) + payload.
+async fn write_handshake_frame(
     send: &mut aafp_transport_quic::QuicSendStream,
-    msg: &[u8],
+    cbor_payload: &[u8],
 ) -> Result<(), SdkError> {
     use tokio::io::AsyncWriteExt;
-    let len = msg.len() as u32;
-    send.write_all(&len.to_be_bytes()).await?;
-    send.write_all(msg).await?;
+
+    // Build 28-byte header
+    let mut header = [0u8; aafp_messaging::FRAME_HEADER_SIZE];
+    header[0] = PROTOCOL_VERSION as u8; // Version
+    header[1] = 0x02; // FrameType = HANDSHAKE
+    header[2] = 0x00; // Flags
+    header[3] = 0x00; // Reserved
+    // Stream ID = 0 (handshake stream)
+    header[4..12].copy_from_slice(&0u64.to_be_bytes());
+    // Payload Length
+    header[12..20].copy_from_slice(&(cbor_payload.len() as u64).to_be_bytes());
+    // Extension Length = 0
+    header[20..28].copy_from_slice(&0u64.to_be_bytes());
+
+    send.write_all(&header).await?;
+    send.write_all(cbor_payload).await?;
     Ok(())
 }
 
@@ -221,10 +275,10 @@ pub async fn drive_client_handshake(
     ch.signature = sig;
 
     // Send ClientHello
-    write_message(&mut send, &encode_client_hello(&ch)).await?;
+    write_handshake_frame(&mut send, &encode_client_hello(&ch)).await?;
 
     // --- Receive and verify ServerHello ---
-    let sh_bytes = read_message(&mut recv).await?;
+    let sh_bytes = read_handshake_frame(&mut recv).await?;
     let sh = decode_server_hello(&sh_bytes).map_err(|e| {
         SdkError::Handshake(format!("ServerHello decode error: {e}"))
     })?;
@@ -247,7 +301,7 @@ pub async fn drive_client_handshake(
         session_id,
         signature: sign_with_keypair(keypair, &signature_input(&h_after_sh)),
     };
-    write_message(&mut send, &encode_client_finished(&cf)).await?;
+    write_handshake_frame(&mut send, &encode_client_finished(&cf)).await?;
 
     // --- IdentityVerified ---
     session
@@ -296,7 +350,7 @@ pub async fn drive_server_handshake(
     let (mut send, mut recv) = conn.accept_bi().await?;
 
     // --- Receive and verify ClientHello ---
-    let ch_bytes = read_message(&mut recv).await?;
+    let ch_bytes = read_handshake_frame(&mut recv).await?;
     let ch = decode_client_hello(&ch_bytes).map_err(|e| {
         SdkError::Handshake(format!("ClientHello decode error: {e}"))
     })?;
@@ -345,10 +399,10 @@ pub async fn drive_server_handshake(
     sh.signature = sig;
 
     // Send ServerHello
-    write_message(&mut send, &encode_server_hello(&sh)).await?;
+    write_handshake_frame(&mut send, &encode_server_hello(&sh)).await?;
 
     // --- Receive and verify ClientFinished ---
-    let cf_bytes = read_message(&mut recv).await?;
+    let cf_bytes = read_handshake_frame(&mut recv).await?;
     let cf = decode_client_finished(&cf_bytes).map_err(|e| {
         SdkError::Handshake(format!("ClientFinished decode error: {e}"))
     })?;
