@@ -23,10 +23,12 @@
 
 pub mod builder;
 pub mod client;
+pub mod handshake_driver;
 pub mod server;
 
 pub use builder::AgentBuilder;
 pub use client::AgentClient;
+pub use handshake_driver::{PeerInfo, drive_client_handshake, drive_server_handshake};
 pub use server::AgentServer;
 
 use aafp_identity::{AgentId, AgentKeypair, AgentRecord};
