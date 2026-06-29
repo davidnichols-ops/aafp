@@ -25,6 +25,14 @@ pub const AAFP_VERSION: u8 = 1;
 /// Maximum payload size: 1 MiB (RFC-0002 §3.4).
 pub const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;
 
+/// Maximum extension section size: 64 KiB (SA-0006).
+///
+/// Extensions are metadata (type, critical flag, data). 64 KiB is generous
+/// for any conceivable extension payload. Without this limit, an attacker
+/// could double the per-frame memory allocation (1 MiB payload + 1 MiB
+/// extensions = 2 MiB total).
+pub const MAX_EXTENSION_SIZE: usize = 64 * 1024;
+
 /// Frame header size: 28 bytes.
 ///
 /// Per RFC-0002 §3.1 field table:
@@ -253,6 +261,10 @@ pub fn decode_frame(data: &[u8]) -> Result<(Frame, usize), FrameError> {
 
     if payload_len > MAX_PAYLOAD_SIZE {
         return Err(FrameError::PayloadTooLarge(payload_len, MAX_PAYLOAD_SIZE));
+    }
+
+    if ext_len > MAX_EXTENSION_SIZE {
+        return Err(FrameError::PayloadTooLarge(ext_len, MAX_EXTENSION_SIZE));
     }
 
     let total_body = ext_len.checked_add(payload_len).ok_or(FrameError::PayloadTooLarge(
