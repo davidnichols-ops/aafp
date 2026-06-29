@@ -370,9 +370,19 @@ impl AgentRecord {
         self.expires_at <= now
     }
 
-    /// Check if the record's expiry exceeds the 30-day maximum (RFC-0003 §8.4).
-    pub fn exceeds_max_expiry(&self) -> bool {
-        (self.expires_at - self.created_at) > MAX_RECORD_EXPIRY
+    /// Check if the record's expiry exceeds the 30-day maximum warning
+    /// threshold (RFC-0003 §8.4, clarified in Revision 5).
+    ///
+    /// Per RFC-0003 §8.4 (Revision 5), the 30-day limit is a deployment
+    /// mitigation, NOT a verification requirement. `verify()` does NOT
+    /// reject records whose lifetime exceeds 30 days. Callers SHOULD use
+    /// this method to warn users when `expires_at - now > 30 days`.
+    ///
+    /// The predicate is computed from the current time (`now`), not from
+    /// `created_at`, matching the §8.4 normative text: "expires_at exceeds
+    /// 30 days from the current time."
+    pub fn exceeds_max_expiry_warning(&self, now: u64) -> bool {
+        self.expires_at.saturating_sub(now) > MAX_RECORD_EXPIRY
     }
 }
 
@@ -818,17 +828,25 @@ mod tests {
     }
 
     #[test]
-    fn test_max_expiry_check() {
+    fn test_max_expiry_warning_check() {
         let (pk, _) = MlDsa65::keypair();
         let now = 1700000000u64;
 
-        // 7-day record: OK
+        // 7-day record: no warning
         let record = AgentRecord::new(&pk.0, vec![], vec![], now, now + 7 * 86400, 1);
-        assert!(!record.exceeds_max_expiry());
+        assert!(!record.exceeds_max_expiry_warning(now));
 
-        // 31-day record: exceeds max
+        // 31-day record from now: warning fires
         let record = AgentRecord::new(&pk.0, vec![], vec![], now, now + 31 * 86400, 1);
-        assert!(record.exceeds_max_expiry());
+        assert!(record.exceeds_max_expiry_warning(now));
+
+        // Exactly 30 days: no warning (boundary, not exceeding)
+        let record = AgentRecord::new(&pk.0, vec![], vec![], now, now + MAX_RECORD_EXPIRY, 1);
+        assert!(!record.exceeds_max_expiry_warning(now));
+
+        // Already expired: no warning (expires_at - now saturates to 0)
+        let record = AgentRecord::new(&pk.0, vec![], vec![], now, now - 1, 1);
+        assert!(!record.exceeds_max_expiry_warning(now));
     }
 
     #[test]

@@ -1,12 +1,15 @@
 # RFC-0002: AAFP Transport & Framing
 
 ```
-Status:         Freeze Candidate (Revision 3)
+Status:         Freeze Candidate (Revision 5)
 Number:         0002
 Title:          Transport, Framing, Stream Multiplexing, and Wire Format
 Author:         AAFP Project
 Created:        2025-06-25
-Revised:        2025-06-25 (Revision 3: amendments A-C1, A-C2, A-C3, A-H1, A-H2, A-H4, A-H5, A-M1, A-M2, A-M3, A-T7)
+Revised:        2025-01-15 (Revision 4: SA-0002 clarification — empty
+                CBOR map key-type interpretation)
+                2025-01-16 (Revision 5: no content changes, version bump
+                for consistency with RFC-0003)
 Type:           Standards Track
 Obsoletes:      —
 Obsoleted by:   —
@@ -948,6 +951,24 @@ cannot be pre-assigned integer values. String keys in the metadata
 map are sorted by length-first canonical byte ordering of their
 UTF-8 encoding, consistent with RFC 8949 Section 4.2.3. All other
 AAFP CBOR maps use integer keys.
+
+**Empty map key type (Revision 4 clarification)**: When a CBOR map
+is empty (encoded as `a0`, major type 5, 0 entries), the CBOR
+encoding does not distinguish between int-keyed and string-keyed
+maps — both produce the byte `0xa0`. For AAFP fields with a
+schema-defined key type, the key type MUST be determined from the
+enclosing schema, not from the CBOR major type of the encoded data.
+Specifically:
+
+- A field defined as `map<uint, T>` (int-keyed) MUST be interpreted
+  as an integer-keyed map, even when empty.
+- A field defined as `map<tstr, T>` (string-keyed, e.g.,
+  CapabilityDescriptor metadata) MUST be interpreted as a
+  string-keyed map, even when empty.
+
+This rule prevents decoders from rejecting valid empty maps due to
+ambiguous CBOR major type interpretation. See RFC-0003 §4.5 for the
+specific application to CapabilityDescriptor metadata.
 
 Note: RFC 8949 obsoletes RFC 7049. The length-first deterministic
 encoding in RFC 8949 Section 4.2.3 is compatible with the canonical

@@ -1,0 +1,36 @@
+{
+  "name": "04_version_mismatch",
+  "description": "Frame with version=2 → rejected with ERROR 8006 (INVALID_VERSION)",
+  "rfc_reference": "RFC-0006 §2.3",
+  "total_bytes": 102,
+  "outcome": "failure: error 8006",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 32,
+      "type": "0x01",
+      "type_name": "DATA",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 4,
+      "extension_length": 0,
+      "description": "Frame with version=2 (unsupported)"
+    },
+    {
+      "index": 1,
+      "offset": 32,
+      "length": 70,
+      "type": "0x06",
+      "type_name": "ERROR",
+      "flags": "0x80",
+      "stream_id": 0,
+      "payload_length": 42,
+      "extension_length": 0,
+      "description": "ERROR 8006 (INVALID_VERSION, fatal)"
+    }
+  ],
+  "transcript_hashes": [
+  ],
+  "session_id": null
+}

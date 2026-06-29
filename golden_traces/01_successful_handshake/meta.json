@@ -1,0 +1,60 @@
+{
+  "name": "01_successful_handshake",
+  "description": "Complete successful handshake: ClientHello → ServerHello → ClientFinished",
+  "rfc_reference": "RFC-0002 §5",
+  "total_bytes": 14178,
+  "outcome": "success",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 5384,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 5356,
+      "extension_length": 0,
+      "description": "ClientHello (v1, ML-DSA-65)"
+    },
+    {
+      "index": 1,
+      "offset": 5384,
+      "length": 5417,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 5389,
+      "extension_length": 0,
+      "description": "ServerHello (v1, session_id established)"
+    },
+    {
+      "index": 2,
+      "offset": 10801,
+      "length": 3377,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 3349,
+      "extension_length": 0,
+      "description": "ClientFinished (session confirmed)"
+    }
+  ],
+  "transcript_hashes": [
+    {
+      "stage": "after_clienthello",
+      "hash": "689a2bb3f0043c03f5617ef6cab6c4ed218bc39afb30aff739acc4e5931ffde5"
+    },
+    {
+      "stage": "after_serverhello",
+      "hash": "d89fa717723f94751e61696fcef06ac1ccd1f4aa251f0e613b0455075bfd0379"
+    },
+    {
+      "stage": "after_clientfinished",
+      "hash": "5a2e546e655428f8277e5bdc3f3c5f4e938decfb0714ae273bf3623dc021a7b6"
+    }
+  ],
+  "session_id": "7af9fca127e45ec49dd5b441fd9b928fddecbaa816a42981548d3b7081726627"
+}

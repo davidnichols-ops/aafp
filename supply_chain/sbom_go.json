@@ -1,0 +1,15 @@
+{
+  "sbom_version": "1.0",
+  "generated": "2025-01-15",
+  "tool": "manual (go.mod parse)",
+  "project": "aafp-go (Go independent implementation)",
+  "toolchain": {
+    "go": "1.26.4"
+  },
+  "lockfile": "No go.sum (no external dependencies)",
+  "total_packages": 0,
+  "external_packages": 0,
+  "standard_library_only": true,
+  "packages": [],
+  "notes": "The Go implementation uses only the Go standard library. No external dependencies are declared in go.mod. No go.sum file exists because there are no external dependencies to checksum."
+}

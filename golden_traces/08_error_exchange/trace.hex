@@ -1,0 +1,42 @@
+# Golden trace: 08_error_exchange
+# Description: RPC error response followed by graceful CLOSE
+# RFC reference: RFC-0002 §4, RFC-0005 §3
+# Total bytes: 159
+# Frames: 3
+
+# --- Frame 0 (offset 0, 50 bytes) ---
+#   Type: 0x03 (RPC_REQUEST)
+#   Flags: 0x00
+#   StreamID: 7
+#   PayloadLen: 22
+#   ExtLen: 0
+#   Description: RPC request: unknown.method(id=99)
+  00000000  01 03 00 00 00 00 00 00 00 00 00 07 00 00 00 00   ................
+  00000010  00 00 00 16 00 00 00 00 00 00 00 00 a3 01 18 63   ...............c
+  00000020  02 6e 75 6e 6b 6e 6f 77 6e 2e 6d 65 74 68 6f 64   .nunknown.method
+  00000030  03 f6                                             ..
+
+# --- Frame 1 (offset 50, 60 bytes) ---
+#   Type: 0x04 (RPC_RESPONSE)
+#   Flags: 0x00
+#   StreamID: 7
+#   PayloadLen: 32
+#   ExtLen: 0
+#   Description: RPC response: error 9001 (method not found)
+  00000032  01 04 00 00 00 00 00 00 00 00 00 07 00 00 00 00   ................
+  00000042  00 00 00 20 00 00 00 00 00 00 00 00 a3 01 18 63   ... ...........c
+  00000052  02 f6 03 a3 01 19 23 29 02 70 6d 65 74 68 6f 64   ......#).pmethod
+  00000062  20 6e 6f 74 20 66 6f 75 6e 64 03 f6                not found..
+
+# --- Frame 2 (offset 110, 49 bytes) ---
+#   Type: 0x05 (CLOSE)
+#   Flags: 0x80
+#   StreamID: 7
+#   PayloadLen: 21
+#   ExtLen: 0
+#   Description: CLOSE (graceful shutdown)
+  0000006e  01 05 80 00 00 00 00 00 00 00 00 07 00 00 00 00   ................
+  0000007e  00 00 00 15 00 00 00 00 00 00 00 00 a2 01 00 02   ................
+  0000008e  70 73 65 73 73 69 6f 6e 20 63 6f 6d 70 6c 65 74   psession complet
+  0000009e  65                                                e
+

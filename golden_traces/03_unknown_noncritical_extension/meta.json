@@ -1,0 +1,60 @@
+{
+  "name": "03_unknown_noncritical_extension",
+  "description": "ClientHello with unknown non-critical extension → server drops it, handshake succeeds",
+  "rfc_reference": "RFC-0002 §6.4, RFC-0006 §6.1",
+  "total_bytes": 14189,
+  "outcome": "success (extension dropped)",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 5395,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 5367,
+      "extension_length": 0,
+      "description": "ClientHello (unknown non-critical ext 0xBEEF)"
+    },
+    {
+      "index": 1,
+      "offset": 5395,
+      "length": 5417,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 5389,
+      "extension_length": 0,
+      "description": "ServerHello (ext dropped, session established)"
+    },
+    {
+      "index": 2,
+      "offset": 10812,
+      "length": 3377,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 3349,
+      "extension_length": 0,
+      "description": "ClientFinished"
+    }
+  ],
+  "transcript_hashes": [
+    {
+      "stage": "after_clienthello",
+      "hash": "7edab78b5a8aa859089e2694fc8a6725dda115be991269c13d9ec50a358de22d"
+    },
+    {
+      "stage": "after_serverhello",
+      "hash": "76605681998d6ea8f50983b9e80cbaaa31d1efe25b8b6d716c326d4939d964df"
+    },
+    {
+      "stage": "after_clientfinished",
+      "hash": "d7ded6201077369fd8a17c473be8ea9bb264cbaaf85f15a408373240bb210a52"
+    }
+  ],
+  "session_id": "d7c8c9b8694e42da2eb8f2cbcc73b9dd8b639a176617a4cc100b2f1481a92e5e"
+}

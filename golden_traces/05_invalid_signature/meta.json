@@ -1,0 +1,40 @@
+{
+  "name": "05_invalid_signature",
+  "description": "ClientHello with invalid signature → server rejects with ERROR 2001",
+  "rfc_reference": "RFC-0003 §3, RFC-0005 §3.3",
+  "total_bytes": 5463,
+  "outcome": "failure: error 2001",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 5384,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 5356,
+      "extension_length": 0,
+      "description": "ClientHello (invalid all-zeros signature)"
+    },
+    {
+      "index": 1,
+      "offset": 5384,
+      "length": 79,
+      "type": "0x06",
+      "type_name": "ERROR",
+      "flags": "0x80",
+      "stream_id": 0,
+      "payload_length": 51,
+      "extension_length": 0,
+      "description": "ERROR 2001 (INVALID_SIGNATURE, fatal)"
+    }
+  ],
+  "transcript_hashes": [
+    {
+      "stage": "after_clienthello",
+      "hash": "d2f0d3c7beaae507c111aaad433bc366950ce744cc1b5b3e8043d9d93010de61"
+    }
+  ],
+  "session_id": null
+}

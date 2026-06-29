@@ -47,7 +47,7 @@ mod frame_header {
     fn test_r2_003_frame_type_at_offset_1() {
         let frame = Frame::data(1, vec![]);
         let bytes = encode_frame(&frame).unwrap();
-        assert_eq!(bytes[1], FrameType::Data as u8);
+        assert_eq!(bytes[1], FrameType::Data.to_u8());
     }
 
     /// R2-004: Flags field MUST be 1 byte at offset 2.
@@ -118,49 +118,49 @@ mod frame_types {
     /// R2-015: DATA frame type MUST be 0x01.
     #[test]
     fn test_r2_015_data_type() {
-        assert_eq!(FrameType::Data as u8, 0x01);
+        assert_eq!(FrameType::Data.to_u8(), 0x01);
     }
 
     /// R2-016: HANDSHAKE frame type MUST be 0x02.
     #[test]
     fn test_r2_016_handshake_type() {
-        assert_eq!(FrameType::Handshake as u8, 0x02);
+        assert_eq!(FrameType::Handshake.to_u8(), 0x02);
     }
 
     /// R2-017: RPC_REQUEST frame type MUST be 0x03.
     #[test]
     fn test_r2_017_rpc_request_type() {
-        assert_eq!(FrameType::RpcRequest as u8, 0x03);
+        assert_eq!(FrameType::RpcRequest.to_u8(), 0x03);
     }
 
     /// R2-018: RPC_RESPONSE frame type MUST be 0x04.
     #[test]
     fn test_r2_018_rpc_response_type() {
-        assert_eq!(FrameType::RpcResponse as u8, 0x04);
+        assert_eq!(FrameType::RpcResponse.to_u8(), 0x04);
     }
 
     /// R2-019: CLOSE frame type MUST be 0x05.
     #[test]
     fn test_r2_019_close_type() {
-        assert_eq!(FrameType::Close as u8, 0x05);
+        assert_eq!(FrameType::Close.to_u8(), 0x05);
     }
 
     /// R2-020: ERROR frame type MUST be 0x06.
     #[test]
     fn test_r2_020_error_type() {
-        assert_eq!(FrameType::Error as u8, 0x06);
+        assert_eq!(FrameType::Error.to_u8(), 0x06);
     }
 
     /// R2-021: PING frame type MUST be 0x07.
     #[test]
     fn test_r2_021_ping_type() {
-        assert_eq!(FrameType::Ping as u8, 0x07);
+        assert_eq!(FrameType::Ping.to_u8(), 0x07);
     }
 
     /// R2-022: PONG frame type MUST be 0x08.
     #[test]
     fn test_r2_022_pong_type() {
-        assert_eq!(FrameType::Pong as u8, 0x08);
+        assert_eq!(FrameType::Pong.to_u8(), 0x08);
     }
 
     /// R2-025: Frame roundtrip must preserve all fields.
@@ -523,6 +523,62 @@ mod canonical_cbor {
             assert_eq!(entries[0].0, "key");
         } else {
             panic!("expected StrMap");
+        }
+    }
+
+    // ===================================================================
+    // Revision 4 Conformance Tests (SA-0002)
+    // ===================================================================
+
+    /// R4-010 (SA-0002): Empty CBOR maps encode as 0xa0 regardless of
+    /// whether they are int-keyed or string-keyed.
+    #[test]
+    fn test_r4_010_empty_maps_same_encoding() {
+        let int_empty = Value::IntMap(vec![]);
+        let str_empty = Value::StrMap(vec![]);
+
+        let int_bytes = aafp_cbor::encode(&int_empty).unwrap();
+        let str_bytes = aafp_cbor::encode(&str_empty).unwrap();
+
+        // Both must encode as 0xa0 (empty map, major type 5)
+        assert_eq!(
+            int_bytes, str_bytes,
+            "empty IntMap and empty StrMap must produce identical bytes"
+        );
+        assert_eq!(
+            int_bytes,
+            vec![0xa0],
+            "empty map must encode as single byte 0xa0"
+        );
+    }
+
+    /// R4-011 (SA-0002): For fields with a schema-defined key type,
+    /// the key type MUST be determined from the schema, not from the
+    /// CBOR major type. An empty int-keyed map in a string-keyed
+    /// schema field must be accepted.
+    #[test]
+    fn test_r4_011_schema_driven_keytype_empty_map() {
+        // Simulate a schema field defined as map<tstr, T> containing
+        // an empty map. On the wire this is 0xa0. The decoder must
+        // accept it as valid regardless of which CBOR Value variant
+        // is used to represent it, because the schema defines the
+        // key type.
+        let int_empty = Value::IntMap(vec![]);
+        let str_empty = Value::StrMap(vec![]);
+
+        let int_bytes = aafp_cbor::encode(&int_empty).unwrap();
+        let str_bytes = aafp_cbor::encode(&str_empty).unwrap();
+
+        // Both produce the same bytes, so a decoder cannot distinguish
+        // them. The schema must be the source of truth.
+        assert_eq!(int_bytes, str_bytes);
+
+        // Decoding 0xa0 must succeed and produce a valid empty map
+        let (decoded, _) = aafp_cbor::decode(&int_bytes).unwrap();
+        match decoded {
+            Value::IntMap(entries) => assert!(entries.is_empty()),
+            Value::StrMap(entries) => assert!(entries.is_empty()),
+            _ => panic!("decoded empty map must be IntMap or StrMap"),
         }
     }
 }

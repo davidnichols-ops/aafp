@@ -1,0 +1,30 @@
+# Golden trace: 06_oversized_frame
+# Description: Frame claiming payload > 1 MiB → rejected with ERROR 8001 (FRAME_TOO_LARGE)
+# RFC reference: RFC-0002 §3.3, RFC-0005 §3.9
+# Total bytes: 114
+# Frames: 2
+
+# --- Frame 0 (offset 0, 32 bytes) ---
+#   Type: 0x01 (DATA)
+#   Flags: 0x00
+#   StreamID: 0
+#   PayloadLen: 1048577
+#   ExtLen: 0
+#   Description: Frame claiming payload_len=1048577 (exceeds 1 MiB max)
+  00000000  01 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+  00000010  00 10 00 01 00 00 00 00 00 00 00 00 de ad be ef   ................
+
+# --- Frame 1 (offset 32, 82 bytes) ---
+#   Type: 0x06 (ERROR)
+#   Flags: 0x80
+#   StreamID: 0
+#   PayloadLen: 54
+#   ExtLen: 0
+#   Description: ERROR 8001 (FRAME_TOO_LARGE, non-fatal)
+  00000020  01 06 80 00 00 00 00 00 00 00 00 00 00 00 00 00   ................
+  00000030  00 00 00 36 00 00 00 00 00 00 00 00 a4 01 19 1f   ...6............
+  00000040  41 02 78 2a 66 72 61 6d 65 20 65 78 63 65 65 64   A.x*frame exceed
+  00000050  73 20 6d 61 78 69 6d 75 6d 20 73 69 7a 65 20 28   s maximum size (
+  00000060  31 30 34 38 35 37 36 20 62 79 74 65 73 29 03 f6   1048576 bytes)..
+  00000070  04 f4                                             ..
+

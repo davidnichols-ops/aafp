@@ -1,0 +1,40 @@
+{
+  "name": "02_unknown_critical_extension",
+  "description": "ClientHello with unknown critical extension → server rejects with ERROR 2005",
+  "rfc_reference": "RFC-0002 §6.4, RFC-0006 §6.2",
+  "total_bytes": 5468,
+  "outcome": "failure: error 2005",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 5395,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 5367,
+      "extension_length": 0,
+      "description": "ClientHello (unknown critical ext 0xBEEF)"
+    },
+    {
+      "index": 1,
+      "offset": 5395,
+      "length": 73,
+      "type": "0x06",
+      "type_name": "ERROR",
+      "flags": "0x80",
+      "stream_id": 0,
+      "payload_length": 45,
+      "extension_length": 0,
+      "description": "ERROR 2005 (UNSUPPORTED_EXTENSIONS, fatal)"
+    }
+  ],
+  "transcript_hashes": [
+    {
+      "stage": "after_clienthello",
+      "hash": "776a3e2938859151a5c3b0ee2ba7075a4eacc9dd2c3b46d02035340666719fa0"
+    }
+  ],
+  "session_id": null
+}

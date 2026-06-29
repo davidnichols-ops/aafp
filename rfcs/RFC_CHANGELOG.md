@@ -2,11 +2,179 @@
 
 ```
 Document:         RFC_CHANGELOG.md
-Date:             2025-06-25
+Date:             2025-01-16
 Status:           Current
 Scope:            Records all changes to AAFP RFCs from initial draft
-                  (Revision 1) through the current revision (Revision 3).
+                  (Revision 1) through the current revision (Revision 5).
 ```
+
+---
+
+## Revision 5 (2025-01-16) — Freeze Candidate (Clarification)
+
+Revision 5 applies one specification clarification (SA-0003) discovered
+during implementation review of the AgentRecord 30-day expiry rule.
+This is a clarification-only change with no wire format impact, no new
+error codes, and no modification to the §3.6 verification procedure.
+
+Per the freeze commitment (RFC-0006 §2.5), clarifications of ambiguous
+normative text discovered during implementation justify a revision
+under the freeze candidate stage.
+
+### Clarification Applied
+
+**SA-0003: AgentRecord 30-day expiry — warning vs. rejection**
+
+- **Issue**: RFC-0003 §8.4 stated "Implementations MUST support
+  AgentRecord expiry no longer than 30 days" and "MUST warn users if
+  expires_at exceeds 30 days from the current time." This was
+  misreadable as a verification-rejection requirement. However, the
+  normative verification procedure in §3.6 contains no 30-day rejection
+  step (only past-expiry rejection at step 6), no error code exists for
+  "expiry too long," and the originating review (REVIEW-0004 TC1) and
+  amendment (AMENDMENTS-0002 A-T3) both specified "warn users," not
+  "reject." Additionally, the existing implementation helper
+  `exceeds_max_expiry()` used `expires_at - created_at` (total lifetime)
+  while §8.4 specifies `expires_at - current_time`.
+- **Resolution**: RFC-0003 §8.4 point 1 clarified that the 30-day limit
+  is a deployment mitigation, not a verification requirement. The
+  verification procedure in §3.6 does NOT reject records whose lifetime
+  exceeds 30 days. The warning predicate is `expires_at - current_time >
+  2,592,000`, computed from the current time, not from `created_at`.
+- **Wire format impact**: None. No new error codes, no §3.6 change, no
+  protocol registry change.
+- **Implementation impact**: The Rust `exceeds_max_expiry()` helper
+  (using `created_at`) was replaced with `exceeds_max_expiry_warning(now)`
+  (using `now`, matching §8.4). `verify()` is unchanged. The Go
+  implementation added `ExceedsMaxExpiryWarning(now)` with the same
+  predicate. Both implementations added conformance tests R5-001
+  through R5-004 verifying that `verify()` accepts >30-day unexpired
+  records and that the warning predicate fires correctly.
+
+### RFC-0001 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 5 (no content changes) | — |
+
+### RFC-0002 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 5 (no content changes) | — |
+
+### RFC-0003 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 5 | — |
+| 8.4 | Added clarification paragraph to point 1: 30-day limit is a deployment warning, not a verification rejection; predicate uses current_time, not created_at | SA-0003 |
+
+### RFC-0004 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 5 (no content changes) | — |
+
+### RFC-0005 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 5 (no content changes) | — |
+
+### RFC-0006 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 5 (no content changes) | — |
+
+---
+
+## Revision 4 (2025-01-15) — Freeze Candidate (Post-Interop)
+
+Revision 4 applies two specification clarifications discovered during
+bidirectional interoperability testing between the Rust reference
+implementation and the Go independent implementation (see
+INTEROP-0001.md). Both clarifications are narrow edge cases that do
+not change the wire format — they clarify existing normative text
+that was ambiguous enough to cause divergent implementation behavior.
+
+No amendments were processed through the AMENDMENTS-0001/0002
+process. These clarifications are justified under the freeze
+commitment (RFC-0006 §2.5) as interoperability issues discovered
+during implementation.
+
+### Clarifications Applied
+
+**SA-0001: CapabilityDescriptor metadata field presence**
+
+- **Issue**: RFC-0003 §4.4 stated metadata (key 2) is "optional, may
+  be absent or empty" but did not specify whether the field must be
+  present on the wire when empty, or how an empty map should be
+  encoded. The Rust reference always includes key 2 as an empty map;
+  the Go independent implementation initially omitted it. This caused
+  signature verification failures because the canonical CBOR inputs
+  differed.
+- **Resolution**: RFC-0003 §4.4 clarified that key 2 MUST always be
+  present. An empty metadata map MUST be encoded as `a0` (empty CBOR
+  map), not omitted. This ensures deterministic encoding.
+- **Wire format impact**: None for implementations that already
+  include key 2. Implementations that omitted key 2 must now include
+  it as an empty map.
+
+**SA-0002: Empty CBOR map key-type ambiguity**
+
+- **Issue**: CBOR encodes empty maps as `a0` (major type 5, 0
+  entries), which is the same encoding for both int-keyed and
+  string-keyed empty maps. Decoders that check the CBOR major type
+  to determine key type will see major type 5 (int-keyed) for an
+  empty string-keyed map, causing rejection of valid data.
+- **Resolution**: RFC-0002 §8.1 clarified that for AAFP fields with
+  a schema-defined key type, the key type MUST be determined from
+  the enclosing schema, not from the CBOR major type. This applies
+  to all `map<tstr, T>` and `map<uint, T>` fields.
+- **Wire format impact**: None. This is a decoder behavior
+  clarification only.
+
+### RFC-0001 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 4 (no content changes) | — |
+
+### RFC-0002 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 4 | — |
+| 8.1 | Added empty map key-type interpretation rule | SA-0002 |
+
+### RFC-0003 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 4 | — |
+| 4.2 | Updated schema comment: metadata "MUST be present, MAY be empty" | SA-0001 |
+| 4.4 | Changed metadata from "No" to "Yes" (required); added Revision 4 clarification paragraph | SA-0001 |
+| 4.5 | Added empty map key-type clarification paragraph | SA-0002 |
+
+### RFC-0004 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 4 (no content changes) | — |
+
+### RFC-0005 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 4 (no content changes) | — |
+
+### RFC-0006 Changes
+
+| Section | Change | Clarification |
+|---------|--------|---------------|
+| Header | Updated to Revision 4 (no content changes) | — |
 
 ---
 
