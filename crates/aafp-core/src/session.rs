@@ -68,6 +68,132 @@ pub trait AuthorizationContext: Send + Sync {
     fn is_authorized(&self, capability: &str) -> bool;
 }
 
+/// Error returned when authorization verification fails.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthorizationError {
+    #[error("authorization denied: {0}")]
+    Denied(String),
+    #[error("authorization token expired")]
+    Expired,
+    #[error("authorization token revoked")]
+    Revoked,
+    #[error("insufficient capability: {0}")]
+    InsufficientCapability(String),
+    #[error("delegation chain invalid: {0}")]
+    DelegationChainInvalid(String),
+    #[error("authorization provider error: {0}")]
+    Provider(String),
+}
+
+/// Authorization provider: verifies the peer's authorization after the
+/// handshake completes (IdentityVerified state) and produces an
+/// AuthorizationContext.
+///
+/// This trait is intentionally minimal. The SDK does not know whether
+/// authorization comes from UCAN, OIDC, a custom enterprise provider, or
+/// a testing provider. Only `authorize()` matters.
+///
+/// Implementations:
+/// - `TestingAuthProvider` — allows everything (for tests)
+/// - UCAN-based provider (in aafp-identity)
+/// - OIDC-based provider (future)
+/// - Custom enterprise provider (future)
+#[async_trait::async_trait]
+pub trait AuthorizationProvider: Send + Sync {
+    /// Verify the peer's authorization and produce an AuthorizationContext.
+    ///
+    /// Called after the handshake completes, when the peer's AgentId and
+    /// public key have been cryptographically verified.
+    async fn authorize(
+        &self,
+        peer_agent_id: &AgentId,
+        peer_public_key: &[u8],
+    ) -> Result<Box<dyn AuthorizationContext>, AuthorizationError>;
+}
+
+/// Testing authorization provider that allows all capabilities.
+///
+/// **WARNING**: Only use in tests. This provider does NOT perform any
+/// authorization checks — it allows every capability for every peer.
+pub struct TestingAuthProvider;
+
+#[async_trait::async_trait]
+impl AuthorizationProvider for TestingAuthProvider {
+    async fn authorize(
+        &self,
+        _peer_agent_id: &AgentId,
+        _peer_public_key: &[u8],
+    ) -> Result<Box<dyn AuthorizationContext>, AuthorizationError> {
+        Ok(Box::new(AllowAllAuthContext))
+    }
+}
+
+/// Authorization context that allows all capabilities (testing only).
+struct AllowAllAuthContext;
+
+impl AuthorizationContext for AllowAllAuthContext {
+    fn is_authorized(&self, _capability: &str) -> bool {
+        true
+    }
+}
+
+/// Testing authorization provider that denies all capabilities.
+pub struct TestingDenyProvider;
+
+#[async_trait::async_trait]
+impl AuthorizationProvider for TestingDenyProvider {
+    async fn authorize(
+        &self,
+        _peer_agent_id: &AgentId,
+        _peer_public_key: &[u8],
+    ) -> Result<Box<dyn AuthorizationContext>, AuthorizationError> {
+        Ok(Box::new(DenyAllAuthContext))
+    }
+}
+
+/// Authorization context that denies all capabilities (testing only).
+struct DenyAllAuthContext;
+
+impl AuthorizationContext for DenyAllAuthContext {
+    fn is_authorized(&self, _capability: &str) -> bool {
+        false
+    }
+}
+
+/// Testing authorization provider that allows a specific set of capabilities.
+pub struct TestingCapabilityProvider {
+    allowed: Vec<String>,
+}
+
+impl TestingCapabilityProvider {
+    pub fn new(allowed: Vec<String>) -> Self {
+        Self { allowed }
+    }
+}
+
+#[async_trait::async_trait]
+impl AuthorizationProvider for TestingCapabilityProvider {
+    async fn authorize(
+        &self,
+        _peer_agent_id: &AgentId,
+        _peer_public_key: &[u8],
+    ) -> Result<Box<dyn AuthorizationContext>, AuthorizationError> {
+        Ok(Box::new(AllowedCapsAuthContext {
+            allowed: self.allowed.clone(),
+        }))
+    }
+}
+
+struct AllowedCapsAuthContext {
+    allowed: Vec<String>,
+}
+
+impl AuthorizationContext for AllowedCapsAuthContext {
+    fn is_authorized(&self, capability: &str) -> bool {
+        self.allowed.iter().any(|c| c == capability)
+    }
+}
+
 /// Session lifecycle state.
 ///
 /// States are ordered. Forward transitions follow the defined progression.
@@ -540,5 +666,57 @@ mod tests {
     fn test_is_authorized_before_auth_returns_false() {
         let s = Session::new();
         assert!(!s.is_authorized("anything"));
+    }
+
+    // --- AuthorizationProvider tests ---
+
+    #[tokio::test]
+    async fn test_testing_auth_provider_allows_all() {
+        let provider = TestingAuthProvider;
+        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        assert!(ctx.is_authorized("anything"));
+        assert!(ctx.is_authorized("aafp.admin"));
+        assert!(ctx.is_authorized("aafp.discovery"));
+    }
+
+    #[tokio::test]
+    async fn test_testing_deny_provider_denies_all() {
+        let provider = TestingDenyProvider;
+        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        assert!(!ctx.is_authorized("anything"));
+        assert!(!ctx.is_authorized("aafp.admin"));
+    }
+
+    #[tokio::test]
+    async fn test_testing_capability_provider_allows_specific() {
+        let provider = TestingCapabilityProvider::new(vec![
+            "aafp.discovery".into(),
+            "aafp.messaging".into(),
+        ]);
+        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        assert!(ctx.is_authorized("aafp.discovery"));
+        assert!(ctx.is_authorized("aafp.messaging"));
+        assert!(!ctx.is_authorized("aafp.admin"));
+    }
+
+    #[tokio::test]
+    async fn test_session_with_authorization_provider() {
+        let provider = TestingCapabilityProvider::new(vec!["aafp.discovery".into()]);
+        let mut s = Session::new();
+
+        // Must go through the state machine
+        s.on_transport_established(
+            Box::new(TestTransport { addr: "quic://x".into(), closed: false }),
+            NegotiatedFeatures::default(),
+        )
+        .unwrap();
+        s.on_identity_verified([0xAA; 32], [0xBB; 32]).unwrap();
+
+        // Authorize
+        let ctx = provider.authorize(&[0xAA; 32], &[0xCC; 1952]).await.unwrap();
+        s.on_authorization_verified(ctx).unwrap();
+        assert_eq!(s.state(), SessionState::AuthorizationVerified);
+        assert!(s.is_authorized("aafp.discovery"));
+        assert!(!s.is_authorized("aafp.admin"));
     }
 }
