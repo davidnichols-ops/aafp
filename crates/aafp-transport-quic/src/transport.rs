@@ -101,6 +101,10 @@ impl QuicTransport {
 }
 
 /// A QUIC connection wrapping a quinn::Connection.
+///
+/// `quinn::Connection` is internally `Arc`-based, so cloning a
+/// `QuicConnection` is cheap and shares the same underlying connection.
+#[derive(Clone)]
 pub struct QuicConnection {
     conn: Connection,
 }

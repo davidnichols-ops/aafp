@@ -57,6 +57,7 @@ dependencies = [
  "hex",
  "sha2",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -161,6 +162,7 @@ dependencies = [
 name = "aafp-sdk"
 version = "0.1.0"
 dependencies = [
+ "aafp-cbor",
  "aafp-core",
  "aafp-crypto",
  "aafp-discovery",

@@ -48,6 +48,8 @@ pub enum SdkError {
     Frame(#[from] aafp_messaging::FrameError),
     #[error("not connected to peer")]
     NotConnected,
+    #[error("peer not authenticated — session not in MessagingEnabled state")]
+    NotAuthenticated,
     #[error("agent not started")]
     NotStarted,
     #[error("identity error: {0}")]
