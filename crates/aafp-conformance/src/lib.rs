@@ -22,3 +22,4 @@ pub mod test_vectors;
 pub mod handshake_vectors;
 pub mod negative;
 pub mod version_negotiation;
+pub mod protocol_compliance;
