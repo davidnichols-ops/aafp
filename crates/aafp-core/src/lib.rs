@@ -7,10 +7,15 @@
 
 pub mod connection;
 pub mod error;
+pub mod session;
 pub mod swarm;
 pub mod transport;
 
 pub use connection::{ConnectionHandler, FromBehaviour, ToBehaviour};
 pub use error::{codes, Error, ErrorCategory, ProtocolError, is_always_fatal};
+pub use session::{
+    AuthorizationContext, NegotiatedFeatures, Session, SessionId, SessionState,
+    SessionStateError, TransportHandle, SESSION_ID_SIZE,
+};
 pub use swarm::{NetworkBehaviour, Swarm, SwarmEvent};
 pub use transport::{Connection, Multiaddr, Stream, Transport, TransportEvent};
