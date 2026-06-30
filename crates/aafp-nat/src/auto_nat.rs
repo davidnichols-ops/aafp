@@ -6,7 +6,6 @@
 //! the agent IS behind NAT and should use a relay.
 
 use aafp_identity::AgentId;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 

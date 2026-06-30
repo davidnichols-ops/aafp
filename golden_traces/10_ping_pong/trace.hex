@@ -1,0 +1,26 @@
+# Golden trace: 10_ping_pong
+# Description: PING/PONG keepalive exchange
+# RFC reference: RFC-0002 §4.7-4.8
+# Total bytes: 56
+# Frames: 2
+
+# --- Frame 0 (offset 0, 28 bytes) ---
+#   Type: 0x07 (PING)
+#   Flags: 0x00
+#   StreamID: 0
+#   PayloadLen: 0
+#   ExtLen: 0
+#   Description: PING frame
+  00000038  01 07 00 00 00 00 00 00 00 00 00 00 00 00 00 00    ................
+  00000038  00 00 00 00 00 00 00 00 00 00 00 00                ............
+
+# --- Frame 1 (offset 28, 28 bytes) ---
+#   Type: 0x08 (PONG)
+#   Flags: 0x00
+#   StreamID: 0
+#   PayloadLen: 0
+#   ExtLen: 0
+#   Description: PONG frame
+  00000038  01 08 00 00 00 00 00 00 00 00 00 00 00 00 00 00    ................
+  00000038  00 00 00 00 00 00 00 00 00 00 00 00                ............
+

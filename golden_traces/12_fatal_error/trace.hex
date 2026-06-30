@@ -1,0 +1,19 @@
+# Golden trace: 12_fatal_error
+# Description: Fatal ERROR frame (INVALID_SIGNATURE 2001)
+# RFC reference: RFC-0002 §4.6, RFC-0005 §3.3
+# Total bytes: 79
+# Frames: 1
+
+# --- Frame 0 (offset 0, 79 bytes) ---
+#   Type: 0x06 (ERROR)
+#   Flags: 0x00
+#   StreamID: 0
+#   PayloadLen: 51
+#   ExtLen: 0
+#   Description: ERROR frame
+  0000004f  01 06 00 00 00 00 00 00 00 00 00 00 00 00 00 00    ................
+  0000004f  00 00 00 33 00 00 00 00 00 00 00 00 a4 01 19 07    ...3............
+  0000004f  d1 02 78 27 4d 4c 2d 44 53 41 2d 36 35 20 73 69    ..x'ML-DSA-65 si
+  0000004f  67 6e 61 74 75 72 65 20 76 65 72 69 66 69 63 61    gnature verifica
+  0000004f  74 69 6f 6e 20 66 61 69 6c 65 64 03 f6 04 f5       tion failed....
+

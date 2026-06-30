@@ -7,7 +7,6 @@
 
 use aafp_core::Multiaddr;
 use aafp_identity::AgentId;
-use std::collections::HashMap;
 use std::time::Instant;
 use thiserror::Error;
 

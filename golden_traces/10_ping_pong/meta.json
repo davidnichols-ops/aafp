@@ -1,0 +1,33 @@
+{
+  "name": "10_ping_pong",
+  "description": "PING/PONG keepalive exchange",
+  "rfc_reference": "RFC-0002 §4.7-4.8",
+  "total_bytes": 56,
+  "outcome": "success",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 28,
+      "type": "0x07",
+      "type_name": "PING",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 0,
+      "extension_length": 0,
+      "description": "PING frame"
+    },
+    {
+      "index": 1,
+      "offset": 28,
+      "length": 28,
+      "type": "0x08",
+      "type_name": "PONG",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 0,
+      "extension_length": 0,
+      "description": "PONG frame"
+    }
+  ]
+}

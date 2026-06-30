@@ -1,0 +1,18 @@
+# Golden trace: 15_data_with_extension
+# Description: DATA frame with extension (timestamp extension)
+# RFC reference: RFC-0002 §3.3, §6
+# Total bytes: 54
+# Frames: 1
+
+# --- Frame 0 (offset 0, 54 bytes) ---
+#   Type: 0x01 (DATA)
+#   Flags: 0x00
+#   StreamID: 10
+#   PayloadLen: 11
+#   ExtLen: 15
+#   Description: DATA frame
+  00000036  01 01 00 00 00 00 00 00 00 00 00 0a 00 00 00 00    ................
+  00000036  00 00 00 0b 00 00 00 00 00 00 00 0f 00 01 00 00    ................
+  00000036  00 00 08 00 00 00 00 67 74 85 80 68 65 6c 6c 6f    .......gt..hello
+  00000036  20 77 6f 72 6c 64                                   world
+

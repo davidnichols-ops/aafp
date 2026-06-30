@@ -1,0 +1,21 @@
+{
+  "name": "12_fatal_error",
+  "description": "Fatal ERROR frame (INVALID_SIGNATURE 2001)",
+  "rfc_reference": "RFC-0002 §4.6, RFC-0005 §3.3",
+  "total_bytes": 79,
+  "outcome": "failure (2001, fatal)",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 79,
+      "type": "0x06",
+      "type_name": "ERROR",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 51,
+      "extension_length": 0,
+      "description": "ERROR frame"
+    }
+  ]
+}

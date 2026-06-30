@@ -1,0 +1,28 @@
+# Golden trace: 17_fragmented_data
+# Description: Fragmented DATA frames (MORE flag set on first fragment)
+# RFC reference: RFC-0002 §4.1 (MORE flag)
+# Total bytes: 69
+# Frames: 2
+
+# --- Frame 0 (offset 0, 35 bytes) ---
+#   Type: 0x01 (DATA)
+#   Flags: 0x01
+#   StreamID: 20
+#   PayloadLen: 7
+#   ExtLen: 0
+#   Description: DATA frame
+  00000045  01 01 01 00 00 00 00 00 00 00 00 14 00 00 00 00    ................
+  00000045  00 00 00 07 00 00 00 00 00 00 00 00 48 65 6c 6c    ............Hell
+  00000045  6f 2c 20                                           o, 
+
+# --- Frame 1 (offset 35, 34 bytes) ---
+#   Type: 0x01 (DATA)
+#   Flags: 0x00
+#   StreamID: 20
+#   PayloadLen: 6
+#   ExtLen: 0
+#   Description: DATA frame
+  00000045  01 01 00 00 00 00 00 00 00 00 00 14 00 00 00 00    ................
+  00000045  00 00 00 06 00 00 00 00 00 00 00 00 57 6f 72 6c    ............Worl
+  00000045  64 21                                              d!
+
