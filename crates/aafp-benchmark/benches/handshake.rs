@@ -1,5 +1,8 @@
+#![allow(deprecated)]
+
+use aafp_crypto::handshake::PqHandshake;
+use aafp_crypto::{MlDsa65, SignatureScheme};
 use criterion::{criterion_group, criterion_main, Criterion};
-use aafp_crypto::{MlDsa65, PqHandshake, SignatureScheme};
 
 fn bench_mldsa65_keypair(c: &mut Criterion) {
     c.bench_function("mldsa65_keypair", |b| {

@@ -16,6 +16,15 @@ path = "benches/discovery.rs"
 name = "messaging"
 path = "benches/messaging.rs"
 
+[[bench]]
+name = "close_manager"
+path = "benches/close_manager.rs"
+
+[[bench]]
+name = "replay_cache"
+path = "benches/replay_cache.rs"
+harness = false
+
 [dependencies]
 aafp-crypto = { workspace = true }
 aafp-identity = { workspace = true }

@@ -1,3 +1,6 @@
+#![allow(unused_imports)]
+#![allow(clippy::all)]
+
 //! Generate canonical golden traces for AAFP v1 protocol messages.
 //!
 //! These traces are normative conformance vectors. An independent implementation
@@ -74,12 +77,18 @@ fn main() {
 
     println!("--- ClientHello ---");
     println!("agent_id (hex): {}", hex::encode(&ch.agent_id));
-    println!("public_key (hex, first 32 bytes): {}", hex::encode(&ch.public_key[..32]));
+    println!(
+        "public_key (hex, first 32 bytes): {}",
+        hex::encode(&ch.public_key[..32])
+    );
     println!("nonce (hex): {}", hex::encode(&ch.nonce));
     println!("protocol_version: {}", ch.protocol_version);
     println!("expires_at: {}", ch.expires_at);
     println!("key_algorithm: {}", ch.key_algorithm);
-    println!("signature (hex, first 32 bytes): {}", hex::encode(&ch.signature[..32]));
+    println!(
+        "signature (hex, first 32 bytes): {}",
+        hex::encode(&ch.signature[..32])
+    );
     println!("signature_len: {}", ch.signature.len());
     println!();
 
@@ -104,12 +113,15 @@ fn main() {
     let ch_full_bytes = aafp_cbor::encode(&ch_full_cbor).unwrap();
     println!("Full ClientHello CBOR (hex):");
     println!("{}", hex::encode(&ch_full_bytes));
-    println!("Full ClientHello CBOR length: {} bytes", ch_full_bytes.len());
+    println!(
+        "Full ClientHello CBOR length: {} bytes",
+        ch_full_bytes.len()
+    );
     println!();
 
     // --- ServerHello ---
     let server_agent_id = sha2::Sha256::digest(&server.public_key).to_vec();
-    let session_id = derive_session_id(&h_after_ch, &client_nonce, &server_nonce);
+    let session_id = derive_session_id(&h_after_ch, &client_nonce, &server_nonce, &server_agent_id);
 
     let mut sh = ServerHelloV1 {
         protocol_version: PROTOCOL_VERSION,
@@ -159,7 +171,10 @@ fn main() {
     let sh_full_bytes = aafp_cbor::encode(&sh_full_cbor).unwrap();
     println!("Full ServerHello CBOR (hex):");
     println!("{}", hex::encode(&sh_full_bytes));
-    println!("Full ServerHello CBOR length: {} bytes", sh_full_bytes.len());
+    println!(
+        "Full ServerHello CBOR length: {} bytes",
+        sh_full_bytes.len()
+    );
     println!();
 
     // --- ClientFinished ---
@@ -239,8 +254,15 @@ fn main() {
     };
     let hs_bytes = encode_frame(&hs_frame).unwrap();
     println!("HANDSHAKE frame wrapping ClientHello (hex):");
-    println!("  (first 64 bytes): {}", hex::encode(&hs_bytes[..64.min(hs_bytes.len())]));
-    println!("  Total length: {} bytes (28 header + {} payload)", hs_bytes.len(), ch_full_bytes.len());
+    println!(
+        "  (first 64 bytes): {}",
+        hex::encode(&hs_bytes[..64.min(hs_bytes.len())])
+    );
+    println!(
+        "  Total length: {} bytes (28 header + {} payload)",
+        hs_bytes.len(),
+        ch_full_bytes.len()
+    );
     println!();
 
     // --- CBOR Integer Key Mapping ---

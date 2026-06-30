@@ -1,18 +1,20 @@
-use aafp_sdk::AgentBuilder;
+#![allow(deprecated)]
+
 use aafp_identity::AgentKeypair;
+use aafp_sdk::AgentBuilder;
 
 pub async fn run(capability: &str, identity: &str) -> anyhow::Result<()> {
     let keypair = if std::path::Path::new(identity).exists() {
         let data = std::fs::read(identity)?;
         AgentKeypair::from_bytes_full(&data)?
     } else {
-        anyhow::bail!("Identity file not found: {}. Run 'aafp init' first.", identity);
+        anyhow::bail!(
+            "Identity file not found: {}. Run 'aafp init' first.",
+            identity
+        );
     };
 
-    let agent = AgentBuilder::new()
-        .with_keypair(keypair)
-        .build()
-        .await?;
+    let agent = AgentBuilder::new().with_keypair(keypair).build().await?;
 
     println!("Searching for agents with capability: {}", capability);
 

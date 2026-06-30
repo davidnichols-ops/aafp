@@ -1,6 +1,4 @@
 use clap::{Parser, Subcommand};
-use std::net::SocketAddr;
-use tracing_subscriber;
 
 mod commands;
 
@@ -73,19 +71,33 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { output, capabilities } => {
+        Commands::Init {
+            output,
+            capabilities,
+        } => {
             commands::init::run(&output, capabilities).await?;
         }
-        Commands::Start { identity, bind, seeds } => {
+        Commands::Start {
+            identity,
+            bind,
+            seeds,
+        } => {
             commands::start::run(&identity, &bind, seeds).await?;
         }
-        Commands::Discover { capability, identity } => {
+        Commands::Discover {
+            capability,
+            identity,
+        } => {
             commands::discover::run(&capability, &identity).await?;
         }
         Commands::Connect { addr, identity } => {
             commands::connect::run(&addr, &identity).await?;
         }
-        Commands::Send { addr, message, identity } => {
+        Commands::Send {
+            addr,
+            message,
+            identity,
+        } => {
             commands::send::run(&addr, &message, &identity).await?;
         }
         Commands::Status { identity } => {

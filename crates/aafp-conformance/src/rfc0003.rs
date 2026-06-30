@@ -11,8 +11,8 @@
 use aafp_cbor::Value;
 use aafp_crypto::{MlDsa65, SignatureScheme};
 use aafp_identity::identity_v1::{
-    AgentId, AgentRecord, CapabilityDescriptor, IdentityError, MetadataValue,
-    KEY_ALG_ML_DSA_65, MAX_RECORD_EXPIRY, RECORD_DOMAIN_SEPARATOR, RECORD_TYPE_V1,
+    AgentId, AgentRecord, CapabilityDescriptor, IdentityError, MetadataValue, KEY_ALG_ML_DSA_65,
+    MAX_RECORD_EXPIRY, RECORD_DOMAIN_SEPARATOR, RECORD_TYPE_V1,
 };
 use sha2::{Digest, Sha256};
 
@@ -83,7 +83,10 @@ fn test_r3_012_record_sig_excludes_field_8() {
     let mut record = AgentRecord::new(&pk.0, vec![], vec![], 0, 86400, 1);
     record.sign(&sk);
     let cbor = record.to_cbor_without_sig();
-    assert!(aafp_cbor::int_map_get(&cbor, 8).is_none(), "field 8 must be absent");
+    assert!(
+        aafp_cbor::int_map_get(&cbor, 8).is_none(),
+        "field 8 must be absent"
+    );
 }
 
 /// R3-013: AgentRecord signature MUST include field 9 (key_algorithm).
@@ -166,7 +169,10 @@ fn test_r3_025_capability_descriptor_keys() {
     let cap = CapabilityDescriptor::new("inference");
     let cbor = cap.to_cbor();
     assert!(aafp_cbor::int_map_get(&cbor, 1).is_some(), "key 1 (name)");
-    assert!(aafp_cbor::int_map_get(&cbor, 2).is_some(), "key 2 (metadata)");
+    assert!(
+        aafp_cbor::int_map_get(&cbor, 2).is_some(),
+        "key 2 (metadata)"
+    );
 }
 
 /// R3-026: CapabilityDescriptor metadata map MUST use string keys.
@@ -177,7 +183,10 @@ fn test_r3_026_metadata_uses_string_keys() {
     let cbor = cap.to_cbor();
     // Key 2 should be a StrMap, not IntMap
     let metadata = aafp_cbor::int_map_get(&cbor, 2).unwrap();
-    assert!(matches!(metadata, Value::StrMap(_)), "metadata must use string keys");
+    assert!(
+        matches!(metadata, Value::StrMap(_)),
+        "metadata must use string keys"
+    );
 }
 
 /// R3-030: AgentRecord CBOR roundtrip must preserve all fields.
@@ -234,21 +243,12 @@ fn test_r4_002_empty_metadata_encoded_as_empty_map() {
     // Empty metadata must be an empty StrMap (encoded as 0xa0 on the wire)
     match metadata {
         Value::StrMap(entries) => {
-            assert!(
-                entries.is_empty(),
-                "empty metadata must have zero entries"
-            );
+            assert!(entries.is_empty(), "empty metadata must have zero entries");
         }
         Value::IntMap(entries) => {
-            assert!(
-                entries.is_empty(),
-                "empty metadata must have zero entries"
-            );
+            assert!(entries.is_empty(), "empty metadata must have zero entries");
         }
-        _ => panic!(
-            "metadata must be a map, got {:?}",
-            metadata
-        ),
+        _ => panic!("metadata must be a map, got {:?}", metadata),
     }
 
     // Verify the encoded bytes contain 0xa0 for the empty map
@@ -323,9 +323,8 @@ fn test_r4_005_empty_map_schema_driven_keytype() {
 
     let encoded = aafp_cbor::encode(&cbor).unwrap();
     let (decoded, _) = aafp_cbor::decode(&encoded).unwrap();
-    let cap = CapabilityDescriptor::from_cbor(&decoded).expect(
-        "decoder must accept empty metadata map per SA-0002",
-    );
+    let cap = CapabilityDescriptor::from_cbor(&decoded)
+        .expect("decoder must accept empty metadata map per SA-0002");
 
     assert_eq!(cap.name, "inference");
     assert!(cap.metadata.is_empty());
@@ -351,9 +350,8 @@ fn test_r4_006_empty_intmap_in_string_field_accepted() {
     // 1. On the wire, empty IntMap and empty StrMap are both 0xa0
     // 2. The schema says key 2 is map<tstr, MetadataValue>
     // 3. Per SA-0002, the key type comes from the schema, not the major type
-    let cap = CapabilityDescriptor::from_cbor(&decoded).expect(
-        "decoder must accept empty map regardless of CBOR major type per SA-0002",
-    );
+    let cap = CapabilityDescriptor::from_cbor(&decoded)
+        .expect("decoder must accept empty map regardless of CBOR major type per SA-0002");
 
     assert_eq!(cap.name, "inference");
     assert!(cap.metadata.is_empty());
@@ -375,7 +373,7 @@ fn test_r4_006_empty_intmap_in_string_field_accepted() {
 fn test_r5_001_verify_accepts_over_30day_lifetime_unexpired_record() {
     let (pk, sk) = MlDsa65::keypair();
     let now = 1735689600u64; // 2025-01-01
-    // Lifetime = 60 days, well over the 30-day advisory, but unexpired.
+                             // Lifetime = 60 days, well over the 30-day advisory, but unexpired.
     let mut record = AgentRecord::new(
         &pk.0,
         vec![CapabilityDescriptor::new("inference")],
@@ -438,7 +436,14 @@ fn test_r5_003_warning_false_when_within_30_days_from_now() {
     );
 
     // 7 days: well within
-    let record = AgentRecord::new(&pk.0, vec![], vec![], now, now + 7 * 86400, KEY_ALG_ML_DSA_65);
+    let record = AgentRecord::new(
+        &pk.0,
+        vec![],
+        vec![],
+        now,
+        now + 7 * 86400,
+        KEY_ALG_ML_DSA_65,
+    );
     assert!(
         !record.exceeds_max_expiry_warning(now),
         "warning must NOT fire for 7-day record"
@@ -453,7 +458,14 @@ fn test_r5_004_warning_false_for_already_expired_record() {
     let (pk, _) = MlDsa65::keypair();
     let now = 1735689600u64;
     // Record that expired 1 second ago
-    let record = AgentRecord::new(&pk.0, vec![], vec![], now - 86400, now - 1, KEY_ALG_ML_DSA_65);
+    let record = AgentRecord::new(
+        &pk.0,
+        vec![],
+        vec![],
+        now - 86400,
+        now - 1,
+        KEY_ALG_ML_DSA_65,
+    );
     assert!(
         !record.exceeds_max_expiry_warning(now),
         "warning must NOT fire for an already-expired record (saturates to 0)"

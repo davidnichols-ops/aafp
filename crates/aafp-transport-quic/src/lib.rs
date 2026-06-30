@@ -15,5 +15,5 @@
 pub mod config;
 pub mod transport;
 
-pub use config::{generate_self_signed_cert, QuicConfig, TlsIdentity, ConfigError};
+pub use config::{generate_self_signed_cert, ConfigError, QuicConfig, TlsIdentity, AAFP_ALPN};
 pub use transport::{QuicConnection, QuicRecvStream, QuicSendStream, QuicTransport};

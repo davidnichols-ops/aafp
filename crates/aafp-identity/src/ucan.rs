@@ -193,15 +193,12 @@ impl UcanToken {
     /// 3. Capabilities do not expand (each link's caps ⊆ parent's caps).
     /// 4. No token is expired.
     /// 5. Chain links are connected via the `prf` field (parent hash).
-    pub fn verify_chain(
-        chain: &[&UcanToken],
-        root_public_key: &[u8],
-    ) -> Result<(), IdentityError> {
+    pub fn verify_chain(chain: &[&UcanToken], root_public_key: &[u8]) -> Result<(), IdentityError> {
         if chain.is_empty() {
             return Err(IdentityError::Ucan("empty chain".into()));
         }
 
-        let mut current_pubkey = root_public_key.to_vec();
+        let current_pubkey = root_public_key.to_vec();
         let mut current_caps: Option<Vec<Capability>> = None;
         let mut prev_signing_input: Option<Vec<u8>> = None;
 
@@ -281,8 +278,7 @@ impl UcanToken {
 
     /// CBOR-decode a token.
     pub fn from_bytes(data: &[u8]) -> Result<Self, IdentityError> {
-        ciborium::from_reader(data)
-            .map_err(|e| IdentityError::Deserialization(e.to_string()))
+        ciborium::from_reader(data).map_err(|e| IdentityError::Deserialization(e.to_string()))
     }
 }
 
@@ -316,6 +312,7 @@ fn caps_compatible(parent: &Capability, child: &Capability) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_variables)]
     use super::*;
 
     fn far_future() -> u64 {

@@ -3,6 +3,8 @@
 //! This module covers:
 //! - Known-answer tests for key sizes and signature sizes (FIPS 204 constants)
 //! - Negative tests: malformed signatures, truncated messages, replay, altered transcripts
+
+#![allow(unused)]
 //! - Determinism tests: same key + message produces same signature
 //! - Cross-implementation differential test infrastructure (Rust vs Go)
 //! - Key serialization edge cases
@@ -464,17 +466,13 @@ fn neg_handshake_replay_with_different_client_state() {
 fn neg_handshake_tampered_nonce() {
     let server_kp = MlDsa65::keypair();
     let (hello, mut client_state) = PqHandshake::client_init();
-    let (mut server_hello, _ss) =
-        PqHandshake::server_handle(&hello, &server_kp).unwrap();
+    let (mut server_hello, _ss) = PqHandshake::server_handle(&hello, &server_kp).unwrap();
 
     // Tamper with nonce
     server_hello.nonce[0] ^= 0xFF;
 
     let result = PqHandshake::client_finish(&server_hello, &mut client_state);
-    assert!(
-        result.is_err(),
-        "Handshake with tampered nonce must fail"
-    );
+    assert!(result.is_err(), "Handshake with tampered nonce must fail");
 }
 
 /// Tampering with the server hello key share must fail.
@@ -482,8 +480,7 @@ fn neg_handshake_tampered_nonce() {
 fn neg_handshake_tampered_key_share() {
     let server_kp = MlDsa65::keypair();
     let (hello, mut client_state) = PqHandshake::client_init();
-    let (mut server_hello, _ss) =
-        PqHandshake::server_handle(&hello, &server_kp).unwrap();
+    let (mut server_hello, _ss) = PqHandshake::server_handle(&hello, &server_kp).unwrap();
 
     // Tamper with key share
     if !server_hello.key_share.is_empty() {
@@ -502,17 +499,13 @@ fn neg_handshake_tampered_key_share() {
 fn neg_handshake_tampered_version() {
     let server_kp = MlDsa65::keypair();
     let (hello, mut client_state) = PqHandshake::client_init();
-    let (mut server_hello, _ss) =
-        PqHandshake::server_handle(&hello, &server_kp).unwrap();
+    let (mut server_hello, _ss) = PqHandshake::server_handle(&hello, &server_kp).unwrap();
 
     // Tamper with version
     server_hello.version = 0xFF;
 
     let result = PqHandshake::client_finish(&server_hello, &mut client_state);
-    assert!(
-        result.is_err(),
-        "Handshake with tampered version must fail"
-    );
+    assert!(result.is_err(), "Handshake with tampered version must fail");
 }
 
 /// Two independent handshakes must produce different shared secrets.

@@ -10,15 +10,14 @@
 use aafp_cbor::{int_map, str_map, Value};
 use aafp_crypto::{
     handshake_v1::{
-        derive_session_id, generate_nonce, compute_receiver_mac, verify_receiver_mac,
-        ClientFinished, ClientHello, HandshakeError, ServerHello, TranscriptHash,
-        DOMAIN_SEPARATOR, KEY_ALG_ML_DSA_65, NONCE_SIZE, PROTOCOL_VERSION, SESSION_ID_SIZE,
+        compute_receiver_mac, derive_session_id, generate_nonce, verify_receiver_mac,
+        ClientFinished, ClientHello, HandshakeError, ServerHello, TranscriptHash, DOMAIN_SEPARATOR,
+        KEY_ALG_ML_DSA_65, NONCE_SIZE, PROTOCOL_VERSION, SESSION_ID_SIZE,
     },
     MlDsa65, MlDsa65Signature, SignatureScheme,
 };
 use aafp_messaging::{
-    decode_frame, encode_frame, Frame, FrameType, AAFP_VERSION, FRAME_HEADER_SIZE,
-    MAX_PAYLOAD_SIZE,
+    decode_frame, encode_frame, Frame, FrameType, AAFP_VERSION, FRAME_HEADER_SIZE, MAX_PAYLOAD_SIZE,
 };
 use sha2::{Digest, Sha256};
 
@@ -31,7 +30,10 @@ mod frame_header {
     /// R2-001: Frame header MUST be 28 bytes.
     #[test]
     fn test_r2_001_header_size_is_28_bytes() {
-        assert_eq!(FRAME_HEADER_SIZE, 28, "RFC-0002 §3: header must be 28 bytes");
+        assert_eq!(
+            FRAME_HEADER_SIZE, 28,
+            "RFC-0002 §3: header must be 28 bytes"
+        );
     }
 
     /// R2-002: Protocol version field MUST be 1 byte at offset 0.
@@ -188,11 +190,14 @@ mod frame_types {
         bytes[1] = 0xFF; // Unknown type
         bytes[2] = 0x80; // Critical bit
         bytes[3] = 0; // Reserved
-        // Stream ID = 0
-        // Payload length = 0
-        // Ext length = 0
+                      // Stream ID = 0
+                      // Payload length = 0
+                      // Ext length = 0
         let result = decode_frame(&bytes);
-        assert!(result.is_err(), "unknown critical frame type must be rejected");
+        assert!(
+            result.is_err(),
+            "unknown critical frame type must be rejected"
+        );
     }
 }
 
@@ -269,12 +274,40 @@ mod handshake {
             key_algorithm: 1,
         };
         let cbor = ch.to_cbor();
-        for k in 1..=10i64 {
+        // A-2 (Rev 6): receiver_mac (key 9) MUST be omitted when absent
+        for k in 1..=8i64 {
             assert!(
                 aafp_cbor::int_map_get(&cbor, k).is_some(),
                 "ClientHello must have key {k}"
             );
         }
+        assert!(
+            aafp_cbor::int_map_get(&cbor, 9).is_none(),
+            "ClientHello must omit key 9 (receiver_mac) when absent (A-2)"
+        );
+        assert!(
+            aafp_cbor::int_map_get(&cbor, 10).is_some(),
+            "ClientHello must have key 10"
+        );
+
+        // When receiver_mac is present, key 9 MUST be present
+        let ch_with_mac = ClientHello {
+            protocol_version: 1,
+            agent_id: vec![0u8; 32],
+            public_key: vec![0u8; 1952],
+            nonce: [0u8; 32],
+            capabilities: vec![],
+            extensions: vec![],
+            signature: vec![0u8; 3309],
+            expires_at: 1700000000,
+            receiver_mac: Some(vec![0xAAu8; 32]),
+            key_algorithm: 1,
+        };
+        let cbor_with_mac = ch_with_mac.to_cbor();
+        assert!(
+            aafp_cbor::int_map_get(&cbor_with_mac, 9).is_some(),
+            "ClientHello must have key 9 when receiver_mac is present"
+        );
     }
 
     /// R2-051: ServerHello MUST use integer keys 1-10.
@@ -347,11 +380,20 @@ mod handshake {
             key_algorithm: 1,
         };
         let cbor = ch.to_cbor_without_sig_and_mac();
-        assert!(aafp_cbor::int_map_get(&cbor, 7).is_none(), "key 7 (sig) must be absent");
-        assert!(aafp_cbor::int_map_get(&cbor, 9).is_none(), "key 9 (mac) must be absent");
+        assert!(
+            aafp_cbor::int_map_get(&cbor, 7).is_none(),
+            "key 7 (sig) must be absent"
+        );
+        assert!(
+            aafp_cbor::int_map_get(&cbor, 9).is_none(),
+            "key 9 (mac) must be absent"
+        );
         // Keys 1-6, 8, 10 must be present
         for k in [1, 2, 3, 4, 5, 6, 8, 10] {
-            assert!(aafp_cbor::int_map_get(&cbor, k).is_some(), "key {k} must be present");
+            assert!(
+                aafp_cbor::int_map_get(&cbor, k).is_some(),
+                "key {k} must be present"
+            );
         }
     }
 
@@ -371,7 +413,10 @@ mod handshake {
             key_algorithm: 1,
         };
         let cbor = sh.to_cbor_without_sig();
-        assert!(aafp_cbor::int_map_get(&cbor, 8).is_none(), "key 8 (sig) must be absent");
+        assert!(
+            aafp_cbor::int_map_get(&cbor, 8).is_none(),
+            "key 8 (sig) must be absent"
+        );
     }
 
     /// R2-060: Full handshake must produce matching transcript hashes.
@@ -404,13 +449,18 @@ mod handshake {
         let ch_bytes = aafp_cbor::encode(&ch_cbor).unwrap();
         let h_ch_client = th_client.fold(&ch_bytes);
         let h_ch_server = th_server.fold(&ch_bytes);
-        assert_eq!(h_ch_client, h_ch_server, "transcript must match after ClientHello");
+        assert_eq!(
+            h_ch_client, h_ch_server,
+            "transcript must match after ClientHello"
+        );
 
         // ServerHello
-        let session_id = derive_session_id(&h_ch_client, &client_nonce, &server_nonce);
+        let server_agent_id = Sha256::digest(&server_pk.0).to_vec();
+        let session_id =
+            derive_session_id(&h_ch_client, &client_nonce, &server_nonce, &server_agent_id);
         let sh = ServerHello {
             protocol_version: PROTOCOL_VERSION,
-            agent_id: Sha256::digest(&server_pk.0).to_vec(),
+            agent_id: server_agent_id,
             public_key: server_pk.0.clone(),
             nonce: server_nonce,
             capabilities: vec![],
@@ -424,7 +474,10 @@ mod handshake {
         let sh_bytes = aafp_cbor::encode(&sh_cbor).unwrap();
         let h_sh_client = th_client.fold(&sh_bytes);
         let h_sh_server = th_server.fold(&sh_bytes);
-        assert_eq!(h_sh_client, h_sh_server, "transcript must match after ServerHello");
+        assert_eq!(
+            h_sh_client, h_sh_server,
+            "transcript must match after ServerHello"
+        );
 
         // ClientFinished
         let cf = ClientFinished {
@@ -435,7 +488,10 @@ mod handshake {
         let cf_bytes = aafp_cbor::encode(&cf_cbor).unwrap();
         let h_cf_client = th_client.fold(&cf_bytes);
         let h_cf_server = th_server.fold(&cf_bytes);
-        assert_eq!(h_cf_client, h_cf_server, "transcript must match after ClientFinished");
+        assert_eq!(
+            h_cf_client, h_cf_server,
+            "transcript must match after ClientFinished"
+        );
     }
 
     /// R2-065: DoS receiver MAC MUST use HKDF-SHA256 with correct info string.
@@ -476,10 +532,7 @@ mod canonical_cbor {
     #[test]
     fn test_r2_081_length_first_key_sorting() {
         // Keys 1 and 100: key 1 (1 byte) comes before key 100 (2 bytes)
-        let val = int_map(vec![
-            (100, Value::Unsigned(2)),
-            (1, Value::Unsigned(1)),
-        ]);
+        let val = int_map(vec![(100, Value::Unsigned(2)), (1, Value::Unsigned(1))]);
         let bytes = aafp_cbor::encode(&val).unwrap();
         let (decoded, _) = aafp_cbor::decode(&bytes).unwrap();
         // First entry should be key 1 (shorter encoding)

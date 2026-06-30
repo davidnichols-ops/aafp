@@ -4,14 +4,12 @@
 //! application messages can be processed. There is no code path where an
 //! unauthenticated peer can send application messages.
 
-use crate::{Agent, SdkError};
 use crate::handshake_driver;
+use crate::{Agent, SdkError};
 use aafp_core::{AuthorizationProvider, Session, SessionState};
 use aafp_identity::AgentId;
-use aafp_messaging::{decode_frame, encode_frame, Frame, FRAME_HEADER_SIZE};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -122,7 +120,7 @@ impl AgentServer {
 
         // Drive the AAFP v1 handshake
         let (mut session, conn, peer_info) =
-            handshake_driver::drive_server_handshake(conn, &agent.keypair, tls_binding)
+            handshake_driver::drive_server_handshake(conn, &agent.keypair, tls_binding, None)
                 .await?;
 
         // Run authorization
@@ -148,10 +146,7 @@ impl AgentServer {
 
         // Store the authenticated connection
         let server_conn = ServerPeerConnection { session, conn };
-        self.connections
-            .lock()
-            .await
-            .insert(peer_id, server_conn);
+        self.connections.lock().await.insert(peer_id, server_conn);
 
         Ok(peer_id)
     }
@@ -186,7 +181,7 @@ impl Default for AgentServer {
 mod tests {
     use super::*;
     use crate::AgentBuilder;
-    use aafp_messaging::encode_frame;
+    use aafp_messaging::{decode_frame, encode_frame, Frame, FRAME_HEADER_SIZE};
     use aafp_transport_quic::QuicConfig;
 
     #[tokio::test]

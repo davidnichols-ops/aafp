@@ -1,5 +1,5 @@
-use aafp_sdk::AgentBuilder;
 use aafp_identity::AgentKeypair;
+use aafp_sdk::AgentBuilder;
 use std::net::SocketAddr;
 
 pub async fn run(bind: &str) -> anyhow::Result<()> {

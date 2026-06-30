@@ -10,7 +10,8 @@
 //! 2. Route FIND_VALUE / STORE RPCs to the k closest nodes.
 //! 3. Replicate records across k nodes for fault tolerance.
 
-use aafp_identity::{AgentId, AgentRecord};
+use aafp_identity::agent_record::AgentRecord;
+use aafp_identity::AgentId;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -89,7 +90,8 @@ impl CapabilityDht {
         }
 
         // Track agent → capabilities mapping.
-        self.agent_caps.insert(agent_id, record.capabilities.clone());
+        self.agent_caps
+            .insert(agent_id, record.capabilities.clone());
 
         Ok(())
     }
@@ -279,7 +281,8 @@ mod tests {
     #[test]
     fn list_capabilities() {
         let mut dht = CapabilityDht::new();
-        dht.put(make_record(vec!["inference", "translation"])).unwrap();
+        dht.put(make_record(vec!["inference", "translation"]))
+            .unwrap();
         dht.put(make_record(vec!["inference", "coding"])).unwrap();
 
         let caps = dht.list_capabilities();

@@ -1,9 +1,12 @@
 //! Regional discovery: group agents by geographic region for latency optimization.
 //!
 //! Regions are determined by latency probes (ping) rather than geographic
+
+#![allow(deprecated)]
 //! coordinates. For MVP, regions are assigned manually or by latency buckets.
 
-use aafp_identity::{AgentId, AgentRecord};
+use aafp_identity::agent_record::AgentRecord;
+use aafp_identity::AgentId;
 use std::collections::HashMap;
 use std::time::Duration;
 use thiserror::Error;
@@ -55,12 +58,12 @@ impl Region {
     /// Determine region from latency (rough heuristic for MVP).
     pub fn from_latency(latency: Duration) -> Self {
         match latency.as_millis() {
-            0..=50 => Region::UsEast,   // Very close
-            51..=100 => Region::UsWest,  // Same continent
-            101..=150 => Region::Europe, // Cross-Atlantic
+            0..=50 => Region::UsEast,         // Very close
+            51..=100 => Region::UsWest,       // Same continent
+            101..=150 => Region::Europe,      // Cross-Atlantic
             151..=200 => Region::AsiaPacific, // Cross-continent
-            201..=300 => Region::Oceania, // Far
-            _ => Region::Unknown,         // Very far
+            201..=300 => Region::Oceania,     // Far
+            _ => Region::Unknown,             // Very far
         }
     }
 }
@@ -122,10 +125,7 @@ impl RegionalDiscovery {
 
     /// Get all agent IDs in a region.
     pub fn agent_ids_in_region(&self, region: Region) -> Vec<AgentId> {
-        self.by_region
-            .get(&region)
-            .cloned()
-            .unwrap_or_default()
+        self.by_region.get(&region).cloned().unwrap_or_default()
     }
 
     /// Find the closest agents (same region first, then adjacent).
@@ -259,10 +259,22 @@ mod tests {
 
     #[test]
     fn from_latency() {
-        assert_eq!(Region::from_latency(Duration::from_millis(10)), Region::UsEast);
-        assert_eq!(Region::from_latency(Duration::from_millis(75)), Region::UsWest);
-        assert_eq!(Region::from_latency(Duration::from_millis(120)), Region::Europe);
-        assert_eq!(Region::from_latency(Duration::from_millis(500)), Region::Unknown);
+        assert_eq!(
+            Region::from_latency(Duration::from_millis(10)),
+            Region::UsEast
+        );
+        assert_eq!(
+            Region::from_latency(Duration::from_millis(75)),
+            Region::UsWest
+        );
+        assert_eq!(
+            Region::from_latency(Duration::from_millis(120)),
+            Region::Europe
+        );
+        assert_eq!(
+            Region::from_latency(Duration::from_millis(500)),
+            Region::Unknown
+        );
     }
 
     #[test]

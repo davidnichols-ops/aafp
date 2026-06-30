@@ -5,9 +5,8 @@
 
 use aafp_identity::AgentId;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::broadcast;
 use thiserror::Error;
+use tokio::sync::broadcast;
 
 #[derive(Debug, Error)]
 pub enum PubSubError {
@@ -64,10 +63,7 @@ impl PubSub {
 
     /// Publish a message to a topic.
     pub fn publish(&self, topic: &str, from: AgentId, data: Vec<u8>) -> Result<(), PubSubError> {
-        let sender = self
-            .topics
-            .get(topic)
-            .ok_or(PubSubError::TopicNotFound)?;
+        let sender = self.topics.get(topic).ok_or(PubSubError::TopicNotFound)?;
         let msg = TopicMessage {
             topic: topic.to_string(),
             from,
@@ -107,8 +103,8 @@ impl Default for PubSub {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::timeout;
     use std::time::Duration;
+    use tokio::time::timeout;
 
     #[tokio::test]
     async fn subscribe_and_publish() {
@@ -116,9 +112,14 @@ mod tests {
         let mut rx = pubsub.subscribe("test-topic");
         let from = [1u8; 32];
 
-        pubsub.publish("test-topic", from, b"hello".to_vec()).unwrap();
+        pubsub
+            .publish("test-topic", from, b"hello".to_vec())
+            .unwrap();
 
-        let msg = timeout(Duration::from_secs(1), rx.recv()).await.unwrap().unwrap();
+        let msg = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(msg.topic, "test-topic");
         assert_eq!(msg.from, from);
         assert_eq!(msg.data, b"hello");
@@ -133,8 +134,14 @@ mod tests {
 
         pubsub.publish("topic", from, b"msg".to_vec()).unwrap();
 
-        let msg1 = timeout(Duration::from_secs(1), rx1.recv()).await.unwrap().unwrap();
-        let msg2 = timeout(Duration::from_secs(1), rx2.recv()).await.unwrap().unwrap();
+        let msg1 = timeout(Duration::from_secs(1), rx1.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let msg2 = timeout(Duration::from_secs(1), rx2.recv())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(msg1.data, b"msg");
         assert_eq!(msg2.data, b"msg");
         assert_eq!(pubsub.subscriber_count("topic"), 2);
@@ -165,8 +172,14 @@ mod tests {
         pubsub.publish("topic1", from, b"a".to_vec()).unwrap();
         pubsub.publish("topic2", from, b"b".to_vec()).unwrap();
 
-        let msg1 = timeout(Duration::from_secs(1), rx1.recv()).await.unwrap().unwrap();
-        let msg2 = timeout(Duration::from_secs(1), rx2.recv()).await.unwrap().unwrap();
+        let msg1 = timeout(Duration::from_secs(1), rx1.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let msg2 = timeout(Duration::from_secs(1), rx2.recv())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(msg1.data, b"a");
         assert_eq!(msg2.data, b"b");
     }

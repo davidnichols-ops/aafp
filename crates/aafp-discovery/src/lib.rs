@@ -13,16 +13,19 @@
 //! RPCs over QUIC streams.
 
 pub mod bootstrap;
+/// Legacy MVP capability DHT module. In-memory only, not RFC-compliant.
+/// Use [`discovery_v1`] instead.
+#[deprecated = "Use discovery_v1 instead. Legacy capability_dht is in-memory only, not RFC-compliant."]
+#[allow(deprecated)]
 pub mod capability_dht;
 pub mod discovery_v1;
 pub mod regional;
 
 pub use bootstrap::{BootstrapConfig, BootstrapDiscovery};
-pub use capability_dht::{CapabilityDht, DhtError, DhtRecord};
 pub use discovery_v1::{
-    AnnounceParams, AnnounceResult, CapabilityDht as CapabilityDhtV1, DiscoveryError,
-    LookupParams, LookupResult, SharedCapabilityDht, METHOD_ANNOUNCE, METHOD_LOOKUP, METHOD_PEX,
-    DEFAULT_LIMIT_AUTH, DEFAULT_LIMIT_UNAUTH, MAX_CONCURRENT_STREAMS, MAX_RECORDS,
-    RATE_LIMIT_ANNOUNCE, RATE_LIMIT_LOOKUP, shared_dht,
+    shared_dht, AnnounceParams, AnnounceResult, CapabilityDht as CapabilityDhtV1, DiscoveryError,
+    LookupParams, LookupResult, SharedCapabilityDht, DEFAULT_LIMIT_AUTH, DEFAULT_LIMIT_UNAUTH,
+    MAX_CONCURRENT_STREAMS, MAX_RECORDS, METHOD_ANNOUNCE, METHOD_LOOKUP, METHOD_PEX,
+    RATE_LIMIT_ANNOUNCE, RATE_LIMIT_LOOKUP,
 };
-pub use regional::{RegionalDiscovery, Region};
+pub use regional::{Region, RegionalDiscovery};

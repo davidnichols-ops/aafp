@@ -12,18 +12,17 @@
 //! - version downgrade attempts
 
 use aafp_core::{
-    AuthorizationContext, NegotiatedFeatures, Session, SessionState,
-    TestingAuthProvider, TransportHandle,
+    AuthorizationContext, NegotiatedFeatures, Session, SessionState, TestingAuthProvider,
+    TransportHandle,
 };
 use aafp_crypto::{
-    generate_nonce, verify_client_hello, ClientHelloV1, HandshakeError,
-    TranscriptHash, KEY_ALG_ML_DSA_65, PROTOCOL_VERSION,
+    generate_nonce, verify_client_hello, ClientHelloV1, HandshakeError, TranscriptHash,
+    KEY_ALG_ML_DSA_65, PROTOCOL_VERSION,
 };
 use aafp_crypto::{MlDsa65, SignatureScheme};
 use aafp_identity::AgentKeypair;
 use aafp_messaging::{
-    decode_frame, encode_frame, Frame, FrameType, FRAME_HEADER_SIZE,
-    MAX_PAYLOAD_SIZE,
+    decode_frame, encode_frame, Frame, FrameType, FRAME_HEADER_SIZE, MAX_PAYLOAD_SIZE,
 };
 use sha2::Digest;
 
@@ -42,21 +41,26 @@ mod truncated_frames {
 
         // Truncate to less than header size
         for len in 0..FRAME_HEADER_SIZE {
-            let (decoded, consumed) = decode_frame(&encoded[..len]).unwrap_or((Frame {
-                frame_type: FrameType::Data,
-                flags: 0,
-                stream_id: 0,
-                extensions: vec![],
-                payload: vec![],
-            }, 0));
+            let (decoded, consumed) = decode_frame(&encoded[..len]).unwrap_or((
+                Frame {
+                    frame_type: FrameType::Data,
+                    flags: 0,
+                    stream_id: 0,
+                    extensions: vec![],
+                    payload: vec![],
+                },
+                0,
+            ));
             // decode_frame should either fail or return a partial result
             // The key invariant: it must not panic or return valid data
             // with a payload that wasn't actually there.
             if consumed > 0 {
                 // If it somehow succeeded, the payload must be empty or
                 // shorter than the original
-                assert!(decoded.payload.len() < frame.payload.len(),
-                    "truncated frame should not produce full payload");
+                assert!(
+                    decoded.payload.len() < frame.payload.len(),
+                    "truncated frame should not produce full payload"
+                );
             }
         }
     }
@@ -71,7 +75,10 @@ mod truncated_frames {
         // Truncate payload by 1 byte
         let truncated = &encoded[..encoded.len() - 1];
         let result = decode_frame(truncated);
-        assert!(result.is_err(), "frame with truncated payload must be rejected");
+        assert!(
+            result.is_err(),
+            "frame with truncated payload must be rejected"
+        );
     }
 
     /// A frame with header but truncated extensions must be rejected.
@@ -84,7 +91,10 @@ mod truncated_frames {
         // Truncate extensions by 1 byte (remove last byte before payload)
         let truncated = &encoded[..encoded.len() - 1];
         let result = decode_frame(truncated);
-        assert!(result.is_err(), "frame with truncated extensions must be rejected");
+        assert!(
+            result.is_err(),
+            "frame with truncated extensions must be rejected"
+        );
     }
 
     /// Empty input must not panic.
@@ -121,7 +131,10 @@ mod oversized_lengths {
         header[20..28].copy_from_slice(&0u64.to_be_bytes()); // Extension Length
 
         let result = decode_frame(&header);
-        assert!(result.is_err(), "frame claiming payload > MAX_PAYLOAD_SIZE must be rejected");
+        assert!(
+            result.is_err(),
+            "frame claiming payload > MAX_PAYLOAD_SIZE must be rejected"
+        );
     }
 
     /// A frame claiming extensions larger than MAX_PAYLOAD_SIZE must be rejected.
@@ -137,7 +150,10 @@ mod oversized_lengths {
         header[20..28].copy_from_slice(&((MAX_PAYLOAD_SIZE as u64) + 1).to_be_bytes()); // Ext Length
 
         let result = decode_frame(&header);
-        assert!(result.is_err(), "frame claiming extensions > MAX must be rejected");
+        assert!(
+            result.is_err(),
+            "frame claiming extensions > MAX must be rejected"
+        );
     }
 
     /// A frame with payload + extensions that overflow usize must be rejected.
@@ -168,11 +184,15 @@ mod oversized_lengths {
         header[3] = 0;
         header[4..12].copy_from_slice(&0u64.to_be_bytes());
         header[12..20].copy_from_slice(&0u64.to_be_bytes()); // Payload = 0
-        // Extension length = 64 KiB + 1
-        header[20..28].copy_from_slice(&((aafp_messaging::MAX_EXTENSION_SIZE as u64) + 1).to_be_bytes());
+                                                             // Extension length = 64 KiB + 1
+        header[20..28]
+            .copy_from_slice(&((aafp_messaging::MAX_EXTENSION_SIZE as u64) + 1).to_be_bytes());
 
         let result = decode_frame(&header);
-        assert!(result.is_err(), "extensions exceeding MAX_EXTENSION_SIZE must be rejected");
+        assert!(
+            result.is_err(),
+            "extensions exceeding MAX_EXTENSION_SIZE must be rejected"
+        );
     }
 }
 
@@ -190,7 +210,10 @@ mod malformed_cbor {
         let (val, _) = aafp_cbor::decode(&random_bytes).unwrap_or((aafp_cbor::Value::Null, 0));
         // Attempting to parse as ClientHello should fail
         let result = ClientHelloV1::from_cbor(&val);
-        assert!(result.is_err(), "random bytes must not parse as ClientHello");
+        assert!(
+            result.is_err(),
+            "random bytes must not parse as ClientHello"
+        );
     }
 
     /// Empty bytes should not be valid CBOR.
@@ -216,7 +239,10 @@ mod malformed_cbor {
         let array_cbor = [0x80u8]; // empty array
         let (val, _) = aafp_cbor::decode(&array_cbor).unwrap();
         let result = ClientHelloV1::from_cbor(&val);
-        assert!(result.is_err(), "CBOR array must not parse as ClientHello (expects map)");
+        assert!(
+            result.is_err(),
+            "CBOR array must not parse as ClientHello (expects map)"
+        );
     }
 }
 
@@ -250,9 +276,13 @@ mod invalid_state_transitions {
         // The state machine should reject the transition.
         struct DummyContext;
         impl AuthorizationContext for DummyContext {
-            fn is_authorized(&self, _: &str) -> bool { true }
+            fn is_authorized(&self, _: &str) -> bool {
+                true
+            }
         }
-        let err = s.on_authorization_verified(Box::new(DummyContext)).unwrap_err();
+        let err = s
+            .on_authorization_verified(Box::new(DummyContext))
+            .unwrap_err();
         assert_eq!(err.from, SessionState::Connecting);
     }
 
@@ -261,7 +291,10 @@ mod invalid_state_transitions {
     fn cannot_skip_authenticated() {
         let mut s = Session::new();
         s.on_transport_established(
-            Box::new(TestTransport { addr: "quic://x".into(), closed: false }),
+            Box::new(TestTransport {
+                addr: "quic://x".into(),
+                closed: false,
+            }),
             NegotiatedFeatures::default(),
         )
         .unwrap();
@@ -276,7 +309,10 @@ mod invalid_state_transitions {
     fn cannot_authenticate_without_identity() {
         let mut s = Session::new();
         s.on_transport_established(
-            Box::new(TestTransport { addr: "quic://x".into(), closed: false }),
+            Box::new(TestTransport {
+                addr: "quic://x".into(),
+                closed: false,
+            }),
             NegotiatedFeatures::default(),
         )
         .unwrap();
@@ -288,7 +324,10 @@ mod invalid_state_transitions {
     fn cannot_enable_messaging_without_authentication() {
         let mut s = Session::new();
         s.on_transport_established(
-            Box::new(TestTransport { addr: "quic://x".into(), closed: false }),
+            Box::new(TestTransport {
+                addr: "quic://x".into(),
+                closed: false,
+            }),
             NegotiatedFeatures::default(),
         )
         .unwrap();
@@ -427,7 +466,10 @@ mod replay_attacks {
         let h1 = th1.fold(&ch_cbor_bytes);
         let h2 = th2.fold(&ch_cbor_bytes);
 
-        assert_ne!(h1, h2, "different TLS bindings must produce different transcript hashes");
+        assert_ne!(
+            h1, h2,
+            "different TLS bindings must produce different transcript hashes"
+        );
     }
 
     /// A signature from one transcript must not verify against a different
@@ -555,7 +597,10 @@ mod unknown_fields {
         frame_bytes.extend_from_slice(b"hello");
 
         let (frame, _) = decode_frame(&frame_bytes).unwrap();
-        assert!(frame.frame_type.is_unknown(), "unknown frame type should be preserved");
+        assert!(
+            frame.frame_type.is_unknown(),
+            "unknown frame type should be preserved"
+        );
         assert_eq!(frame.frame_type.to_u8(), 0x09);
     }
 
@@ -576,7 +621,10 @@ mod unknown_fields {
         frame_bytes.extend_from_slice(b"hello");
 
         let result = decode_frame(&frame_bytes);
-        assert!(result.is_err(), "unknown critical frame type must be rejected");
+        assert!(
+            result.is_err(),
+            "unknown critical frame type must be rejected"
+        );
     }
 }
 
@@ -593,7 +641,9 @@ mod fuzz {
     fn decode_frame_never_panics_on_random_input() {
         let mut state: u64 = 0x1234567890ABCDEF;
         let mut next = || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             state >> 32
         };
 
@@ -613,7 +663,9 @@ mod fuzz {
     fn cbor_decode_never_panics_on_random_input() {
         let mut state: u64 = 0xFEDCBA0987654321;
         let mut next = || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             state >> 32
         };
 

@@ -1,5 +1,5 @@
+use aafp_messaging::{decode_frame, encode_frame, Frame};
 use criterion::{criterion_group, criterion_main, Criterion};
-use aafp_messaging::{encode_frame, decode_frame, Frame};
 
 fn bench_frame_serialize(c: &mut Criterion) {
     let payload = vec![0u8; 1024];
@@ -20,9 +20,5 @@ fn bench_frame_deserialize(c: &mut Criterion) {
     });
 }
 
-criterion_group!(
-    benches,
-    bench_frame_serialize,
-    bench_frame_deserialize,
-);
+criterion_group!(benches, bench_frame_serialize, bench_frame_deserialize,);
 criterion_main!(benches);

@@ -24,17 +24,13 @@
 //! ```
 
 use crate::SdkError;
-use aafp_core::{
-    NegotiatedFeatures, Session, SessionId, TransportHandle, SESSION_ID_SIZE,
-};
+use aafp_core::{NegotiatedFeatures, Session, SessionId, TransportHandle};
 use aafp_crypto::{
     derive_session_id, generate_nonce, verify_client_finished, verify_client_hello,
-    verify_server_hello, ClientFinished, ClientHelloV1,
-    HandshakeError, ServerHelloV1, TranscriptHash,
-    DOMAIN_SEPARATOR, KEY_ALG_ML_DSA_65, NONCE_SIZE, PROTOCOL_VERSION,
-    TLS_EXPORTER_LABEL,
+    verify_server_hello, ClientFinished, ClientHelloV1, HandshakeError, ReplayCache, ServerHelloV1,
+    TranscriptHash, DOMAIN_SEPARATOR, KEY_ALG_ML_DSA_65, PROTOCOL_VERSION,
 };
-use aafp_crypto::{MlDsa65, MlDsa65SecretKey, MlDsa65Signature, SignatureScheme};
+use aafp_crypto::{MlDsa65, MlDsa65SecretKey, SignatureScheme};
 use aafp_identity::{AgentId, AgentKeypair};
 use aafp_transport_quic::QuicConnection;
 use sha2::Digest;
@@ -85,8 +81,6 @@ fn now_unix() -> u64 {
 async fn read_handshake_frame(
     recv: &mut aafp_transport_quic::QuicRecvStream,
 ) -> Result<Vec<u8>, SdkError> {
-    use tokio::io::AsyncReadExt;
-
     // Read the 28-byte frame header
     let mut header = [0u8; aafp_messaging::FRAME_HEADER_SIZE];
     recv.read_exact(&mut header).await?;
@@ -141,15 +135,13 @@ async fn write_handshake_frame(
     send: &mut aafp_transport_quic::QuicSendStream,
     cbor_payload: &[u8],
 ) -> Result<(), SdkError> {
-    use tokio::io::AsyncWriteExt;
-
     // Build 28-byte header
     let mut header = [0u8; aafp_messaging::FRAME_HEADER_SIZE];
     header[0] = PROTOCOL_VERSION as u8; // Version
     header[1] = 0x02; // FrameType = HANDSHAKE
     header[2] = 0x00; // Flags
     header[3] = 0x00; // Reserved
-    // Stream ID = 0 (handshake stream)
+                      // Stream ID = 0 (handshake stream)
     header[4..12].copy_from_slice(&0u64.to_be_bytes());
     // Payload Length
     header[12..20].copy_from_slice(&(cbor_payload.len() as u64).to_be_bytes());
@@ -225,22 +217,24 @@ pub async fn drive_client_handshake(
     conn: QuicConnection,
     keypair: &AgentKeypair,
     tls_binding: [u8; 32],
+    replay_cache: Option<&ReplayCache>,
 ) -> Result<(Session, QuicConnection, PeerInfo), SdkError> {
     let mut session = Session::new();
 
     // --- TransportEstablished ---
     let remote_addr = conn.remote_multiaddr();
-    session.on_transport_established(
-        Box::new(QuicTransportHandle {
-            remote_addr: remote_addr.clone(),
-            closed: false,
-        }),
-        NegotiatedFeatures {
-            protocol_version: PROTOCOL_VERSION as u8,
-            extensions: vec![],
-        },
-    )
-    .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
+    session
+        .on_transport_established(
+            Box::new(QuicTransportHandle {
+                remote_addr: remote_addr.clone(),
+                closed: false,
+            }),
+            NegotiatedFeatures {
+                protocol_version: PROTOCOL_VERSION as u8,
+                extensions: vec![],
+            },
+        )
+        .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
 
     // Open stream 0 for the handshake
     let (mut send, mut recv) = conn.open_bi().await?;
@@ -266,9 +260,8 @@ pub async fn drive_client_handshake(
 
     // Fold ClientHello into transcript and sign
     let ch_cbor = ch.to_cbor_without_sig_and_mac();
-    let ch_cbor_bytes = aafp_cbor::encode(&ch_cbor).map_err(|e| {
-        SdkError::Handshake(format!("CBOR encoding error: {e}"))
-    })?;
+    let ch_cbor_bytes = aafp_cbor::encode(&ch_cbor)
+        .map_err(|e| SdkError::Handshake(format!("CBOR encoding error: {e}")))?;
     let h_after_ch = th.fold(&ch_cbor_bytes);
 
     let sig = sign_with_keypair(keypair, &signature_input(&h_after_ch));
@@ -279,22 +272,32 @@ pub async fn drive_client_handshake(
 
     // --- Receive and verify ServerHello ---
     let sh_bytes = read_handshake_frame(&mut recv).await?;
-    let sh = decode_server_hello(&sh_bytes).map_err(|e| {
-        SdkError::Handshake(format!("ServerHello decode error: {e}"))
-    })?;
+    let sh = decode_server_hello(&sh_bytes)
+        .map_err(|e| SdkError::Handshake(format!("ServerHello decode error: {e}")))?;
+
+    // A-9: Replay check (RFC-0002 §6.7.6) — check before signature verification.
+    if let Some(cache) = replay_cache {
+        if cache.check(&sh.agent_id, &sh.nonce) {
+            return Err(SdkError::Handshake(
+                "ServerHello nonce reuse detected (replay attack)".to_string(),
+            ));
+        }
+    }
 
     // Fold ServerHello into transcript
     let sh_cbor = sh.to_cbor_without_sig();
-    let sh_cbor_bytes = aafp_cbor::encode(&sh_cbor).map_err(|e| {
-        SdkError::Handshake(format!("CBOR encoding error: {e}"))
-    })?;
+    let sh_cbor_bytes = aafp_cbor::encode(&sh_cbor)
+        .map_err(|e| SdkError::Handshake(format!("CBOR encoding error: {e}")))?;
     let h_after_sh = th.fold(&sh_cbor_bytes);
 
     // Verify ServerHello (checks agent_id ↔ public_key, signature, version, expiry)
-    let (server_agent_id, session_id) =
-        verify_server_hello(&sh, &h_after_sh, now_unix()).map_err(|e| {
-            SdkError::Handshake(format!("ServerHello verification failed: {e}"))
-        })?;
+    let (server_agent_id, session_id) = verify_server_hello(&sh, &h_after_sh, now_unix())
+        .map_err(|e| SdkError::Handshake(format!("ServerHello verification failed: {e}")))?;
+
+    // A-9: Insert into replay cache after successful verification (§6.7.4 Invariant 3).
+    if let Some(cache) = replay_cache {
+        cache.insert(&sh.agent_id, &sh.nonce);
+    }
 
     // --- Send ClientFinished ---
     let cf = ClientFinished {
@@ -329,51 +332,63 @@ pub async fn drive_server_handshake(
     conn: QuicConnection,
     keypair: &AgentKeypair,
     tls_binding: [u8; 32],
+    replay_cache: Option<&ReplayCache>,
 ) -> Result<(Session, QuicConnection, PeerInfo), SdkError> {
     let mut session = Session::new();
 
     // --- TransportEstablished ---
     let remote_addr = conn.remote_multiaddr();
-    session.on_transport_established(
-        Box::new(QuicTransportHandle {
-            remote_addr: remote_addr.clone(),
-            closed: false,
-        }),
-        NegotiatedFeatures {
-            protocol_version: PROTOCOL_VERSION as u8,
-            extensions: vec![],
-        },
-    )
-    .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
+    session
+        .on_transport_established(
+            Box::new(QuicTransportHandle {
+                remote_addr: remote_addr.clone(),
+                closed: false,
+            }),
+            NegotiatedFeatures {
+                protocol_version: PROTOCOL_VERSION as u8,
+                extensions: vec![],
+            },
+        )
+        .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
 
     // Accept stream 0 for the handshake
     let (mut send, mut recv) = conn.accept_bi().await?;
 
     // --- Receive and verify ClientHello ---
     let ch_bytes = read_handshake_frame(&mut recv).await?;
-    let ch = decode_client_hello(&ch_bytes).map_err(|e| {
-        SdkError::Handshake(format!("ClientHello decode error: {e}"))
-    })?;
+    let ch = decode_client_hello(&ch_bytes)
+        .map_err(|e| SdkError::Handshake(format!("ClientHello decode error: {e}")))?;
+
+    // A-9: Replay check (RFC-0002 §6.7.5) — check before signature verification.
+    if let Some(cache) = replay_cache {
+        if cache.check(&ch.agent_id, &ch.nonce) {
+            return Err(SdkError::Handshake(
+                "ClientHello nonce reuse detected (replay attack)".to_string(),
+            ));
+        }
+    }
 
     let mut th = TranscriptHash::from_tls_binding(&tls_binding);
 
     // Fold ClientHello into transcript
     let ch_cbor = ch.to_cbor_without_sig_and_mac();
-    let ch_cbor_bytes = aafp_cbor::encode(&ch_cbor).map_err(|e| {
-        SdkError::Handshake(format!("CBOR encoding error: {e}"))
-    })?;
+    let ch_cbor_bytes = aafp_cbor::encode(&ch_cbor)
+        .map_err(|e| SdkError::Handshake(format!("CBOR encoding error: {e}")))?;
     let h_after_ch = th.fold(&ch_cbor_bytes);
 
     // Verify ClientHello (checks agent_id ↔ public_key, signature, version, expiry)
-    let client_agent_id =
-        verify_client_hello(&ch, &h_after_ch, now_unix()).map_err(|e| {
-            SdkError::Handshake(format!("ClientHello verification failed: {e}"))
-        })?;
+    let client_agent_id = verify_client_hello(&ch, &h_after_ch, now_unix())
+        .map_err(|e| SdkError::Handshake(format!("ClientHello verification failed: {e}")))?;
+
+    // A-9: Insert into replay cache after successful verification (§6.7.4 Invariant 2).
+    if let Some(cache) = replay_cache {
+        cache.insert(&ch.agent_id, &ch.nonce);
+    }
 
     // --- Build and send ServerHello ---
     let server_nonce = generate_nonce();
     let server_agent_id = sha2::Sha256::digest(&keypair.public_key).to_vec();
-    let session_id = derive_session_id(&h_after_ch, &ch.nonce, &server_nonce);
+    let session_id = derive_session_id(&h_after_ch, &ch.nonce, &server_nonce, &server_agent_id);
 
     let mut sh = ServerHelloV1 {
         protocol_version: PROTOCOL_VERSION,
@@ -390,9 +405,8 @@ pub async fn drive_server_handshake(
 
     // Fold ServerHello into transcript and sign
     let sh_cbor = sh.to_cbor_without_sig();
-    let sh_cbor_bytes = aafp_cbor::encode(&sh_cbor).map_err(|e| {
-        SdkError::Handshake(format!("CBOR encoding error: {e}"))
-    })?;
+    let sh_cbor_bytes = aafp_cbor::encode(&sh_cbor)
+        .map_err(|e| SdkError::Handshake(format!("CBOR encoding error: {e}")))?;
     let h_after_sh = th.fold(&sh_cbor_bytes);
 
     let sig = sign_with_keypair(keypair, &signature_input(&h_after_sh));
@@ -403,13 +417,11 @@ pub async fn drive_server_handshake(
 
     // --- Receive and verify ClientFinished ---
     let cf_bytes = read_handshake_frame(&mut recv).await?;
-    let cf = decode_client_finished(&cf_bytes).map_err(|e| {
-        SdkError::Handshake(format!("ClientFinished decode error: {e}"))
-    })?;
+    let cf = decode_client_finished(&cf_bytes)
+        .map_err(|e| SdkError::Handshake(format!("ClientFinished decode error: {e}")))?;
 
-    verify_client_finished(&cf, &h_after_sh, &ch.public_key, &session_id).map_err(|e| {
-        SdkError::Handshake(format!("ClientFinished verification failed: {e}"))
-    })?;
+    verify_client_finished(&cf, &h_after_sh, &ch.public_key, &session_id)
+        .map_err(|e| SdkError::Handshake(format!("ClientFinished verification failed: {e}")))?;
 
     // --- IdentityVerified ---
     session
@@ -441,10 +453,8 @@ mod tests {
         // We can't test with real QUIC connections in a unit test,
         // but we can test the handshake logic by simulating the message
         // exchange directly.
-        let client_agent_id: AgentId =
-            sha2::Sha256::digest(&client_kp.public_key).into();
-        let server_agent_id: AgentId =
-            sha2::Sha256::digest(&server_kp.public_key).into();
+        let client_agent_id: AgentId = sha2::Sha256::digest(&client_kp.public_key).into();
+        let server_agent_id: AgentId = sha2::Sha256::digest(&server_kp.public_key).into();
 
         // --- Simulate client side: build ClientHello ---
         let client_nonce = generate_nonce();
@@ -475,13 +485,13 @@ mod tests {
         let h_after_ch_server = th_server.fold(&ch_cbor_verify_bytes);
         assert_eq!(h_after_ch_server, h_after_ch);
 
-        let verified_client_id =
-            verify_client_hello(&ch, &h_after_ch_server, now_unix()).unwrap();
+        let verified_client_id = verify_client_hello(&ch, &h_after_ch_server, now_unix()).unwrap();
         assert_eq!(verified_client_id, client_agent_id);
 
         // --- Simulate server side: build ServerHello ---
         let server_nonce = generate_nonce();
-        let session_id = derive_session_id(&h_after_ch, &client_nonce, &server_nonce);
+        let session_id =
+            derive_session_id(&h_after_ch, &client_nonce, &server_nonce, &server_agent_id);
 
         let mut sh = ServerHelloV1 {
             protocol_version: PROTOCOL_VERSION,
@@ -538,7 +548,10 @@ mod tests {
         client_session
             .on_identity_verified(verified_server_id, session_id)
             .unwrap();
-        assert_eq!(client_session.state(), aafp_core::SessionState::IdentityVerified);
+        assert_eq!(
+            client_session.state(),
+            aafp_core::SessionState::IdentityVerified
+        );
         assert_eq!(client_session.peer_agent_id(), Some(&server_agent_id));
         assert_eq!(client_session.session_id(), Some(&session_id));
 
@@ -558,7 +571,10 @@ mod tests {
         server_session
             .on_identity_verified(verified_client_id, session_id)
             .unwrap();
-        assert_eq!(server_session.state(), aafp_core::SessionState::IdentityVerified);
+        assert_eq!(
+            server_session.state(),
+            aafp_core::SessionState::IdentityVerified
+        );
         assert_eq!(server_session.peer_agent_id(), Some(&client_agent_id));
         assert_eq!(server_session.session_id(), Some(&session_id));
     }
@@ -619,10 +635,8 @@ mod tests {
         let server_kp = AgentKeypair::generate();
         let client_kp = AgentKeypair::generate();
 
-        let expected_server_id: AgentId =
-            sha2::Sha256::digest(&server_kp.public_key).into();
-        let expected_client_id: AgentId =
-            sha2::Sha256::digest(&client_kp.public_key).into();
+        let expected_server_id: AgentId = sha2::Sha256::digest(&server_kp.public_key).into();
+        let expected_client_id: AgentId = sha2::Sha256::digest(&client_kp.public_key).into();
 
         // Spawn server task: accept connection and drive server handshake
         let server_handle = {
@@ -641,7 +655,7 @@ mod tests {
 
                 // Drive server handshake
                 let (session, _conn, peer_info) =
-                    drive_server_handshake(conn, &server_kp, tls_binding)
+                    drive_server_handshake(conn, &server_kp, tls_binding, None)
                         .await
                         .unwrap();
 
@@ -666,7 +680,7 @@ mod tests {
 
         // Drive client handshake
         let (client_session, _client_conn, client_peer_info) =
-            drive_client_handshake(conn, &client_kp, tls_binding)
+            drive_client_handshake(conn, &client_kp, tls_binding, None)
                 .await
                 .unwrap();
 
@@ -691,14 +705,8 @@ mod tests {
         assert_eq!(client_peer_info.session_id, server_peer_info.session_id);
 
         // Verify session has the correct peer agent_id
-        assert_eq!(
-            client_session.peer_agent_id(),
-            Some(&expected_server_id)
-        );
-        assert_eq!(
-            server_session.peer_agent_id(),
-            Some(&expected_client_id)
-        );
+        assert_eq!(client_session.peer_agent_id(), Some(&expected_server_id));
+        assert_eq!(server_session.peer_agent_id(), Some(&expected_client_id));
 
         client_transport.close();
     }

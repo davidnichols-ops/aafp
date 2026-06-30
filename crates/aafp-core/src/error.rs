@@ -267,7 +267,10 @@ mod tests {
     fn test_category_from_code() {
         assert_eq!(ErrorCategory::from_code(0), ErrorCategory::Success);
         assert_eq!(ErrorCategory::from_code(1001), ErrorCategory::Transport);
-        assert_eq!(ErrorCategory::from_code(2001), ErrorCategory::Authentication);
+        assert_eq!(
+            ErrorCategory::from_code(2001),
+            ErrorCategory::Authentication
+        );
         assert_eq!(ErrorCategory::from_code(3001), ErrorCategory::Authorization);
         assert_eq!(ErrorCategory::from_code(4001), ErrorCategory::Discovery);
         assert_eq!(ErrorCategory::from_code(5001), ErrorCategory::Messaging);
@@ -323,15 +326,15 @@ mod tests {
 
     #[test]
     fn test_protocol_error_with_data() {
-        let pe = ProtocolError::new(codes::PROTOCOL_VIOLATION, "bad frame")
-            .with_data(vec![1, 2, 3]);
+        let pe =
+            ProtocolError::new(codes::PROTOCOL_VIOLATION, "bad frame").with_data(vec![1, 2, 3]);
         assert_eq!(pe.data, Some(vec![1, 2, 3]));
     }
 
     #[test]
     fn test_data_truncated_to_4096() {
-        let pe = ProtocolError::new(codes::PROTOCOL_VIOLATION, "big data")
-            .with_data(vec![0u8; 5000]);
+        let pe =
+            ProtocolError::new(codes::PROTOCOL_VIOLATION, "big data").with_data(vec![0u8; 5000]);
         assert_eq!(pe.data.as_ref().unwrap().len(), 4096);
     }
 

@@ -17,8 +17,8 @@ use aafp_cbor::{decode, encode, int_map, Value};
 use aafp_core::error::{codes, is_always_fatal, ProtocolError};
 use aafp_crypto::{MlDsa65, SignatureScheme};
 use aafp_identity::identity_v1::{
-    AgentId, AgentRecord, CapabilityDescriptor, IdentityError,
-    KEY_ALG_ML_DSA_65, MAX_RECORD_EXPIRY, RECORD_TYPE_V1,
+    AgentId, AgentRecord, CapabilityDescriptor, IdentityError, KEY_ALG_ML_DSA_65,
+    MAX_RECORD_EXPIRY, RECORD_TYPE_V1,
 };
 use aafp_messaging::{
     decode_frame, encode_frame, Frame, FrameError, FrameType, AAFP_VERSION, FRAME_HEADER_SIZE,
@@ -36,7 +36,10 @@ mod non_canonical_cbor {
     fn test_ncbor_001_reject_non_shortest_uint_one_byte() {
         // 0x18 = AI_ONE_BYTE, 0x05 = value 5 — should be 0x05 (immediate)
         let bad = vec![0x18, 0x05];
-        assert!(decode(&bad).is_err(), "non-canonical uint 5 as 0x1805 must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "non-canonical uint 5 as 0x1805 must be rejected"
+        );
     }
 
     /// N-CBOR-002: Non-shortest integer encoding (value 20 as 0x18 0x14) MUST be rejected.
@@ -44,7 +47,10 @@ mod non_canonical_cbor {
     fn test_ncbor_002_reject_non_shortest_uint_small() {
         // 0x18 0x14 = value 20 — should be 0x14 (immediate)
         let bad = vec![0x18, 0x14];
-        assert!(decode(&bad).is_err(), "non-canonical uint 20 as 0x1814 must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "non-canonical uint 20 as 0x1814 must be rejected"
+        );
     }
 
     /// N-CBOR-003: Value 100 in 2-byte form (0x19 0x00 0x64) MUST be rejected.
@@ -52,14 +58,20 @@ mod non_canonical_cbor {
     fn test_ncbor_003_reject_non_shortest_uint_two_byte() {
         // 0x19 = AI_TWO_BYTES, 0x0064 = 100 — should be 0x18 0x64
         let bad = vec![0x19, 0x00, 0x64];
-        assert!(decode(&bad).is_err(), "non-canonical uint 100 as 0x190064 must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "non-canonical uint 100 as 0x190064 must be rejected"
+        );
     }
 
     /// N-CBOR-004: Value 255 in 2-byte form (0x19 0x00 0xFF) MUST be rejected.
     #[test]
     fn test_ncbor_004_reject_non_shortest_uint_255() {
         let bad = vec![0x19, 0x00, 0xFF];
-        assert!(decode(&bad).is_err(), "non-canonical uint 255 as 0x1900FF must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "non-canonical uint 255 as 0x1900FF must be rejected"
+        );
     }
 
     /// N-CBOR-005: Value 1000 in 4-byte form MUST be rejected.
@@ -67,7 +79,10 @@ mod non_canonical_cbor {
     fn test_ncbor_005_reject_non_shortest_uint_four_byte() {
         // 0x1A = AI_FOUR_BYTES, 0x000003E8 = 1000
         let bad = vec![0x1A, 0x00, 0x00, 0x03, 0xE8];
-        assert!(decode(&bad).is_err(), "non-canonical uint 1000 in 4-byte form must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "non-canonical uint 1000 in 4-byte form must be rejected"
+        );
     }
 
     /// N-CBOR-006: Indefinite-length array (0x9F) MUST be rejected.
@@ -75,7 +90,10 @@ mod non_canonical_cbor {
     fn test_ncbor_006_reject_indefinite_array() {
         // 0x9F = start indefinite-length array
         let bad = vec![0x9F, 0x01, 0x02, 0xFF];
-        assert!(decode(&bad).is_err(), "indefinite-length array must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "indefinite-length array must be rejected"
+        );
     }
 
     /// N-CBOR-007: Indefinite-length map (0xBF) MUST be rejected.
@@ -83,7 +101,10 @@ mod non_canonical_cbor {
     fn test_ncbor_007_reject_indefinite_map() {
         // 0xBF = start indefinite-length map
         let bad = vec![0xBF, 0x01, 0x02, 0xFF];
-        assert!(decode(&bad).is_err(), "indefinite-length map must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "indefinite-length map must be rejected"
+        );
     }
 
     /// N-CBOR-008: Break code (0xFF) in definite-length context MUST be rejected.
@@ -104,7 +125,10 @@ mod non_canonical_cbor {
     fn test_ncbor_010_reject_truncated_byte_string() {
         // 0x58 = bstr with 1-byte length, 0x20 = 32 bytes, but only 4 follow
         let bad = vec![0x58, 0x20, 0x01, 0x02, 0x03, 0x04];
-        assert!(decode(&bad).is_err(), "truncated byte string must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "truncated byte string must be rejected"
+        );
     }
 
     /// N-CBOR-011: Truncated text string MUST be rejected.
@@ -112,7 +136,10 @@ mod non_canonical_cbor {
     fn test_ncbor_011_reject_truncated_text_string() {
         // 0x68 = tstr with length 8, but only 5 bytes follow
         let bad = vec![0x68, b'h', b'e', b'l', b'l', b'o'];
-        assert!(decode(&bad).is_err(), "truncated text string must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "truncated text string must be rejected"
+        );
     }
 
     /// N-CBOR-012: Invalid UTF-8 in text string MUST be rejected.
@@ -128,13 +155,16 @@ mod non_canonical_cbor {
     fn test_ncbor_013_reject_duplicate_int_keys() {
         // Map(2) { 1: "a", 1: "b" } — duplicate key 1
         let bad = vec![
-            0xA2,       // map(2)
-            0x01,       // key 1
+            0xA2, // map(2)
+            0x01, // key 1
             0x61, 0x61, // "a"
-            0x01,       // key 1 (duplicate!)
+            0x01, // key 1 (duplicate!)
             0x61, 0x62, // "b"
         ];
-        assert!(decode(&bad).is_err(), "duplicate int map keys must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "duplicate int map keys must be rejected"
+        );
     }
 
     /// N-CBOR-014: Duplicate string map keys MUST be rejected.
@@ -142,20 +172,25 @@ mod non_canonical_cbor {
     fn test_ncbor_014_reject_duplicate_str_keys() {
         // Map(2) { "a": 1, "a": 2 } — duplicate key "a"
         let bad = vec![
-            0xA2,       // map(2)
+            0xA2, // map(2)
             0x61, 0x61, // "a"
-            0x01,       // 1
+            0x01, // 1
             0x61, 0x61, // "a" (duplicate!)
-            0x02,       // 2
+            0x02, // 2
         ];
-        assert!(decode(&bad).is_err(), "duplicate str map keys must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "duplicate str map keys must be rejected"
+        );
     }
 
     /// N-CBOR-015: CBOR tag (major type 6) MUST be rejected (not used in AAFP).
     #[test]
     fn test_ncbor_015_reject_tag() {
         // 0xC0 = tag 0 (standard date/time string)
-        let bad = vec![0xC0, 0x74, b'2', b'0', b'2', b'5', b'-', b'0', b'1', b'-', b'0', b'1'];
+        let bad = vec![
+            0xC0, 0x74, b'2', b'0', b'2', b'5', b'-', b'0', b'1', b'-', b'0', b'1',
+        ];
         assert!(decode(&bad).is_err(), "CBOR tags must be rejected");
     }
 
@@ -164,7 +199,10 @@ mod non_canonical_cbor {
     fn test_ncbor_016_reject_unknown_simple() {
         // 0xF8 = simple value with 1-byte argument, 0x10 = simple value 16
         let bad = vec![0xF8, 0x10];
-        assert!(decode(&bad).is_err(), "unknown simple value must be rejected");
+        assert!(
+            decode(&bad).is_err(),
+            "unknown simple value must be rejected"
+        );
     }
 
     /// N-CBOR-017: Truncated map (declared 2 entries but only 1) MUST be rejected.
@@ -172,10 +210,10 @@ mod non_canonical_cbor {
     fn test_ncbor_017_reject_truncated_map() {
         // Map(2) but only 1 entry
         let bad = vec![
-            0xA2,       // map(2)
-            0x01,       // key 1
-            0x02,       // value 2
-            // Missing second entry
+            0xA2, // map(2)
+            0x01, // key 1
+            0x02, // value 2
+                  // Missing second entry
         ];
         assert!(decode(&bad).is_err(), "truncated map must be rejected");
     }
@@ -223,10 +261,20 @@ mod invalid_frames {
         let result = decode_frame(&bytes);
         // Per RFC-0006 §4.2, non-critical unknown types should decode
         // successfully so the caller can skip them.
-        assert!(result.is_ok(), "non-critical unknown frame type should decode (for skipping), got: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "non-critical unknown frame type should decode (for skipping), got: {:?}",
+            result
+        );
         let (frame, _) = result.unwrap();
-        assert!(frame.frame_type.is_unknown(), "frame type should be Unknown");
-        assert!(!frame.frame_type.is_known(), "frame type should not be known");
+        assert!(
+            frame.frame_type.is_unknown(),
+            "frame type should be Unknown"
+        );
+        assert!(
+            !frame.frame_type.is_known(),
+            "frame type should not be known"
+        );
     }
 
     /// N-FRAME-003: Frame with unknown critical type (0xFF | 0x80) MUST be rejected.
@@ -237,7 +285,10 @@ mod invalid_frames {
         bytes[1] = 0xFF; // Unknown type
         bytes[2] = 0x80; // Critical flag
         let result = decode_frame(&bytes);
-        assert!(result.is_err(), "unknown critical frame type must be rejected");
+        assert!(
+            result.is_err(),
+            "unknown critical frame type must be rejected"
+        );
     }
 
     /// N-FRAME-004: Truncated frame (less than 28 bytes) MUST be rejected.
@@ -268,7 +319,7 @@ mod invalid_frames {
         bytes[0] = AAFP_VERSION;
         bytes[1] = FrameType::Data.to_u8();
         bytes[12..20].copy_from_slice(&100u64.to_be_bytes()); // Claims 100 bytes
-        // But only 28 bytes total (header only, no payload)
+                                                              // But only 28 bytes total (header only, no payload)
         let result = decode_frame(&bytes);
         assert!(result.is_err(), "payload length mismatch must be rejected");
     }
@@ -281,7 +332,10 @@ mod invalid_frames {
         bytes[1] = FrameType::Data.to_u8();
         bytes[20..28].copy_from_slice(&50u64.to_be_bytes()); // Claims 50 bytes of extensions
         let result = decode_frame(&bytes);
-        assert!(result.is_err(), "extension length mismatch must be rejected");
+        assert!(
+            result.is_err(),
+            "extension length mismatch must be rejected"
+        );
     }
 
     /// N-FRAME-008: Empty input MUST be rejected.
@@ -298,9 +352,12 @@ mod invalid_frames {
         let frame = Frame::data(0, vec![]);
         let mut bytes = encode_frame(&frame).unwrap();
         bytes[3] = 0xFF; // Set reserved byte to non-zero
-        // Should still decode successfully (reserved is ignored on receive)
+                         // Should still decode successfully (reserved is ignored on receive)
         let result = decode_frame(&bytes);
-        assert!(result.is_ok(), "non-zero reserved byte should be ignored on receive");
+        assert!(
+            result.is_ok(),
+            "non-zero reserved byte should be ignored on receive"
+        );
     }
 
     /// N-FRAME-010: Encoding a frame with payload > MAX MUST fail.
@@ -308,7 +365,10 @@ mod invalid_frames {
     fn test_nframe_010_encode_oversized_rejected() {
         let oversized = vec![0u8; MAX_PAYLOAD_SIZE + 1];
         let frame = Frame::data(0, oversized);
-        assert!(encode_frame(&frame).is_err(), "encoding oversized frame must fail");
+        assert!(
+            encode_frame(&frame).is_err(),
+            "encoding oversized frame must fail"
+        );
     }
 }
 
@@ -427,14 +487,7 @@ mod invalid_agent_records {
     #[test]
     fn test_nrec_008_empty_public_key() {
         let (pk, sk) = MlDsa65::keypair();
-        let mut record = AgentRecord::new(
-            &pk.0,
-            vec![],
-            vec![],
-            1735689600,
-            1735689600 + 86400,
-            1,
-        );
+        let mut record = AgentRecord::new(&pk.0, vec![], vec![], 1735689600, 1735689600 + 86400, 1);
         record.sign(&sk);
         record.public_key = vec![]; // Empty
         let err = record.verify(1735689600).unwrap_err();
@@ -474,7 +527,10 @@ mod invalid_signatures {
         let (pk2, _) = MlDsa65::keypair();
         let msg = b"test message";
         let sig = MlDsa65::sign(&sk1, msg);
-        assert!(!MlDsa65::verify(&pk2, msg, &sig), "signature with wrong key must fail");
+        assert!(
+            !MlDsa65::verify(&pk2, msg, &sig),
+            "signature with wrong key must fail"
+        );
     }
 
     /// N-SIG-004: Empty signature MUST fail.
@@ -517,16 +573,14 @@ mod invalid_errors {
     /// N-ERR-001: Data field exceeding 4096 bytes MUST be truncated.
     #[test]
     fn test_nerr_001_data_truncated() {
-        let pe = ProtocolError::new(codes::PROTOCOL_VIOLATION, "big")
-            .with_data(vec![0xAA; 5000]);
+        let pe = ProtocolError::new(codes::PROTOCOL_VIOLATION, "big").with_data(vec![0xAA; 5000]);
         assert_eq!(pe.data.as_ref().unwrap().len(), 4096);
     }
 
     /// N-ERR-002: Always-fatal code cannot be overridden to non-fatal.
     #[test]
     fn test_nerr_002_cannot_override_fatal() {
-        let pe = ProtocolError::new(codes::INVALID_SIGNATURE, "bad")
-            .with_fatal(false);
+        let pe = ProtocolError::new(codes::INVALID_SIGNATURE, "bad").with_fatal(false);
         assert!(pe.is_fatal(), "always-fatal cannot be set to non-fatal");
     }
 
@@ -556,10 +610,8 @@ mod invalid_errors {
 
 #[cfg(test)]
 mod invalid_handshake {
-    use aafp_crypto::handshake_v1::{
-        compute_receiver_mac, verify_receiver_mac,
-    };
     use super::*;
+    use aafp_crypto::handshake_v1::{compute_receiver_mac, verify_receiver_mac};
 
     /// N-HS-001: DoS MAC with wrong agent_id MUST fail verification.
     #[test]
@@ -612,8 +664,8 @@ mod invalid_handshake {
 
 #[cfg(test)]
 mod discovery_edge_cases {
-    use aafp_discovery::discovery_v1::CapabilityDht;
     use super::*;
+    use aafp_discovery::discovery_v1::CapabilityDht;
 
     /// N-DHT-001: DHT put with expired record should still store (eviction is separate).
     #[test]

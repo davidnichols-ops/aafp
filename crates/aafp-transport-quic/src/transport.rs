@@ -3,13 +3,11 @@
 //! Provides async connection establishment, bidirectional streams, and
 //! post-quantum key exchange (X25519MLKEM768) via rustls + aws-lc-rs.
 
-use crate::config::{generate_self_signed_cert, QuicConfig, TlsIdentity, ConfigError};
+use crate::config::{generate_self_signed_cert, QuicConfig, TlsIdentity};
 use aafp_core::{Error, Multiaddr};
 use quinn::{Connection, Endpoint, RecvStream, SendStream};
 use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::info;
 
 /// A QUIC endpoint (server + client combined).
 pub struct QuicTransport {
@@ -31,7 +29,9 @@ impl QuicTransport {
 
         info!(
             "QUIC endpoint listening on {}",
-            endpoint.local_addr().map_err(|e| Error::Transport(e.to_string()))?
+            endpoint
+                .local_addr()
+                .map_err(|e| Error::Transport(e.to_string()))?
         );
 
         Ok(Self {
@@ -203,12 +203,12 @@ impl QuicSendStream {
 
     /// Finish the stream (send FIN).
     pub fn finish(&mut self) {
-        self.inner.finish();
+        let _ = self.inner.finish();
     }
 
     /// Reset the stream.
     pub fn reset(&mut self, code: u32) {
-        self.inner.reset(code.into());
+        let _ = self.inner.reset(code.into());
     }
 
     /// Get the stream ID.
@@ -245,7 +245,7 @@ impl QuicRecvStream {
 
     /// Stop the stream with a reason code.
     pub fn stop(&mut self, code: u32) {
-        self.inner.stop(code.into());
+        let _ = self.inner.stop(code.into());
     }
 
     /// Get the stream ID.
@@ -266,6 +266,7 @@ fn parse_multiaddr(addr: &str) -> Result<SocketAddr, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn parse_multiaddrs() {

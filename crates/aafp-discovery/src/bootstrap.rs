@@ -1,7 +1,9 @@
 //! Bootstrap discovery: connect to seed nodes to join the network.
 
+#![allow(deprecated)]
+
 use aafp_core::Multiaddr;
-use aafp_identity::AgentRecord;
+use aafp_identity::agent_record::AgentRecord;
 use std::time::Duration;
 use thiserror::Error;
 use tracing::info;
@@ -86,9 +88,15 @@ impl BootstrapDiscovery {
     /// Add default seed nodes (for testing).
     pub fn add_default_seeds(&mut self) {
         if self.config.seed_nodes.is_empty() {
-            self.config.seed_nodes.push("quic://seed1.aafp.io:4433".into());
-            self.config.seed_nodes.push("quic://seed2.aafp.io:4433".into());
-            self.config.seed_nodes.push("quic://seed3.aafp.io:4433".into());
+            self.config
+                .seed_nodes
+                .push("quic://seed1.aafp.io:4433".into());
+            self.config
+                .seed_nodes
+                .push("quic://seed2.aafp.io:4433".into());
+            self.config
+                .seed_nodes
+                .push("quic://seed3.aafp.io:4433".into());
             info!("Added 3 default seed nodes");
         }
     }
@@ -117,7 +125,11 @@ mod tests {
     #[test]
     fn add_valid_record() {
         let kp = AgentKeypair::generate();
-        let record = AgentRecord::new(&kp, vec!["inference".into()], vec!["quic://1.2.3.4:4433".into()]);
+        let record = AgentRecord::new(
+            &kp,
+            vec!["inference".into()],
+            vec!["quic://1.2.3.4:4433".into()],
+        );
         let mut bs = BootstrapDiscovery::new(BootstrapConfig::default());
         bs.add_discovered(record);
         assert_eq!(bs.discovered().len(), 1);

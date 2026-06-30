@@ -1,8 +1,10 @@
 //! Agent builder: fluent API for constructing an AAFP agent.
 
 use crate::{Agent, SdkError};
-use aafp_discovery::{BootstrapConfig, BootstrapDiscovery, CapabilityDht, RegionalDiscovery};
-use aafp_identity::{derive_agent_id, AgentKeypair, AgentRecord};
+use aafp_discovery::capability_dht::CapabilityDht;
+use aafp_discovery::{BootstrapConfig, BootstrapDiscovery, RegionalDiscovery};
+use aafp_identity::agent_record::AgentRecord;
+use aafp_identity::{derive_agent_id, AgentKeypair};
 use aafp_messaging::PubSub;
 use aafp_nat::{AutoNat, RelayConfig, RelayService};
 use aafp_transport_quic::QuicConfig;
@@ -84,11 +86,7 @@ impl AgentBuilder {
         let local_addr = transport.local_multiaddr()?;
 
         // Create agent record.
-        let record = AgentRecord::new(
-            &keypair,
-            self.capabilities.clone(),
-            vec![local_addr],
-        );
+        let record = AgentRecord::new(&keypair, self.capabilities.clone(), vec![local_addr]);
 
         // Create discovery components.
         let bootstrap_config = BootstrapConfig {
@@ -101,7 +99,8 @@ impl AgentBuilder {
 
         // Put our own record in the DHT.
         let mut dht = dht;
-        dht.put(record.clone()).map_err(|e| SdkError::Discovery(e.to_string()))?;
+        dht.put(record.clone())
+            .map_err(|e| SdkError::Discovery(e.to_string()))?;
 
         // Create NAT components.
         let auto_nat = AutoNat::new();
@@ -160,21 +159,13 @@ mod tests {
     async fn build_with_keypair() {
         let kp = AgentKeypair::generate();
         let expected_id = derive_agent_id(&kp.public_key);
-        let agent = AgentBuilder::new()
-            .with_keypair(kp)
-            .build()
-            .await
-            .unwrap();
+        let agent = AgentBuilder::new().with_keypair(kp).build().await.unwrap();
         assert_eq!(*agent.id(), expected_id);
     }
 
     #[tokio::test]
     async fn build_relay() {
-        let agent = AgentBuilder::new()
-            .as_relay()
-            .build()
-            .await
-            .unwrap();
+        let agent = AgentBuilder::new().as_relay().build().await.unwrap();
         assert!(agent.relay.is_relay());
     }
 

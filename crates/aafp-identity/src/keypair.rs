@@ -43,7 +43,7 @@ impl AgentKeypair {
 
     /// Reconstruct a keypair from secret key bytes.
     pub fn from_bytes(secret: &[u8]) -> Result<Self, IdentityError> {
-        let sk = MlDsa65SecretKey::from_bytes(secret)?;
+        let _sk = MlDsa65SecretKey::from_bytes(secret)?;
         // We cannot derive the public key from the secret key in ML-DSA-65
         // without signing, so we require both. Use from_secret_and_public.
         Err(IdentityError::InvalidKeypair(
@@ -77,7 +77,9 @@ impl AgentKeypair {
         }
         let sk_len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
         if data.len() < 4 + sk_len {
-            return Err(IdentityError::Deserialization("truncated secret key".into()));
+            return Err(IdentityError::Deserialization(
+                "truncated secret key".into(),
+            ));
         }
         let secret_key = data[4..4 + sk_len].to_vec();
         let public_key = data[4 + sk_len..].to_vec();
@@ -154,8 +156,7 @@ mod tests {
     #[test]
     fn from_secret_and_public_validates() {
         let kp = AgentKeypair::generate();
-        let kp2 =
-            AgentKeypair::from_secret_and_public(&kp.secret_key, &kp.public_key).unwrap();
+        let kp2 = AgentKeypair::from_secret_and_public(&kp.secret_key, &kp.public_key).unwrap();
         assert_eq!(kp.public_key, kp2.public_key);
     }
 

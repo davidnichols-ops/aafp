@@ -51,7 +51,10 @@ pub struct Swarm<T: Transport, B: NetworkBehaviour> {
 impl<T: Transport, B: NetworkBehaviour> Swarm<T, B> {
     /// Create a new swarm.
     pub fn new(transport: T, behaviour: B) -> Self {
-        Self { transport, behaviour }
+        Self {
+            transport,
+            behaviour,
+        }
     }
 
     /// Start listening.
@@ -69,14 +72,16 @@ impl<T: Transport, B: NetworkBehaviour> Swarm<T, B> {
         // Poll transport for events.
         match self.transport.poll(cx) {
             Poll::Ready(TransportEvent::ConnectionEstablished { peer, .. }) => {
-                self.behaviour.on_transport_event(TransportEvent::ConnectionEstablished {
-                    peer,
-                    remote_addr: String::new(),
-                });
+                self.behaviour
+                    .on_transport_event(TransportEvent::ConnectionEstablished {
+                        peer,
+                        remote_addr: String::new(),
+                    });
                 return Poll::Ready(SwarmEvent::ConnectionEstablished { peer });
             }
             Poll::Ready(TransportEvent::ConnectionClosed { peer }) => {
-                self.behaviour.on_transport_event(TransportEvent::ConnectionClosed { peer });
+                self.behaviour
+                    .on_transport_event(TransportEvent::ConnectionClosed { peer });
                 return Poll::Ready(SwarmEvent::ConnectionClosed { peer });
             }
             Poll::Ready(TransportEvent::Incoming { remote_addr, .. }) => {

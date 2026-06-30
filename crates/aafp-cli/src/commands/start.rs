@@ -1,12 +1,8 @@
-use aafp_sdk::AgentBuilder;
 use aafp_identity::AgentKeypair;
+use aafp_sdk::AgentBuilder;
 use std::net::SocketAddr;
 
-pub async fn run(
-    identity: &str,
-    bind: &str,
-    seeds: Option<Vec<String>>,
-) -> anyhow::Result<()> {
+pub async fn run(identity: &str, bind: &str, seeds: Option<Vec<String>>) -> anyhow::Result<()> {
     // Load or generate keypair.
     let keypair = if std::path::Path::new(identity).exists() {
         let data = std::fs::read(identity)?;
@@ -24,9 +20,7 @@ pub async fn run(
     let bind_addr: SocketAddr = bind.parse()?;
     println!("Binding to: {}", bind_addr);
 
-    let mut builder = AgentBuilder::new()
-        .with_keypair(keypair)
-        .bind(bind_addr);
+    let mut builder = AgentBuilder::new().with_keypair(keypair).bind(bind_addr);
 
     if let Some(seeds) = seeds {
         builder = builder.with_seeds(seeds);

@@ -17,9 +17,7 @@
 //! - `notes`: Any additional context
 
 use aafp_cbor::{int_map, str_map, Value};
-use aafp_messaging::{
-    encode_frame, Frame, FrameType, AAFP_VERSION, FRAME_HEADER_SIZE,
-};
+use aafp_messaging::{encode_frame, Frame, FrameType, AAFP_VERSION, FRAME_HEADER_SIZE};
 use sha2::{Digest, Sha256};
 
 /// A single test vector.
@@ -230,16 +228,19 @@ pub fn cbor_vectors() -> Vec<TestVector> {
             name: "cbor_int_map_sorted",
             rfc_section: "RFC-0002 §8.1 (length-first canonical ordering)",
             description: "Int map {1: \"a\", 100: \"b\"} — key 1 before key 100",
-            cbor_bytes: Some(aafp_cbor::encode(&int_map(vec![
-                (100, Value::TextString("b".to_string())),
-                (1, Value::TextString("a".to_string())),
-            ])).unwrap()),
+            cbor_bytes: Some(
+                aafp_cbor::encode(&int_map(vec![
+                    (100, Value::TextString("b".to_string())),
+                    (1, Value::TextString("a".to_string())),
+                ]))
+                .unwrap(),
+            ),
             wire_bytes: None,
             expected_hash: {
                 // Map(2) { 1: "a", 100: "b" }
                 let bytes = vec![
-                    0xA2,       // map(2)
-                    0x01,       // key 1 (immediate)
+                    0xA2, // map(2)
+                    0x01, // key 1 (immediate)
                     0x61, 0x61, // "a"
                     0x18, 0x64, // key 100 (one-byte AI)
                     0x61, 0x62, // "b"
@@ -252,10 +253,13 @@ pub fn cbor_vectors() -> Vec<TestVector> {
             name: "cbor_int_map_same_length",
             rfc_section: "RFC-0002 §8.1 (bytewise within same length)",
             description: "Int map {10: 1, 20: 2} — same-length keys sorted bytewise",
-            cbor_bytes: Some(aafp_cbor::encode(&int_map(vec![
-                (20, Value::Unsigned(2)),
-                (10, Value::Unsigned(1)),
-            ])).unwrap()),
+            cbor_bytes: Some(
+                aafp_cbor::encode(&int_map(vec![
+                    (20, Value::Unsigned(2)),
+                    (10, Value::Unsigned(1)),
+                ]))
+                .unwrap(),
+            ),
             wire_bytes: None,
             expected_hash: {
                 let bytes = vec![
@@ -273,11 +277,14 @@ pub fn cbor_vectors() -> Vec<TestVector> {
             name: "cbor_str_map_sorted",
             rfc_section: "RFC-0002 §8.1 (string-keyed maps)",
             description: "Str map {\"cat\": 1, \"apple\": 2, \"zebra\": 3} — length-first",
-            cbor_bytes: Some(aafp_cbor::encode(&str_map(vec![
-                ("zebra".to_string(), Value::Unsigned(3)),
-                ("apple".to_string(), Value::Unsigned(2)),
-                ("cat".to_string(), Value::Unsigned(1)),
-            ])).unwrap()),
+            cbor_bytes: Some(
+                aafp_cbor::encode(&str_map(vec![
+                    ("zebra".to_string(), Value::Unsigned(3)),
+                    ("apple".to_string(), Value::Unsigned(2)),
+                    ("cat".to_string(), Value::Unsigned(1)),
+                ]))
+                .unwrap(),
+            ),
             wire_bytes: None,
             expected_hash: {
                 // Length-first: "cat"(3) < "apple"(5) < "zebra"(5)
@@ -341,13 +348,16 @@ pub fn frame_vectors() -> Vec<TestVector> {
             rfc_section: "RFC-0002 §4.2",
             description: "HANDSHAKE frame with 8-byte payload on stream 0",
             cbor_bytes: None,
-            wire_bytes: Some(encode_frame(&Frame {
-                frame_type: FrameType::Handshake,
-                flags: 0,
-                stream_id: 0,
-                extensions: vec![],
-                payload: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
-            }).unwrap()),
+            wire_bytes: Some(
+                encode_frame(&Frame {
+                    frame_type: FrameType::Handshake,
+                    flags: 0,
+                    stream_id: 0,
+                    extensions: vec![],
+                    payload: vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+                })
+                .unwrap(),
+            ),
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
@@ -363,13 +373,16 @@ pub fn frame_vectors() -> Vec<TestVector> {
             rfc_section: "RFC-0002 §4.3",
             description: "RPC_REQUEST frame with 3-byte payload on stream 4",
             cbor_bytes: None,
-            wire_bytes: Some(encode_frame(&Frame {
-                frame_type: FrameType::RpcRequest,
-                flags: 0,
-                stream_id: 4,
-                extensions: vec![],
-                payload: vec![0xA1, 0x01, 0x02],
-            }).unwrap()),
+            wire_bytes: Some(
+                encode_frame(&Frame {
+                    frame_type: FrameType::RpcRequest,
+                    flags: 0,
+                    stream_id: 4,
+                    extensions: vec![],
+                    payload: vec![0xA1, 0x01, 0x02],
+                })
+                .unwrap(),
+            ),
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
@@ -386,13 +399,16 @@ pub fn frame_vectors() -> Vec<TestVector> {
             rfc_section: "RFC-0002 §4.7",
             description: "PING frame with empty payload on stream 0",
             cbor_bytes: None,
-            wire_bytes: Some(encode_frame(&Frame {
-                frame_type: FrameType::Ping,
-                flags: 0,
-                stream_id: 0,
-                extensions: vec![],
-                payload: vec![],
-            }).unwrap()),
+            wire_bytes: Some(
+                encode_frame(&Frame {
+                    frame_type: FrameType::Ping,
+                    flags: 0,
+                    stream_id: 0,
+                    extensions: vec![],
+                    payload: vec![],
+                })
+                .unwrap(),
+            ),
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
@@ -406,13 +422,16 @@ pub fn frame_vectors() -> Vec<TestVector> {
             rfc_section: "RFC-0002 §4.1 (MORE flag)",
             description: "DATA frame with MORE flag (0x01) set",
             cbor_bytes: None,
-            wire_bytes: Some(encode_frame(&Frame {
-                frame_type: FrameType::Data,
-                flags: 0x01, // MORE flag
-                stream_id: 8,
-                extensions: vec![],
-                payload: vec![0xFF],
-            }).unwrap()),
+            wire_bytes: Some(
+                encode_frame(&Frame {
+                    frame_type: FrameType::Data,
+                    flags: 0x01, // MORE flag
+                    stream_id: 8,
+                    extensions: vec![],
+                    payload: vec![0xFF],
+                })
+                .unwrap(),
+            ),
             expected_hash: {
                 let mut bytes = vec![0u8; FRAME_HEADER_SIZE];
                 bytes[0] = AAFP_VERSION;
@@ -433,8 +452,7 @@ pub fn frame_vectors() -> Vec<TestVector> {
 /// Generate handshake structure test vectors (CBOR encoding only, not signatures).
 pub fn handshake_vectors() -> Vec<TestVector> {
     use aafp_crypto::handshake_v1::{
-        ClientFinished, ClientHello, ServerHello,
-        KEY_ALG_ML_DSA_65, PROTOCOL_VERSION,
+        ClientFinished, ClientHello, ServerHello, KEY_ALG_ML_DSA_65, PROTOCOL_VERSION,
     };
     use fixed_keys::*;
 
@@ -556,8 +574,8 @@ pub fn handshake_vectors() -> Vec<TestVector> {
 /// Generate AgentRecord encoding test vectors.
 pub fn agent_record_vectors() -> Vec<TestVector> {
     use aafp_identity::identity_v1::{
-        AgentId, AgentRecord, CapabilityDescriptor, MetadataValue,
-        KEY_ALG_ML_DSA_65, RECORD_TYPE_V1,
+        AgentId, AgentRecord, CapabilityDescriptor, MetadataValue, KEY_ALG_ML_DSA_65,
+        RECORD_TYPE_V1,
     };
     use fixed_keys::*;
 
@@ -581,15 +599,14 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
                     record_type: RECORD_TYPE_V1.to_string(),
                     agent_id,
                     public_key: PUBLIC_KEY_A.to_vec(),
-                    capabilities: vec![
-                        CapabilityDescriptor::new("inference")
-                            .with_metadata("model", MetadataValue::Text("test-model".to_string())),
-                    ],
+                    capabilities: vec![CapabilityDescriptor::new("inference")
+                        .with_metadata("model", MetadataValue::Text("test-model".to_string()))],
                     endpoints: vec!["/ip4/127.0.0.1/tcp/4001".to_string()],
                     created_at: TIMESTAMP_NOW,
                     expires_at: TIMESTAMP_EXPIRES,
                     signature: vec![],
                     key_algorithm: KEY_ALG_ML_DSA_65,
+                    record_version: 1,
                 };
                 Some(aafp_cbor::encode(&record.to_cbor_without_sig()).unwrap())
             },
@@ -600,15 +617,14 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
                     record_type: RECORD_TYPE_V1.to_string(),
                     agent_id,
                     public_key: PUBLIC_KEY_A.to_vec(),
-                    capabilities: vec![
-                        CapabilityDescriptor::new("inference")
-                            .with_metadata("model", MetadataValue::Text("test-model".to_string())),
-                    ],
+                    capabilities: vec![CapabilityDescriptor::new("inference")
+                        .with_metadata("model", MetadataValue::Text("test-model".to_string()))],
                     endpoints: vec!["/ip4/127.0.0.1/tcp/4001".to_string()],
                     created_at: TIMESTAMP_NOW,
                     expires_at: TIMESTAMP_EXPIRES,
                     signature: vec![],
                     key_algorithm: KEY_ALG_ML_DSA_65,
+                    record_version: 1,
                 };
                 let bytes = aafp_cbor::encode(&record.to_cbor_without_sig()).unwrap();
                 TestVector::hash(&bytes)
@@ -631,6 +647,7 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
                     expires_at: TIMESTAMP_EXPIRES,
                     signature: vec![],
                     key_algorithm: KEY_ALG_ML_DSA_65,
+                    record_version: 1,
                 };
                 Some(aafp_cbor::encode(&record.to_cbor_without_sig()).unwrap())
             },
@@ -647,6 +664,7 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
                     expires_at: TIMESTAMP_EXPIRES,
                     signature: vec![],
                     key_algorithm: KEY_ALG_ML_DSA_65,
+                    record_version: 1,
                 };
                 let bytes = aafp_cbor::encode(&record.to_cbor_without_sig()).unwrap();
                 TestVector::hash(&bytes)
@@ -660,7 +678,9 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
 
 /// Generate RPC message test vectors.
 pub fn rpc_vectors() -> Vec<TestVector> {
-    use aafp_messaging::rpc_v1::{CloseMessage, ErrorMessage, RpcErrorObject, RpcRequest, RpcResponse};
+    use aafp_messaging::rpc_v1::{
+        CloseMessage, ErrorMessage, RpcErrorObject, RpcRequest, RpcResponse,
+    };
 
     vec![
         TestVector {
@@ -762,7 +782,9 @@ pub fn rpc_vectors() -> Vec<TestVector> {
 
 /// Generate discovery RPC test vectors.
 pub fn discovery_vectors() -> Vec<TestVector> {
-    use aafp_discovery::discovery_v1::{AnnounceParams, AnnounceResult, LookupParams, LookupResult};
+    use aafp_discovery::discovery_v1::{
+        AnnounceParams, AnnounceResult, LookupParams, LookupResult,
+    };
     use aafp_identity::identity_v1::{
         AgentId, AgentRecord, CapabilityDescriptor, KEY_ALG_ML_DSA_65, RECORD_TYPE_V1,
     };
@@ -816,6 +838,7 @@ pub fn discovery_vectors() -> Vec<TestVector> {
                     expires_at: TIMESTAMP_EXPIRES,
                     signature: SIGNATURE_A.to_vec(),
                     key_algorithm: KEY_ALG_ML_DSA_65,
+                    record_version: 1,
                 };
                 let params = AnnounceParams::new(record);
                 Some(aafp_cbor::encode(&params.to_cbor()).unwrap())
@@ -833,6 +856,7 @@ pub fn discovery_vectors() -> Vec<TestVector> {
                     expires_at: TIMESTAMP_EXPIRES,
                     signature: SIGNATURE_A.to_vec(),
                     key_algorithm: KEY_ALG_ML_DSA_65,
+                    record_version: 1,
                 };
                 let params = AnnounceParams::new(record);
                 TestVector::hash(&aafp_cbor::encode(&params.to_cbor()).unwrap())
@@ -874,7 +898,9 @@ pub fn generate_markdown() -> String {
     let mut md = String::new();
     md.push_str("# AAFP Protocol Test Vectors\n\n");
     md.push_str("**Version**: AAFP v1 (RFC Revision 3)\n");
-    md.push_str("**Purpose**: Deterministic wire-format vectors for cross-implementation validation.\n");
+    md.push_str(
+        "**Purpose**: Deterministic wire-format vectors for cross-implementation validation.\n",
+    );
     md.push_str("**Usage**: A second implementation should reproduce each vector from the RFCs alone and verify byte-for-byte equality.\n\n");
     md.push_str("## Fixed Test Inputs\n\n");
     md.push_str("All vectors use the following fixed inputs (no randomness):\n\n");
@@ -907,13 +933,22 @@ pub fn generate_markdown() -> String {
             md.push_str(&format!("### {}\n\n", v.name));
             md.push_str(&format!("- **RFC Section**: {}\n", v.rfc_section));
             md.push_str(&format!("- **Description**: {}\n", v.description));
-            md.push_str(&format!("- **Expected SHA-256**: `{}`\n", v.expected_hash_hex()));
+            md.push_str(&format!(
+                "- **Expected SHA-256**: `{}`\n",
+                v.expected_hash_hex()
+            ));
             if let Some(cbor) = &v.cbor_bytes {
-                md.push_str(&format!("- **CBOR Bytes (hex)**: `{}`\n", hex::encode(cbor)));
+                md.push_str(&format!(
+                    "- **CBOR Bytes (hex)**: `{}`\n",
+                    hex::encode(cbor)
+                ));
             }
             if let Some(wire) = &v.wire_bytes {
                 if v.wire_bytes.is_some() && v.cbor_bytes.is_none() {
-                    md.push_str(&format!("- **Wire Bytes (hex)**: `{}`\n", hex::encode(wire)));
+                    md.push_str(&format!(
+                        "- **Wire Bytes (hex)**: `{}`\n",
+                        hex::encode(wire)
+                    ));
                 }
             }
             md.push_str(&format!("- **Notes**: {}\n\n", v.notes));
@@ -930,7 +965,11 @@ mod tests {
     #[test]
     fn test_all_vectors_verify() {
         let vectors = all_vectors();
-        assert!(vectors.len() >= 30, "should have at least 30 vectors, got {}", vectors.len());
+        assert!(
+            vectors.len() >= 30,
+            "should have at least 30 vectors, got {}",
+            vectors.len()
+        );
 
         for v in &vectors {
             assert!(
@@ -957,13 +996,19 @@ mod tests {
     #[test]
     fn test_handshake_vectors_count() {
         let vectors = handshake_vectors();
-        assert!(vectors.len() >= 3, "should have at least 3 handshake vectors");
+        assert!(
+            vectors.len() >= 3,
+            "should have at least 3 handshake vectors"
+        );
     }
 
     #[test]
     fn test_agent_record_vectors_count() {
         let vectors = agent_record_vectors();
-        assert!(vectors.len() >= 2, "should have at least 2 AgentRecord vectors");
+        assert!(
+            vectors.len() >= 2,
+            "should have at least 2 AgentRecord vectors"
+        );
     }
 
     #[test]
@@ -975,20 +1020,29 @@ mod tests {
     #[test]
     fn test_discovery_vectors_count() {
         let vectors = discovery_vectors();
-        assert!(vectors.len() >= 3, "should have at least 3 discovery vectors");
+        assert!(
+            vectors.len() >= 3,
+            "should have at least 3 discovery vectors"
+        );
     }
 
     #[test]
     fn test_cbor_unsigned_5_is_one_byte() {
         let vectors = cbor_vectors();
-        let v = vectors.iter().find(|v| v.name == "cbor_unsigned_small").unwrap();
+        let v = vectors
+            .iter()
+            .find(|v| v.name == "cbor_unsigned_small")
+            .unwrap();
         assert_eq!(v.cbor_bytes.as_ref().unwrap(), &[0x05]);
     }
 
     #[test]
     fn test_cbor_unsigned_24_is_two_bytes() {
         let vectors = cbor_vectors();
-        let v = vectors.iter().find(|v| v.name == "cbor_unsigned_24").unwrap();
+        let v = vectors
+            .iter()
+            .find(|v| v.name == "cbor_unsigned_24")
+            .unwrap();
         assert_eq!(v.cbor_bytes.as_ref().unwrap(), &[0x18, 0x18]);
     }
 
@@ -1002,14 +1056,20 @@ mod tests {
     #[test]
     fn test_frame_data_empty_is_28_bytes() {
         let vectors = frame_vectors();
-        let v = vectors.iter().find(|v| v.name == "frame_data_empty").unwrap();
+        let v = vectors
+            .iter()
+            .find(|v| v.name == "frame_data_empty")
+            .unwrap();
         assert_eq!(v.wire_bytes.as_ref().unwrap().len(), 28);
     }
 
     #[test]
     fn test_frame_data_stream42_is_32_bytes() {
         let vectors = frame_vectors();
-        let v = vectors.iter().find(|v| v.name == "frame_data_stream42").unwrap();
+        let v = vectors
+            .iter()
+            .find(|v| v.name == "frame_data_stream42")
+            .unwrap();
         assert_eq!(v.wire_bytes.as_ref().unwrap().len(), 32); // 28 header + 4 payload
     }
 
