@@ -1,5 +1,8 @@
+#![allow(deprecated)]
+
+use aafp_crypto::handshake::PqHandshake;
+use aafp_crypto::{MlDsa65, SignatureScheme};
 use criterion::{criterion_group, criterion_main, Criterion};
-use aafp_crypto::{MlDsa65, PqHandshake, SignatureScheme};
 
 fn bench_mldsa65_sign(c: &mut Criterion) {
     let (_pk, sk) = MlDsa65::keypair();
@@ -35,5 +38,11 @@ fn bench_handshake(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_mldsa65_sign, bench_mldsa65_verify, bench_mldsa65_keypair, bench_handshake);
+criterion_group!(
+    benches,
+    bench_mldsa65_sign,
+    bench_mldsa65_verify,
+    bench_mldsa65_keypair,
+    bench_handshake
+);
 criterion_main!(benches);

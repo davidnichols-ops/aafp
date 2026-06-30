@@ -4,9 +4,10 @@
 //! application messages can be sent. There is no code path where an
 //! unauthenticated peer can send application messages.
 
+use crate::handshake_driver;
+use crate::protocol_frames::{send_close_frame, send_error_frame};
 use crate::{Agent, SdkError};
-use crate::handshake_driver::{self, PeerInfo};
-use aafp_core::{AuthorizationProvider, Session, SessionState};
+use aafp_core::{codes, AuthorizationProvider, ProtocolError, Session, SessionState};
 use aafp_identity::AgentId;
 use aafp_messaging::{encode_frame, Frame};
 use aafp_transport_quic::QuicConnection;
@@ -47,14 +48,37 @@ impl PeerConnection {
         self.session.is_authorized(capability)
     }
 
-    /// Begin graceful shutdown.
-    pub fn begin_close(&mut self) -> Result<(), SdkError> {
-        self.session.begin_close().map_err(|e| {
-            SdkError::Handshake(format!("session close error: {e}"))
-        })
+    /// Begin graceful shutdown by sending a CLOSE frame (RFC-0002 §4.5).
+    ///
+    /// After sending a CLOSE frame, the sender MUST NOT send additional frames.
+    /// The session transitions to `Closing` state. The QUIC connection is
+    /// closed after the CLOSE frame is sent.
+    pub async fn begin_close(&mut self) -> Result<(), SdkError> {
+        self.session
+            .begin_close()
+            .map_err(|e| SdkError::Handshake(format!("session close error: {e}")))?;
+        send_close_frame(&self.conn, codes::OK, "graceful shutdown").await?;
+        let _ = self.session.close();
+        self.conn.close(0, b"session closed");
+        Ok(())
     }
 
-    /// Close the connection.
+    /// Send a protocol ERROR frame and close the connection (RFC-0002 §4.6).
+    ///
+    /// If the error is fatal, the connection is closed immediately after
+    /// sending the ERROR frame. If non-fatal, the connection may continue
+    /// (but the SDK currently closes regardless for safety).
+    pub async fn send_error(&mut self, error: &ProtocolError) -> Result<(), SdkError> {
+        send_error_frame(&self.conn, error).await?;
+        if error.is_fatal() {
+            let _ = self.session.close();
+            self.conn.close(0, b"fatal error");
+        }
+        Ok(())
+    }
+
+    /// Close the connection immediately without sending a CLOSE frame.
+    /// This is an abortive close — use `begin_close()` for graceful shutdown.
     pub fn close(&mut self) {
         let _ = self.session.close();
         self.conn.close(0, b"session closed");
@@ -112,7 +136,7 @@ impl AgentClient {
 
         // 3. Drive the AAFP v1 handshake (verifies identity, signature, version, expiry)
         let (mut session, conn, peer_info) =
-            handshake_driver::drive_client_handshake(conn, &agent.keypair, tls_binding)
+            handshake_driver::drive_client_handshake(conn, &agent.keypair, tls_binding, None)
                 .await?;
 
         // 4. Run authorization
@@ -200,12 +224,32 @@ impl AgentClient {
         Ok(payload)
     }
 
-    /// Disconnect from a peer (graceful close).
+    /// Disconnect from a peer (graceful close via CLOSE frame).
+    ///
+    /// Sends a CLOSE frame (RFC-0002 §4.5) and closes the QUIC connection.
     pub async fn disconnect(&self, peer_id: &AgentId) -> Result<(), SdkError> {
         let mut conns = self.connections.lock().await;
         if let Some(mut peer) = conns.remove(peer_id) {
-            peer.close();
+            peer.begin_close().await?;
         }
+        Ok(())
+    }
+
+    /// Send a protocol ERROR frame to a peer (RFC-0002 §4.6, RFC-0005 §4).
+    ///
+    /// If the error is fatal, the connection is closed after sending.
+    /// If non-fatal, the connection remains open.
+    pub async fn send_error(
+        &self,
+        peer_id: &AgentId,
+        error: &ProtocolError,
+    ) -> Result<(), SdkError> {
+        let mut conns = self.connections.lock().await;
+        let peer = conns.get_mut(peer_id).ok_or(SdkError::NotConnected)?;
+        if !peer.is_messaging_active() {
+            return Err(SdkError::NotAuthenticated);
+        }
+        peer.send_error(error).await?;
         Ok(())
     }
 
@@ -255,6 +299,7 @@ fn extract_tls_binding(conn: &QuicConnection) -> Result<[u8; 32], SdkError> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_variables)]
     use super::*;
     use crate::AgentBuilder;
 

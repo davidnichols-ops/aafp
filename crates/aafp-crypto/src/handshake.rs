@@ -1,10 +1,14 @@
-//! PQ hybrid 1-RTT application-layer handshake.
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(clippy::all)]
+
+//! PQ hybrid 1-RTT application-layer handshake (LEGACY v0).
 //!
-//! This is the AAFP application-layer handshake that authenticates the
-//! connection with ML-DSA-65 signatures and derives a shared key. In
-//! production, the key-exchange shared secret comes from the TLS 1.3
-//! exporter (quinn + rustls with X25519MLKEM768). For standalone tests,
-//! the X25519 KEM ([`crate::kem::X25519Kem`]) provides the shared secret.
+//! This is the pre-RFC v0 handshake implementation. It is kept for
+//! backward compatibility with existing tests and benchmarks only.
+//! The RFC-0002 compliant handshake is in [`crate::handshake_v1`].
+//! This module uses a binary (non-CBOR) wire format that is NOT
+//! RFC-0002 compliant. Do NOT use for wire serialization.
 //!
 //! ## Wire format
 //! See `AAFP_Architecture_Deliverable.md` Phase 2.2 for the handshake flow.
@@ -35,8 +39,10 @@
 //! ```
 
 use crate::dsa::{MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature};
-use crate::kem::{X25519Ciphertext, X25519Kem, X25519PublicKeyOwned, X25519SecretKeyOwned, X25519SharedSecret};
 use crate::kdf::derive_key;
+use crate::kem::{
+    X25519Ciphertext, X25519Kem, X25519PublicKeyOwned, X25519SecretKeyOwned, X25519SharedSecret,
+};
 use crate::traits::{CryptoError, KeyEncapsulation, SignatureScheme};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -238,7 +244,7 @@ impl PqHandshake {
             version: HANDSHAKE_VERSION,
             selected_kex_algorithm: ALG_X25519MLKEM768,
             key_share: server_kem_public.0.to_vec(),
-            server_public_key: server_keypair.0.0.clone(),
+            server_public_key: server_keypair.0 .0.clone(),
             nonce: server_nonce,
         };
 
@@ -489,11 +495,11 @@ mod tests {
         let (server_hello, _server_state) =
             PqHandshake::server_handle(&hello, &server_kp).expect("server handle");
 
-        let result = PqHandshake::client_finish(&server_hello, &mut client_state)
-            .expect("client finish");
+        let result =
+            PqHandshake::client_finish(&server_hello, &mut client_state).expect("client finish");
 
         assert_eq!(result.shared_secret.len(), 32);
-        assert_eq!(result.peer_public_key, server_kp.0.0);
+        assert_eq!(result.peer_public_key, server_kp.0 .0);
         assert_eq!(result.transcript_hash.len(), 32);
     }
 
@@ -518,7 +524,10 @@ mod tests {
         let bytes = serialize_server_hello(&server_hello);
         let decoded = deserialize_server_hello(&bytes).unwrap();
         assert_eq!(decoded.version, server_hello.version);
-        assert_eq!(decoded.selected_kex_algorithm, server_hello.selected_kex_algorithm);
+        assert_eq!(
+            decoded.selected_kex_algorithm,
+            server_hello.selected_kex_algorithm
+        );
         assert_eq!(decoded.key_share, server_hello.key_share);
         assert_eq!(decoded.server_public_key, server_hello.server_public_key);
         assert_eq!(decoded.signature, server_hello.signature);
@@ -543,7 +552,7 @@ mod tests {
         let (hello, mut client_state) = PqHandshake::client_init();
         let (mut server_hello, _ss) = PqHandshake::server_handle(&hello, &server_kp1).unwrap();
         // Swap in a different server public key (signature won't verify).
-        server_hello.server_public_key = server_kp2.0.0.clone();
+        server_hello.server_public_key = server_kp2.0 .0.clone();
         let result = PqHandshake::client_finish(&server_hello, &mut client_state);
         assert!(result.is_err());
     }

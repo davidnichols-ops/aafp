@@ -8,10 +8,7 @@
 //! - Domain separators for signatures
 
 use aafp_cbor::{int_map, str_map, Value};
-use aafp_crypto::{
-    MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, SignatureScheme,
-    ML_DSA_65_PUBKEY_LEN, ML_DSA_65_SIGNATURE_LEN,
-};
+use aafp_crypto::{MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature, SignatureScheme};
 use sha2::{Digest, Sha256};
 
 /// Domain separator for AgentRecord signatures (RFC-0003 §3.5).
@@ -106,6 +103,7 @@ impl std::fmt::Display for AgentId {
 ///     7: uint,          // expires_at
 ///     8: bstr,          // signature
 ///     9: uint,          // key_algorithm
+///     10: uint,         // record_version (A-3: monotonic replay protection)
 /// }
 /// ```
 #[derive(Clone, Debug)]
@@ -119,6 +117,10 @@ pub struct AgentRecord {
     pub expires_at: u64,
     pub signature: Vec<u8>,
     pub key_algorithm: u64,
+    /// Monotonic version number for replay protection (A-3, Rev 6).
+    /// Receivers MUST reject older versions. Equal version: accept only
+    /// if bytes are identical; otherwise reject.
+    pub record_version: u64,
 }
 
 impl AgentRecord {
@@ -143,6 +145,7 @@ impl AgentRecord {
             expires_at,
             signature: Vec::new(),
             key_algorithm,
+            record_version: 1, // A-3: starts at 1, monotonically increasing
         }
     }
 
@@ -155,12 +158,7 @@ impl AgentRecord {
             (3, Value::ByteString(self.public_key.clone())),
             (
                 4,
-                Value::Array(
-                    self.capabilities
-                        .iter()
-                        .map(|c| c.to_cbor())
-                        .collect(),
-                ),
+                Value::Array(self.capabilities.iter().map(|c| c.to_cbor()).collect()),
             ),
             (
                 5,
@@ -174,6 +172,7 @@ impl AgentRecord {
             (6, Value::Unsigned(self.created_at)),
             (7, Value::Unsigned(self.expires_at)),
             (9, Value::Unsigned(self.key_algorithm)),
+            (10, Value::Unsigned(self.record_version)),
         ])
     }
 
@@ -185,12 +184,7 @@ impl AgentRecord {
             (3, Value::ByteString(self.public_key.clone())),
             (
                 4,
-                Value::Array(
-                    self.capabilities
-                        .iter()
-                        .map(|c| c.to_cbor())
-                        .collect(),
-                ),
+                Value::Array(self.capabilities.iter().map(|c| c.to_cbor()).collect()),
             ),
             (
                 5,
@@ -205,6 +199,7 @@ impl AgentRecord {
             (7, Value::Unsigned(self.expires_at)),
             (8, Value::ByteString(self.signature.clone())),
             (9, Value::Unsigned(self.key_algorithm)),
+            (10, Value::Unsigned(self.record_version)),
         ])
     }
 
@@ -292,6 +287,18 @@ impl AgentRecord {
         let expires_at = expect_u64(get(7), "expires_at")?;
         let signature = expect_bstr(get(8), "signature")?;
         let key_algorithm = expect_u64(get(9), "key_algorithm")?;
+        // A-3 (Rev 6): record_version is required for replay protection.
+        // Default to 0 for backward compatibility with pre-Rev 6 records.
+        let record_version = match get(10) {
+            Some(Value::Unsigned(n)) => *n,
+            None => 0, // Pre-Rev 6 record without version
+            Some(other) => {
+                return Err(IdentityError::InvalidField {
+                    field: "record_version",
+                    message: format!("expected uint, got {:?}", other),
+                })
+            }
+        };
 
         Ok(Self {
             record_type,
@@ -303,6 +310,7 @@ impl AgentRecord {
             expires_at,
             signature,
             key_algorithm,
+            record_version,
         })
     }
 
@@ -679,11 +687,9 @@ mod tests {
 
         let mut record = AgentRecord::new(
             &pk.0,
-            vec![
-                CapabilityDescriptor::new("inference")
-                    .with_metadata("model", MetadataValue::Text("gpt-4".to_string()))
-                    .with_metadata("max_tokens", MetadataValue::Int(8192)),
-            ],
+            vec![CapabilityDescriptor::new("inference")
+                .with_metadata("model", MetadataValue::Text("gpt-4".to_string()))
+                .with_metadata("max_tokens", MetadataValue::Int(8192))],
             vec!["/ip4/127.0.0.1/tcp/4001".to_string()],
             now,
             now + 86400,
@@ -719,14 +725,8 @@ mod tests {
         let (pk, sk) = MlDsa65::keypair();
         let now = 1700000000u64;
 
-        let mut record = AgentRecord::new(
-            &pk.0,
-            vec![],
-            vec![],
-            now,
-            now + 86400,
-            KEY_ALG_ML_DSA_65,
-        );
+        let mut record =
+            AgentRecord::new(&pk.0, vec![], vec![], now, now + 86400, KEY_ALG_ML_DSA_65);
         record.sign(&sk);
 
         // Tamper with agent_id
@@ -761,14 +761,8 @@ mod tests {
         let (pk, sk) = MlDsa65::keypair();
         let now = 1700000000u64;
 
-        let mut record = AgentRecord::new(
-            &pk.0,
-            vec![],
-            vec![],
-            now,
-            now + 86400,
-            KEY_ALG_ML_DSA_65,
-        );
+        let mut record =
+            AgentRecord::new(&pk.0, vec![], vec![], now, now + 86400, KEY_ALG_ML_DSA_65);
         record.sign(&sk);
 
         // Tamper with signature
@@ -783,14 +777,8 @@ mod tests {
         let (pk, sk) = MlDsa65::keypair();
         let now = 1700000000u64;
 
-        let mut record = AgentRecord::new(
-            &pk.0,
-            vec![],
-            vec![],
-            now,
-            now + 86400,
-            KEY_ALG_ML_DSA_65,
-        );
+        let mut record =
+            AgentRecord::new(&pk.0, vec![], vec![], now, now + 86400, KEY_ALG_ML_DSA_65);
         record.sign(&sk);
 
         // Tamper with record_type

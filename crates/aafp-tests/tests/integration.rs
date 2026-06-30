@@ -3,20 +3,25 @@
 //! This test creates a small network of agents (reduced from 1000 to 10 for
 //! CI feasibility), verifies that:
 //! 1. Agents can be created with ML-DSA-65 identities.
+
+#![allow(unused)]
+#![allow(deprecated)]
 //! 2. AgentRecords are self-signed and verifiable.
 //! 3. The capability DHT correctly indexes and retrieves records.
 //! 4. Agents can connect over QUIC and exchange framed messages.
 //! 5. The PQ handshake completes successfully.
 
-use aafp_crypto::{MlDsa65, PqHandshake, SignatureScheme};
-use aafp_discovery::CapabilityDht;
-use aafp_identity::{agent_id_to_hex, AgentKeypair, AgentRecord};
+use aafp_crypto::handshake::PqHandshake;
+use aafp_crypto::{MlDsa65, SignatureScheme};
+use aafp_discovery::capability_dht::CapabilityDht;
+use aafp_identity::agent_record::AgentRecord;
+use aafp_identity::{agent_id_to_hex, AgentKeypair};
 use aafp_messaging::{decode_frame, encode_frame};
 use aafp_sdk::AgentBuilder;
 use aafp_transport_quic::QuicConfig;
 use std::sync::Arc;
-use tokio::time::{sleep, timeout};
 use std::time::Duration;
+use tokio::time::{sleep, timeout};
 
 /// Test that 10 agents can be created with unique identities.
 #[tokio::test]
@@ -73,7 +78,7 @@ async fn test_pq_handshake_multiple_pairs() {
         let (server_hello, _ss) = PqHandshake::server_handle(&hello, &server_kp).unwrap();
         let result = PqHandshake::client_finish(&server_hello, &mut state).unwrap();
         assert_eq!(result.shared_secret.len(), 32);
-        assert_eq!(result.peer_public_key, server_kp.0.0);
+        assert_eq!(result.peer_public_key, server_kp.0 .0);
     }
 }
 
@@ -200,7 +205,7 @@ async fn test_ucan_delegation() {
 /// Test regional discovery with 10 agents across regions.
 #[tokio::test]
 async fn test_regional_discovery() {
-    use aafp_discovery::{RegionalDiscovery, Region};
+    use aafp_discovery::{Region, RegionalDiscovery};
 
     let mut rd = RegionalDiscovery::new();
     let regions = [
@@ -237,8 +242,8 @@ async fn test_regional_discovery() {
 /// Test NAT status detection.
 #[tokio::test]
 async fn test_nat_detection() {
-    use aafp_nat::{AutoNat, NatStatus};
     use aafp_nat::auto_nat::DialBackResult;
+    use aafp_nat::{AutoNat, NatStatus};
     use std::time::Instant;
 
     let mut auto_nat = AutoNat::new();

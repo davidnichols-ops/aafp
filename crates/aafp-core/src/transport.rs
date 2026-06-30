@@ -13,9 +13,15 @@ pub type Multiaddr = String;
 #[derive(Debug)]
 pub enum TransportEvent {
     /// A new incoming connection attempt.
-    Incoming { local_addr: Multiaddr, remote_addr: Multiaddr },
+    Incoming {
+        local_addr: Multiaddr,
+        remote_addr: Multiaddr,
+    },
     /// A connection was established with a peer.
-    ConnectionEstablished { peer: AgentId, remote_addr: Multiaddr },
+    ConnectionEstablished {
+        peer: AgentId,
+        remote_addr: Multiaddr,
+    },
     /// A connection was closed.
     ConnectionClosed { peer: AgentId },
     /// A transport-level error.

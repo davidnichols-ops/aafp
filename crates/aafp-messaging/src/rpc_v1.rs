@@ -19,6 +19,10 @@
 use aafp_cbor::{int_map, Value};
 
 /// RPC request (RFC-0002 §4.3).
+///
+/// Per A-1 (Rev 6): `params` (key 3) MUST be exactly one canonical CBOR
+/// item. It MUST be present. It MUST NOT be null, bytes-containing-CBOR,
+/// JSON, or text. If a method has no parameters, use an empty map `{}`.
 #[derive(Clone, Debug)]
 pub struct RpcRequest {
     pub id: u64,
@@ -31,7 +35,7 @@ impl RpcRequest {
         Self {
             id,
             method: method.into(),
-            params: Value::Null,
+            params: Value::IntMap(vec![]), // empty map = no params
         }
     }
 
@@ -50,6 +54,9 @@ impl RpcRequest {
     }
 
     /// Decode from a CBOR Value.
+    ///
+    /// Per A-1 (Rev 6): params (key 3) MUST be present and MUST be a
+    /// canonical CBOR item. Null and missing are rejected.
     pub fn from_cbor(val: &Value) -> Result<Self, RpcError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
 
@@ -75,7 +82,17 @@ impl RpcRequest {
             None => return Err(RpcError::MissingField("method")),
         };
 
-        let params = get(3).cloned().unwrap_or(Value::Null);
+        // A-1 (Rev 6): params MUST be present, MUST NOT be null
+        let params = match get(3) {
+            Some(Value::Null) => {
+                return Err(RpcError::InvalidField {
+                    field: "params",
+                    message: "null is not valid; use an empty map for no params (A-1)".to_string(),
+                })
+            }
+            Some(v) => v.clone(),
+            None => return Err(RpcError::MissingField("params")),
+        };
 
         Ok(Self { id, method, params })
     }
@@ -121,10 +138,9 @@ impl RpcErrorObject {
             (1i64, Value::Unsigned(self.code as u64)),
             (2, Value::TextString(self.message.clone())),
         ];
+        // A-2 (Rev 6): Omit data when absent (NOT null)
         if let Some(data) = &self.data {
             entries.push((3, Value::ByteString(data.clone())));
-        } else {
-            entries.push((3, Value::Null));
         }
         int_map(entries)
     }
@@ -154,13 +170,21 @@ impl RpcErrorObject {
             None => return Err(RpcError::MissingField("error.message")),
         };
 
+        // A-2 (Rev 6): data must be omitted when absent, not null
         let data = match get(3) {
             Some(Value::ByteString(b)) => Some(b.clone()),
-            Some(Value::Null) | None => None,
+            None => None,
+            Some(Value::Null) => {
+                return Err(RpcError::InvalidField {
+                    field: "error.data",
+                    message: "null is not valid; field must be omitted when absent (A-2)"
+                        .to_string(),
+                })
+            }
             Some(other) => {
                 return Err(RpcError::InvalidField {
                     field: "error.data",
-                    message: format!("expected bstr or null, got {:?}", other),
+                    message: format!("expected bstr, got {:?}", other),
                 })
             }
         };
@@ -203,20 +227,26 @@ impl RpcResponse {
     }
 
     /// Encode to canonical CBOR with integer keys.
+    ///
+    /// Per A-2 (Rev 6): optional fields (result, error) MUST be omitted
+    /// when absent, NOT encoded as null. A success response omits key 3
+    /// (error); an error response omits key 2 (result).
     pub fn to_cbor(&self) -> Value {
-        let result_val = self.result.clone().unwrap_or(Value::Null);
-        let error_val = match &self.error {
-            Some(e) => e.to_cbor(),
-            None => Value::Null,
-        };
-        int_map(vec![
-            (1, Value::Unsigned(self.id)),
-            (2, result_val),
-            (3, error_val),
-        ])
+        let mut entries: Vec<(i64, Value)> = vec![(1, Value::Unsigned(self.id))];
+        // A-2: Omit result when absent (error response)
+        if let Some(result) = &self.result {
+            entries.push((2, result.clone()));
+        }
+        // A-2: Omit error when absent (success response)
+        if let Some(error) = &self.error {
+            entries.push((3, error.to_cbor()));
+        }
+        int_map(entries)
     }
 
     /// Decode from a CBOR Value.
+    ///
+    /// Per A-2 (Rev 6): result and error are omitted when absent, not null.
     pub fn from_cbor(val: &Value) -> Result<Self, RpcError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
 
@@ -231,13 +261,28 @@ impl RpcResponse {
             None => return Err(RpcError::MissingField("id")),
         };
 
+        // A-2: null is not valid; field must be omitted when absent
         let result = match get(2) {
-            Some(Value::Null) | None => None,
+            None => None,
+            Some(Value::Null) => {
+                return Err(RpcError::InvalidField {
+                    field: "result",
+                    message: "null is not valid; field must be omitted when absent (A-2)"
+                        .to_string(),
+                })
+            }
             Some(other) => Some(other.clone()),
         };
 
         let error = match get(3) {
-            Some(Value::Null) | None => None,
+            None => None,
+            Some(Value::Null) => {
+                return Err(RpcError::InvalidField {
+                    field: "error",
+                    message: "null is not valid; field must be omitted when absent (A-2)"
+                        .to_string(),
+                })
+            }
             Some(e_val) => Some(RpcErrorObject::from_cbor(e_val)?),
         };
 
@@ -346,10 +391,9 @@ impl ErrorMessage {
             (1i64, Value::Unsigned(self.code as u64)),
             (2, Value::TextString(self.message.clone())),
         ];
+        // A-2 (Rev 6): Omit data when absent (NOT null)
         if let Some(data) = &self.data {
             entries.push((3, Value::ByteString(data.clone())));
-        } else {
-            entries.push((3, Value::Null));
         }
         entries.push((4, Value::Bool(self.fatal)));
         int_map(entries)
@@ -380,13 +424,21 @@ impl ErrorMessage {
             None => return Err(RpcError::MissingField("message")),
         };
 
+        // A-2 (Rev 6): data must be omitted when absent, not null
         let data = match get(3) {
             Some(Value::ByteString(b)) => Some(b.clone()),
-            Some(Value::Null) | None => None,
+            None => None,
+            Some(Value::Null) => {
+                return Err(RpcError::InvalidField {
+                    field: "data",
+                    message: "null is not valid; field must be omitted when absent (A-2)"
+                        .to_string(),
+                })
+            }
             Some(other) => {
                 return Err(RpcError::InvalidField {
                     field: "data",
-                    message: format!("expected bstr or null, got {:?}", other),
+                    message: format!("expected bstr, got {:?}", other),
                 })
             }
         };
@@ -452,11 +504,12 @@ mod tests {
     }
 
     #[test]
-    fn test_rpc_request_null_params() {
+    fn test_rpc_request_empty_params() {
+        // A-1 (Rev 6): params defaults to empty map, not null
         let req = RpcRequest::new(1, "aafp.ping");
         let encoded = req.encode().unwrap();
         let decoded = RpcRequest::decode(&encoded).unwrap();
-        assert_eq!(decoded.params, Value::Null);
+        assert_eq!(decoded.params, Value::IntMap(vec![]));
     }
 
     #[test]
@@ -491,8 +544,7 @@ mod tests {
 
     #[test]
     fn test_rpc_error_object_with_data() {
-        let err = RpcErrorObject::new(5001, "malformed frame")
-            .with_data(vec![0xDE, 0xAD]);
+        let err = RpcErrorObject::new(5001, "malformed frame").with_data(vec![0xDE, 0xAD]);
         let cbor = err.to_cbor();
         let encoded = aafp_cbor::encode(&cbor).unwrap();
         let (decoded, _) = aafp_cbor::decode(&encoded).unwrap();
@@ -513,8 +565,7 @@ mod tests {
 
     #[test]
     fn test_error_message_roundtrip() {
-        let msg = ErrorMessage::new(2001, "invalid signature", true)
-            .with_data(vec![0x01, 0x02]);
+        let msg = ErrorMessage::new(2001, "invalid signature", true).with_data(vec![0x01, 0x02]);
         let encoded = msg.encode().unwrap();
         let decoded = ErrorMessage::decode(&encoded).unwrap();
 
@@ -547,10 +598,25 @@ mod tests {
 
     #[test]
     fn test_rpc_response_uses_integer_keys() {
-        let resp = RpcResponse::success(1, Value::Null);
+        // A-2 (Rev 6): success response has keys 1 (id) and 2 (result),
+        // but NOT key 3 (error) since error is omitted when absent.
+        let resp = RpcResponse::success(1, Value::IntMap(vec![]));
         let cbor = resp.to_cbor();
         assert!(aafp_cbor::int_map_get(&cbor, 1).is_some());
         assert!(aafp_cbor::int_map_get(&cbor, 2).is_some());
-        assert!(aafp_cbor::int_map_get(&cbor, 3).is_some());
+        assert!(
+            aafp_cbor::int_map_get(&cbor, 3).is_none(),
+            "error key must be omitted in success response (A-2)"
+        );
+
+        // Error response: has keys 1 (id) and 3 (error), but NOT key 2 (result)
+        let err_resp = RpcResponse::error(2, RpcErrorObject::new(4005, "not found"));
+        let err_cbor = err_resp.to_cbor();
+        assert!(aafp_cbor::int_map_get(&err_cbor, 1).is_some());
+        assert!(
+            aafp_cbor::int_map_get(&err_cbor, 2).is_none(),
+            "result key must be omitted in error response (A-2)"
+        );
+        assert!(aafp_cbor::int_map_get(&err_cbor, 3).is_some());
     }
 }

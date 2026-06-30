@@ -1,7 +1,7 @@
 //! Basic AAFP agent example: create two agents, connect them, and exchange a message.
 
-use aafp_sdk::{AgentBuilder, AgentClient};
 use aafp_messaging::encode_frame;
+use aafp_sdk::{AgentBuilder, AgentClient};
 use std::sync::Arc;
 
 #[tokio::main]

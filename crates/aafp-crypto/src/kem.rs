@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 //! Key Encapsulation Mechanisms (KEMs).
 //!
 //! ## Production path

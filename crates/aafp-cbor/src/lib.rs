@@ -1,3 +1,5 @@
+#![allow(clippy::should_implement_trait)]
+
 //! Canonical CBOR encoding for AAFP (RFC-0002 §8, RFC 8949 §4.2.3).
 //!
 //! This module provides a focused canonical CBOR encoder/decoder that
@@ -103,6 +105,33 @@ pub fn decode(data: &[u8]) -> Result<(Value, usize), CborError> {
     Ok((value, pos))
 }
 
+/// Check that a byte buffer is valid canonical CBOR (RFC 8949 §4.2.3).
+///
+/// This is a convenience function that decodes the CBOR and verifies
+/// that it conforms to length-first deterministic encoding requirements.
+/// It rejects:
+/// - Non-shortest integer encodings
+/// - Indefinite-length arrays and maps
+/// - Duplicate map keys
+/// - Trailing bytes after the top-level value
+///
+/// Returns `Ok(())` if the encoding is canonical, or an error describing
+/// the violation.
+pub fn check_canonical(data: &[u8]) -> Result<(), CborError> {
+    let (_value, consumed) = decode(data)?;
+    if consumed != data.len() {
+        return Err(CborError::Invalid {
+            offset: consumed,
+            message: format!(
+                "trailing bytes after CBOR value: consumed {} of {} bytes",
+                consumed,
+                data.len()
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn encode_header(buf: &mut Vec<u8>, major: u8, value: u64) {
     if value <= 23 {
         buf.push((major << 5) | value as u8);
@@ -204,11 +233,7 @@ fn sort_int_keys(entries: &[(i64, Value)]) -> Vec<(i64, &Value)> {
         .map(|(k, v)| (int_key_encoding(*k), *k, v))
         .collect();
     // Sort by (length, bytewise) — length-first ordering
-    indexed.sort_by(|a, b| {
-        a.0.len()
-            .cmp(&b.0.len())
-            .then_with(|| a.0.cmp(&b.0))
-    });
+    indexed.sort_by(|a, b| a.0.len().cmp(&b.0.len()).then_with(|| a.0.cmp(&b.0)));
     indexed.into_iter().map(|(_, k, v)| (k, v)).collect()
 }
 
@@ -488,7 +513,7 @@ pub fn str_map(entries: Vec<(String, Value)>) -> Value {
 }
 
 /// Helper: look up a key in an IntMap.
-pub fn int_map_get<'a>(map: &'a Value, key: i64) -> Option<&'a Value> {
+pub fn int_map_get(map: &Value, key: i64) -> Option<&Value> {
     match map {
         Value::IntMap(entries) => entries.iter().find(|(k, _)| *k == key).map(|(_, v)| v),
         _ => None,
@@ -578,16 +603,10 @@ mod tests {
     fn test_encode_int_map_mixed_lengths() {
         // Keys 1 (1-byte) and 24 (2-byte: 0x18 0x18)
         // 1-byte keys sort before 2-byte keys
-        let val = int_map(vec![
-            (24, Value::Unsigned(2)),
-            (1, Value::Unsigned(1)),
-        ]);
+        let val = int_map(vec![(24, Value::Unsigned(2)), (1, Value::Unsigned(1))]);
         let encoded = encode(&val).unwrap();
         // Key 1 (0x01) comes before key 24 (0x18, 0x18)
-        assert_eq!(
-            encoded,
-            vec![0xA2, 0x01, 0x01, 0x18, 0x18, 0x02]
-        );
+        assert_eq!(encoded, vec![0xA2, 0x01, 0x01, 0x18, 0x18, 0x02]);
     }
 
     #[test]
@@ -645,7 +664,10 @@ mod tests {
         let outer = int_map(vec![
             (1, Value::from_str("aafp-record-v1")),
             (2, inner.clone()),
-            (3, Value::Array(vec![Value::Unsigned(1), Value::Unsigned(2)])),
+            (
+                3,
+                Value::Array(vec![Value::Unsigned(1), Value::Unsigned(2)]),
+            ),
         ]);
         let encoded = encode(&outer).unwrap();
         let (decoded, _) = decode(&encoded).unwrap();
@@ -658,22 +680,24 @@ mod tests {
             (1, Value::from_str("hello")),
             (2, Value::Unsigned(42)),
         ]);
-        assert_eq!(
-            int_map_get(&map, 1),
-            Some(&Value::from_str("hello"))
-        );
-        assert_eq!(
-            int_map_get(&map, 2),
-            Some(&Value::Unsigned(42))
-        );
+        assert_eq!(int_map_get(&map, 1), Some(&Value::from_str("hello")));
+        assert_eq!(int_map_get(&map, 2), Some(&Value::Unsigned(42)));
         assert_eq!(int_map_get(&map, 3), None);
     }
 
     #[test]
     fn test_canonical_encoding_is_deterministic() {
         // Same map with different insertion order should produce same bytes
-        let map1 = int_map(vec![(3, Value::Unsigned(3)), (1, Value::Unsigned(1)), (2, Value::Unsigned(2))]);
-        let map2 = int_map(vec![(1, Value::Unsigned(1)), (2, Value::Unsigned(2)), (3, Value::Unsigned(3))]);
+        let map1 = int_map(vec![
+            (3, Value::Unsigned(3)),
+            (1, Value::Unsigned(1)),
+            (2, Value::Unsigned(2)),
+        ]);
+        let map2 = int_map(vec![
+            (1, Value::Unsigned(1)),
+            (2, Value::Unsigned(2)),
+            (3, Value::Unsigned(3)),
+        ]);
         let enc1 = encode(&map1).unwrap();
         let enc2 = encode(&map2).unwrap();
         assert_eq!(enc1, enc2, "canonical encoding must be deterministic");

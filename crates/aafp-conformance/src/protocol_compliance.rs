@@ -29,9 +29,8 @@
 //! specifics, etc.).
 
 use aafp_core::{
-    AuthorizationContext, AuthorizationProvider, NegotiatedFeatures, Session,
-    SessionState, TestingAuthProvider, TestingCapabilityProvider, TestingDenyProvider,
-    TransportHandle,
+    AuthorizationContext, AuthorizationProvider, NegotiatedFeatures, Session, SessionState,
+    TestingAuthProvider, TestingCapabilityProvider, TestingDenyProvider, TransportHandle,
 };
 use aafp_crypto::{
     derive_session_id, generate_nonce, verify_client_finished, verify_client_hello,
@@ -249,7 +248,10 @@ mod session_state {
         assert_eq!(s.state(), SessionState::Connecting);
 
         s.on_transport_established(
-            Box::new(TestTransport { addr: "quic://x".into(), closed: false }),
+            Box::new(TestTransport {
+                addr: "quic://x".into(),
+                closed: false,
+            }),
             NegotiatedFeatures::default(),
         )
         .unwrap();
@@ -277,7 +279,9 @@ mod session_state {
         // TransportEstablished → Connecting is illegal
         assert!(!SessionState::TransportEstablished.can_transition_to(SessionState::Connecting));
         // IdentityVerified → TransportEstablished is illegal
-        assert!(!SessionState::IdentityVerified.can_transition_to(SessionState::TransportEstablished));
+        assert!(
+            !SessionState::IdentityVerified.can_transition_to(SessionState::TransportEstablished)
+        );
     }
 
     /// Any non-terminal state can abort to Closed.
@@ -311,7 +315,10 @@ mod authorization {
     #[tokio::test]
     async fn allow_capability() {
         let provider = TestingCapabilityProvider::new(vec!["aafp.discovery".into()]);
-        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xBB; 1952])
+            .await
+            .unwrap();
         assert!(ctx.is_authorized("aafp.discovery"));
     }
 
@@ -319,7 +326,10 @@ mod authorization {
     #[tokio::test]
     async fn deny_capability() {
         let provider = TestingCapabilityProvider::new(vec!["aafp.discovery".into()]);
-        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xBB; 1952])
+            .await
+            .unwrap();
         assert!(!ctx.is_authorized("aafp.admin"));
     }
 
@@ -327,7 +337,10 @@ mod authorization {
     #[tokio::test]
     async fn allow_all() {
         let provider = TestingAuthProvider;
-        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xBB; 1952])
+            .await
+            .unwrap();
         assert!(ctx.is_authorized("anything"));
     }
 
@@ -335,7 +348,10 @@ mod authorization {
     #[tokio::test]
     async fn deny_all() {
         let provider = TestingDenyProvider;
-        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xBB; 1952])
+            .await
+            .unwrap();
         assert!(!ctx.is_authorized("anything"));
     }
 
@@ -359,15 +375,15 @@ mod authorization {
             }
         }
 
-        s.on_transport_established(
-            Box::new(TestTransport),
-            NegotiatedFeatures::default(),
-        )
-        .unwrap();
+        s.on_transport_established(Box::new(TestTransport), NegotiatedFeatures::default())
+            .unwrap();
         s.on_identity_verified([0xAA; 32], [0xBB; 32]).unwrap();
 
         // Authorize
-        let ctx = provider.authorize(&[0xAA; 32], &[0xCC; 1952]).await.unwrap();
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xCC; 1952])
+            .await
+            .unwrap();
         s.on_authorization_verified(ctx).unwrap();
         assert_eq!(s.state(), SessionState::AuthorizationVerified);
 

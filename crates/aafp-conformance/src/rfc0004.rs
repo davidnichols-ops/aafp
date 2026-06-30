@@ -8,9 +8,9 @@
 
 use aafp_crypto::{MlDsa65, SignatureScheme};
 use aafp_discovery::discovery_v1::{
-    AnnounceParams, AnnounceResult, CapabilityDht, LookupParams, LookupResult,
-    DEFAULT_LIMIT_AUTH, DEFAULT_LIMIT_UNAUTH, MAX_RECORDS, METHOD_ANNOUNCE, METHOD_LOOKUP,
-    RATE_LIMIT_ANNOUNCE, RATE_LIMIT_LOOKUP,
+    AnnounceParams, AnnounceResult, CapabilityDht, LookupParams, LookupResult, DEFAULT_LIMIT_AUTH,
+    DEFAULT_LIMIT_UNAUTH, MAX_RECORDS, METHOD_ANNOUNCE, METHOD_LOOKUP, RATE_LIMIT_ANNOUNCE,
+    RATE_LIMIT_LOOKUP,
 };
 use aafp_identity::identity_v1::{AgentRecord, CapabilityDescriptor};
 
@@ -50,7 +50,10 @@ fn test_r4_003_announce_params_key() {
     let record = make_test_record(vec!["inference"]);
     let params = AnnounceParams::new(record);
     let cbor = params.to_cbor();
-    assert!(aafp_cbor::int_map_get(&cbor, 1).is_some(), "key 1 must be record");
+    assert!(
+        aafp_cbor::int_map_get(&cbor, 1).is_some(),
+        "key 1 must be record"
+    );
 }
 
 /// R4-004: AnnounceResult MUST use integer key 1 for peers array.
@@ -58,7 +61,10 @@ fn test_r4_003_announce_params_key() {
 fn test_r4_004_announce_result_key() {
     let result = AnnounceResult::new(vec![]);
     let cbor = result.to_cbor();
-    assert!(aafp_cbor::int_map_get(&cbor, 1).is_some(), "key 1 must be peers");
+    assert!(
+        aafp_cbor::int_map_get(&cbor, 1).is_some(),
+        "key 1 must be peers"
+    );
 }
 
 /// R4-005: LookupParams MUST use integer key 1 for capability, 2 for limit.
@@ -66,8 +72,14 @@ fn test_r4_004_announce_result_key() {
 fn test_r4_005_lookup_params_keys() {
     let params = LookupParams::new("inference").with_limit(10);
     let cbor = params.to_cbor();
-    assert!(aafp_cbor::int_map_get(&cbor, 1).is_some(), "key 1 must be capability");
-    assert!(aafp_cbor::int_map_get(&cbor, 2).is_some(), "key 2 must be limit");
+    assert!(
+        aafp_cbor::int_map_get(&cbor, 1).is_some(),
+        "key 1 must be capability"
+    );
+    assert!(
+        aafp_cbor::int_map_get(&cbor, 2).is_some(),
+        "key 2 must be limit"
+    );
 }
 
 /// R4-006: Default unauthenticated lookup limit MUST be 5.
@@ -132,11 +144,25 @@ fn test_r4_022_dht_replaces_newer() {
     let (pk, sk) = MlDsa65::keypair();
     let now = 1700000000u64;
 
-    let mut r1 = AgentRecord::new(&pk.0, vec![CapabilityDescriptor::new("inference")], vec![], now, now + 86400, 1);
+    let mut r1 = AgentRecord::new(
+        &pk.0,
+        vec![CapabilityDescriptor::new("inference")],
+        vec![],
+        now,
+        now + 86400,
+        1,
+    );
     r1.sign(&sk);
     assert!(dht.put(r1));
 
-    let mut r2 = AgentRecord::new(&pk.0, vec![CapabilityDescriptor::new("inference")], vec![], now + 100, now + 86400, 1);
+    let mut r2 = AgentRecord::new(
+        &pk.0,
+        vec![CapabilityDescriptor::new("inference")],
+        vec![],
+        now + 100,
+        now + 86400,
+        1,
+    );
     r2.sign(&sk);
     assert!(dht.put(r2));
 
@@ -166,7 +192,14 @@ fn test_r4_024_dht_evicts_expired() {
     let (pk, sk) = MlDsa65::keypair();
     let now = 1700000000u64;
 
-    let mut r1 = AgentRecord::new(&pk.0, vec![CapabilityDescriptor::new("inference")], vec![], now, now + 100, 1);
+    let mut r1 = AgentRecord::new(
+        &pk.0,
+        vec![CapabilityDescriptor::new("inference")],
+        vec![],
+        now,
+        now + 100,
+        1,
+    );
     r1.sign(&sk);
     dht.put(r1);
 

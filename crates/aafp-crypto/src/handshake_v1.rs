@@ -18,10 +18,10 @@
 //! Each signature is over `"aafp-v1-handshake" || h` where `h` is the
 //! transcript hash AFTER folding in the current message.
 
-use aafp_cbor::{int_map, Value};
-use crate::dsa::{MlDsa65, MlDsa65PublicKey, MlDsa65SecretKey, MlDsa65Signature};
+use crate::dsa::{MlDsa65, MlDsa65PublicKey, MlDsa65Signature};
 use crate::kdf::hkdf_sha256;
 use crate::traits::SignatureScheme;
+use aafp_cbor::{int_map, Value};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 
@@ -103,7 +103,7 @@ impl TranscriptHash {
 ///     6: [ *ExtensionEntry ],        // extensions
 ///     7: bstr,       // signature
 ///     8: uint,       // expires_at
-///     9: bstr / null, // receiver_mac (optional DoS MAC)
+///     9: bstr,       // receiver_mac (optional DoS MAC; MUST be omitted when absent, NOT null — A-2)
 ///     10: uint,      // key_algorithm
 /// }
 /// ```
@@ -140,6 +140,9 @@ impl ClientHello {
     }
 
     /// Encode to canonical CBOR with all fields (including signature and receiver_mac).
+    ///
+    /// Per A-2 (Rev 6): optional fields MUST be omitted when absent, NOT
+    /// encoded as `null`. This ensures deterministic signature bytes.
     pub fn to_cbor(&self) -> Value {
         let mut entries: Vec<(i64, Value)> = vec![
             (1, Value::Unsigned(self.protocol_version)),
@@ -152,10 +155,9 @@ impl ClientHello {
             (8, Value::Unsigned(self.expires_at)),
             (10, Value::Unsigned(self.key_algorithm)),
         ];
+        // A-2: Omit receiver_mac when absent (NOT null)
         if let Some(mac) = &self.receiver_mac {
             entries.push((9, Value::ByteString(mac.clone())));
-        } else {
-            entries.push((9, Value::Null));
         }
         int_map(entries)
     }
@@ -174,12 +176,22 @@ impl ClientHello {
             signature: expect_bstr(get(7), "signature")?,
             expires_at: expect_u64(get(8), "expires_at")?,
             receiver_mac: match get(9) {
-                Some(Value::Null) | None => None,
+                None => None,
                 Some(Value::ByteString(b)) => Some(b.clone()),
+                // A-2 (Rev 6): null is no longer a valid encoding for
+                // optional fields. The field MUST be omitted when absent.
+                Some(Value::Null) => {
+                    return Err(HandshakeError::InvalidField {
+                        field: "receiver_mac",
+                        message:
+                            "null encoding is not valid; field must be omitted when absent (A-2)"
+                                .to_string(),
+                    })
+                }
                 Some(other) => {
                     return Err(HandshakeError::InvalidField {
                         field: "receiver_mac",
-                        message: format!("expected bstr or null, got {:?}", other),
+                        message: format!("expected bstr, got {:?}", other),
                     })
                 }
             },
@@ -294,32 +306,40 @@ fn signature_input(h: &[u8; 32]) -> Vec<u8> {
     input
 }
 
-/// Derive Session ID (RFC-0002 §5.7).
+/// Derive Session ID (RFC-0002 §5.7, Rev 6 A-4).
 ///
 /// ```text
-/// prk = HKDF-Extract(salt = client_nonce || server_nonce, IKM = h_after_clienthello)
+/// ikm = h_after_clienthello || server_agent_id
+/// prk = HKDF-Extract(salt = client_nonce || server_nonce, IKM = ikm)
 /// session_id = HKDF-Expand(prk, info = "aafp-session-id-v1", L = 32)
 /// ```
+///
+/// Per A-4 (Rev 6): the session ID is bound to the server's AgentId to
+/// prevent session fixation. The server_agent_id is appended to the
+/// transcript hash as IKM input.
 pub fn derive_session_id(
     h_after_clienthello: &[u8; 32],
     client_nonce: &[u8; NONCE_SIZE],
     server_nonce: &[u8; NONCE_SIZE],
+    server_agent_id: &[u8],
 ) -> [u8; SESSION_ID_SIZE] {
     let mut salt = Vec::with_capacity(64);
     salt.extend_from_slice(client_nonce);
     salt.extend_from_slice(server_nonce);
 
-    let prk = hkdf_sha256(&salt, h_after_clienthello, SESSION_ID_INFO, SESSION_ID_SIZE);
+    // A-4: Bind session ID to server identity
+    let mut ikm = Vec::with_capacity(32 + server_agent_id.len());
+    ikm.extend_from_slice(h_after_clienthello);
+    ikm.extend_from_slice(server_agent_id);
+
+    let prk = hkdf_sha256(&salt, &ikm, SESSION_ID_INFO, SESSION_ID_SIZE);
     let mut session_id = [0u8; SESSION_ID_SIZE];
     session_id.copy_from_slice(&prk);
     session_id
 }
 
 /// Compute DoS receiver MAC (RFC-0002 §5.8).
-pub fn compute_receiver_mac(
-    receiver_agent_id: &[u8],
-    ch_cbor_bytes: &[u8],
-) -> Vec<u8> {
+pub fn compute_receiver_mac(receiver_agent_id: &[u8], ch_cbor_bytes: &[u8]) -> Vec<u8> {
     let mac_key = hkdf_sha256(&[], receiver_agent_id, DOS_MAC_KEY_INFO, 32);
     let mut hmac = HmacSha256::new_from_slice(&mac_key).expect("HMAC key length");
     hmac.update(ch_cbor_bytes);
@@ -356,7 +376,10 @@ pub fn generate_nonce() -> [u8; NONCE_SIZE] {
 #[derive(Debug, thiserror::Error)]
 pub enum HandshakeError {
     #[error("invalid field '{field}': {message}")]
-    InvalidField { field: &'static str, message: String },
+    InvalidField {
+        field: &'static str,
+        message: String,
+    },
     #[error("missing field: {0}")]
     MissingField(&'static str),
     #[error("CBOR error: {0}")]
@@ -483,15 +506,15 @@ pub fn verify_client_hello(
     let verified_agent_id = verify_agent_id_binding(&ch.agent_id, &ch.public_key)?;
 
     // 4. Public key validity
-    let pk = MlDsa65PublicKey::from_bytes(&ch.public_key)
-        .map_err(|_| HandshakeError::InvalidField {
+    let pk =
+        MlDsa65PublicKey::from_bytes(&ch.public_key).map_err(|_| HandshakeError::InvalidField {
             field: "public_key",
             message: "invalid ML-DSA-65 public key".into(),
         })?;
 
     // 5. Signature verification
-    let sig = MlDsa65Signature::from_bytes(&ch.signature)
-        .map_err(|_| HandshakeError::InvalidField {
+    let sig =
+        MlDsa65Signature::from_bytes(&ch.signature).map_err(|_| HandshakeError::InvalidField {
             field: "signature",
             message: format!("expected {} bytes", crate::dsa::ML_DSA_65_SIGNATURE_LEN),
         })?;
@@ -539,15 +562,15 @@ pub fn verify_server_hello(
     let verified_agent_id = verify_agent_id_binding(&sh.agent_id, &sh.public_key)?;
 
     // 4. Public key validity
-    let pk = MlDsa65PublicKey::from_bytes(&sh.public_key)
-        .map_err(|_| HandshakeError::InvalidField {
+    let pk =
+        MlDsa65PublicKey::from_bytes(&sh.public_key).map_err(|_| HandshakeError::InvalidField {
             field: "public_key",
             message: "invalid ML-DSA-65 public key".into(),
         })?;
 
     // 5. Signature verification
-    let sig = MlDsa65Signature::from_bytes(&sh.signature)
-        .map_err(|_| HandshakeError::InvalidField {
+    let sig =
+        MlDsa65Signature::from_bytes(&sh.signature).map_err(|_| HandshakeError::InvalidField {
             field: "signature",
             message: format!("expected {} bytes", crate::dsa::ML_DSA_65_SIGNATURE_LEN),
         })?;
@@ -583,13 +606,14 @@ pub fn verify_client_finished(
     }
 
     // 2. Signature verification
-    let pk = MlDsa65PublicKey::from_bytes(client_public_key)
-        .map_err(|_| HandshakeError::InvalidField {
+    let pk = MlDsa65PublicKey::from_bytes(client_public_key).map_err(|_| {
+        HandshakeError::InvalidField {
             field: "client_public_key",
             message: "invalid ML-DSA-65 public key".into(),
-        })?;
-    let sig = MlDsa65Signature::from_bytes(&cf.signature)
-        .map_err(|_| HandshakeError::InvalidField {
+        }
+    })?;
+    let sig =
+        MlDsa65Signature::from_bytes(&cf.signature).map_err(|_| HandshakeError::InvalidField {
             field: "signature",
             message: format!("expected {} bytes", crate::dsa::ML_DSA_65_SIGNATURE_LEN),
         })?;
@@ -604,6 +628,7 @@ pub fn verify_client_finished(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsa::MlDsa65SecretKey;
     use crate::traits::SignatureScheme;
     use sha2::Digest;
 
@@ -639,15 +664,15 @@ mod tests {
         let client_nonce = [0x22u8; 32];
         let server_nonce = [0x33u8; 32];
 
-        let sid = derive_session_id(&h, &client_nonce, &server_nonce);
+        let sid = derive_session_id(&h, &client_nonce, &server_nonce, &[0xAAu8; 32]);
         assert_eq!(sid.len(), SESSION_ID_SIZE);
 
         // Same inputs → same output
-        let sid2 = derive_session_id(&h, &client_nonce, &server_nonce);
+        let sid2 = derive_session_id(&h, &client_nonce, &server_nonce, &[0xAAu8; 32]);
         assert_eq!(sid, sid2);
 
         // Different nonces → different output
-        let sid3 = derive_session_id(&h, &client_nonce, &[0x44u8; 32]);
+        let sid3 = derive_session_id(&h, &client_nonce, &[0x44u8; 32], &[0xAAu8; 32]);
         assert_ne!(sid, sid3);
     }
 
@@ -855,7 +880,8 @@ mod tests {
 
         // === Server side: construct and sign ServerHello ===
         let server_nonce = generate_nonce();
-        let session_id = derive_session_id(&h_after_ch, &client_nonce, &server_nonce);
+        let session_id =
+            derive_session_id(&h_after_ch, &client_nonce, &server_nonce, &server_agent_id);
 
         let mut sh = ServerHello {
             protocol_version: PROTOCOL_VERSION,
@@ -891,10 +917,15 @@ mod tests {
         // Verify signature
         let sh_sig_input_client = signature_input(&h_after_sh_client);
         let sh_sig_obj = MlDsa65Signature(sh.signature.clone());
-        assert!(MlDsa65::verify(&server_pk, &sh_sig_input_client, &sh_sig_obj));
+        assert!(MlDsa65::verify(
+            &server_pk,
+            &sh_sig_input_client,
+            &sh_sig_obj
+        ));
 
         // Verify session ID
-        let expected_sid = derive_session_id(&h_after_ch, &client_nonce, &server_nonce);
+        let expected_sid =
+            derive_session_id(&h_after_ch, &client_nonce, &server_nonce, &server_agent_id);
         assert_eq!(sh.session_id, expected_sid);
 
         // === Client side: construct and sign ClientFinished ===
@@ -922,7 +953,11 @@ mod tests {
         // Verify signature
         let cf_sig_input_server = signature_input(&h_after_cf_server);
         let cf_sig_obj = MlDsa65Signature(cf.signature.clone());
-        assert!(MlDsa65::verify(&client_pk, &cf_sig_input_server, &cf_sig_obj));
+        assert!(MlDsa65::verify(
+            &client_pk,
+            &cf_sig_input_server,
+            &cf_sig_obj
+        ));
 
         // Both sides now have the same final transcript hash
         assert_eq!(th_client.current(), th_server.current());
@@ -1016,7 +1051,10 @@ mod tests {
         // Tamper with signature
         ch.signature[0] ^= 0xff;
         let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
-        assert!(matches!(err, HandshakeError::SignatureVerificationFailed), "got {err:?}");
+        assert!(
+            matches!(err, HandshakeError::SignatureVerificationFailed),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -1024,7 +1062,10 @@ mod tests {
         let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
         ch.protocol_version = 99;
         let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
-        assert!(matches!(err, HandshakeError::VersionMismatch { .. }), "got {err:?}");
+        assert!(
+            matches!(err, HandshakeError::VersionMismatch { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -1032,7 +1073,10 @@ mod tests {
         let (ch, _sk, h_after_ch) = build_valid_client_hello();
         // expires_at=1700000000, so now=1700000001 should reject
         let err = verify_client_hello(&ch, &h_after_ch, 1700000001).unwrap_err();
-        assert!(matches!(err, HandshakeError::IdentityExpired { .. }), "got {err:?}");
+        assert!(
+            matches!(err, HandshakeError::IdentityExpired { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -1040,11 +1084,19 @@ mod tests {
         let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
         ch.key_algorithm = 99;
         let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
-        assert!(matches!(err, HandshakeError::UnsupportedAlgorithm(_)), "got {err:?}");
+        assert!(
+            matches!(err, HandshakeError::UnsupportedAlgorithm(_)),
+            "got {err:?}"
+        );
     }
 
     /// Build a valid ServerHello with correct agent_id ↔ public_key binding.
-    fn build_valid_server_hello() -> (ServerHello, MlDsa65SecretKey, [u8; 32], [u8; SESSION_ID_SIZE]) {
+    fn build_valid_server_hello() -> (
+        ServerHello,
+        MlDsa65SecretKey,
+        [u8; 32],
+        [u8; SESSION_ID_SIZE],
+    ) {
         let (pk, sk) = MlDsa65::keypair();
         let agent_id = Sha256::digest(&pk.0).to_vec();
         let tls_binding = [0x42u8; 32];
@@ -1069,7 +1121,7 @@ mod tests {
         let h_after_ch = th.fold(&ch_cbor_bytes);
 
         let server_nonce = generate_nonce();
-        let session_id = derive_session_id(&h_after_ch, &client_nonce, &server_nonce);
+        let session_id = derive_session_id(&h_after_ch, &client_nonce, &server_nonce, &agent_id);
 
         let mut sh = ServerHello {
             protocol_version: PROTOCOL_VERSION,
@@ -1116,7 +1168,10 @@ mod tests {
         let (mut sh, _sk, h_after_sh, _) = build_valid_server_hello();
         sh.signature[0] ^= 0xff;
         let err = verify_server_hello(&sh, &h_after_sh, 0).unwrap_err();
-        assert!(matches!(err, HandshakeError::SignatureVerificationFailed), "got {err:?}");
+        assert!(
+            matches!(err, HandshakeError::SignatureVerificationFailed),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -1144,7 +1199,10 @@ mod tests {
         };
 
         let err = verify_client_finished(&cf, &h, &pk.0, &[0xEEu8; 32]).unwrap_err();
-        assert!(matches!(err, HandshakeError::SessionIdMismatch), "got {err:?}");
+        assert!(
+            matches!(err, HandshakeError::SessionIdMismatch),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -1160,7 +1218,10 @@ mod tests {
         cf.signature[0] ^= 0xff;
 
         let err = verify_client_finished(&cf, &h, &pk.0, &session_id).unwrap_err();
-        assert!(matches!(err, HandshakeError::SignatureVerificationFailed), "got {err:?}");
+        assert!(
+            matches!(err, HandshakeError::SignatureVerificationFailed),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -1168,6 +1229,15 @@ mod tests {
         let (mut ch, _sk, h_after_ch) = build_valid_client_hello();
         ch.agent_id = vec![0xAA; 16]; // wrong length
         let err = verify_client_hello(&ch, &h_after_ch, 0).unwrap_err();
-        assert!(matches!(err, HandshakeError::InvalidField { field: "agent_id", .. }), "got {err:?}");
+        assert!(
+            matches!(
+                err,
+                HandshakeError::InvalidField {
+                    field: "agent_id",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
     }
 }

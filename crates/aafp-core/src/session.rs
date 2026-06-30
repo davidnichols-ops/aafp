@@ -232,10 +232,7 @@ impl SessionState {
 
     /// Whether the peer's identity has been verified.
     pub fn is_identity_verified(&self) -> bool {
-        !matches!(
-            self,
-            Self::Connecting | Self::TransportEstablished
-        )
+        !matches!(self, Self::Connecting | Self::TransportEstablished)
     }
 
     /// Whether the session is fully authenticated.
@@ -260,10 +257,21 @@ impl SessionState {
             (Closing, Closed) => true,
 
             // Graceful shutdown from any active (non-Connecting) state
-            (TransportEstablished | IdentityVerified | AuthorizationVerified | Authenticated, Closing) => true,
+            (
+                TransportEstablished | IdentityVerified | AuthorizationVerified | Authenticated,
+                Closing,
+            ) => true,
 
             // Abort from any non-terminal state (except Closing, handled above)
-            (Connecting | TransportEstablished | IdentityVerified | AuthorizationVerified | Authenticated | MessagingEnabled, Closed) => true,
+            (
+                Connecting
+                | TransportEstablished
+                | IdentityVerified
+                | AuthorizationVerified
+                | Authenticated
+                | MessagingEnabled,
+                Closed,
+            ) => true,
 
             // Everything else is illegal
             _ => false,
@@ -532,8 +540,14 @@ mod tests {
         assert_eq!(s.state(), SessionState::Connecting);
 
         s.on_transport_established(
-            Box::new(TestTransport { addr: "quic://1.2.3.4:4433".into(), closed: false }),
-            NegotiatedFeatures { protocol_version: 1, extensions: vec![] },
+            Box::new(TestTransport {
+                addr: "quic://1.2.3.4:4433".into(),
+                closed: false,
+            }),
+            NegotiatedFeatures {
+                protocol_version: 1,
+                extensions: vec![],
+            },
         )
         .unwrap();
         assert_eq!(s.state(), SessionState::TransportEstablished);
@@ -547,8 +561,10 @@ mod tests {
         assert_eq!(s.peer_agent_id(), Some(&peer_id));
         assert_eq!(s.session_id(), Some(&sid));
 
-        s.on_authorization_verified(Box::new(TestAuth { allowed: vec!["aafp.discovery".into()] }))
-            .unwrap();
+        s.on_authorization_verified(Box::new(TestAuth {
+            allowed: vec!["aafp.discovery".into()],
+        }))
+        .unwrap();
         assert_eq!(s.state(), SessionState::AuthorizationVerified);
         assert!(s.is_authorized("aafp.discovery"));
         assert!(!s.is_authorized("aafp.admin"));
@@ -582,7 +598,10 @@ mod tests {
     fn test_illegal_backward_transition_rejected() {
         let mut s = Session::new();
         s.on_transport_established(
-            Box::new(TestTransport { addr: "quic://x".into(), closed: false }),
+            Box::new(TestTransport {
+                addr: "quic://x".into(),
+                closed: false,
+            }),
             NegotiatedFeatures::default(),
         )
         .unwrap();
@@ -673,7 +692,10 @@ mod tests {
     #[tokio::test]
     async fn test_testing_auth_provider_allows_all() {
         let provider = TestingAuthProvider;
-        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xBB; 1952])
+            .await
+            .unwrap();
         assert!(ctx.is_authorized("anything"));
         assert!(ctx.is_authorized("aafp.admin"));
         assert!(ctx.is_authorized("aafp.discovery"));
@@ -682,18 +704,22 @@ mod tests {
     #[tokio::test]
     async fn test_testing_deny_provider_denies_all() {
         let provider = TestingDenyProvider;
-        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xBB; 1952])
+            .await
+            .unwrap();
         assert!(!ctx.is_authorized("anything"));
         assert!(!ctx.is_authorized("aafp.admin"));
     }
 
     #[tokio::test]
     async fn test_testing_capability_provider_allows_specific() {
-        let provider = TestingCapabilityProvider::new(vec![
-            "aafp.discovery".into(),
-            "aafp.messaging".into(),
-        ]);
-        let ctx = provider.authorize(&[0xAA; 32], &[0xBB; 1952]).await.unwrap();
+        let provider =
+            TestingCapabilityProvider::new(vec!["aafp.discovery".into(), "aafp.messaging".into()]);
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xBB; 1952])
+            .await
+            .unwrap();
         assert!(ctx.is_authorized("aafp.discovery"));
         assert!(ctx.is_authorized("aafp.messaging"));
         assert!(!ctx.is_authorized("aafp.admin"));
@@ -706,14 +732,20 @@ mod tests {
 
         // Must go through the state machine
         s.on_transport_established(
-            Box::new(TestTransport { addr: "quic://x".into(), closed: false }),
+            Box::new(TestTransport {
+                addr: "quic://x".into(),
+                closed: false,
+            }),
             NegotiatedFeatures::default(),
         )
         .unwrap();
         s.on_identity_verified([0xAA; 32], [0xBB; 32]).unwrap();
 
         // Authorize
-        let ctx = provider.authorize(&[0xAA; 32], &[0xCC; 1952]).await.unwrap();
+        let ctx = provider
+            .authorize(&[0xAA; 32], &[0xCC; 1952])
+            .await
+            .unwrap();
         s.on_authorization_verified(ctx).unwrap();
         assert_eq!(s.state(), SessionState::AuthorizationVerified);
         assert!(s.is_authorized("aafp.discovery"));

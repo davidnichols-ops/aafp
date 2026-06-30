@@ -21,17 +21,24 @@
 //! # }
 //! ```
 
+// The SDK uses legacy AgentRecord and CapabilityDht for local in-memory state.
+// These are NOT used for wire serialization (v1 types are used for that).
+#![allow(deprecated)]
+
 pub mod builder;
 pub mod client;
 pub mod handshake_driver;
+pub mod protocol_frames;
 pub mod server;
 
 pub use builder::AgentBuilder;
 pub use client::AgentClient;
-pub use handshake_driver::{PeerInfo, drive_client_handshake, drive_server_handshake};
+pub use handshake_driver::{drive_client_handshake, drive_server_handshake, PeerInfo};
+pub use protocol_frames::{parse_control_frame, send_close_frame, send_error_frame, ControlFrame};
 pub use server::AgentServer;
 
-use aafp_identity::{AgentId, AgentKeypair, AgentRecord};
+use aafp_identity::agent_record::AgentRecord;
+use aafp_identity::{AgentId, AgentKeypair};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -73,7 +80,7 @@ pub struct Agent {
     /// Agent record (self-signed).
     pub record: AgentRecord,
     /// Capability DHT.
-    pub dht: aafp_discovery::CapabilityDht,
+    pub dht: aafp_discovery::capability_dht::CapabilityDht,
     /// Regional discovery.
     pub regional: aafp_discovery::RegionalDiscovery,
     /// Bootstrap discovery.

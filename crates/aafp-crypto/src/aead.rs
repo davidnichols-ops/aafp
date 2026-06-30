@@ -5,7 +5,7 @@
 use crate::traits::CryptoError;
 use aead::{Aead as _, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit as AesKeyInit, Nonce as AesNonce};
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit as ChachaKeyInit, Nonce as ChachaNonce};
+use chacha20poly1305::{ChaCha20Poly1305, Nonce as ChachaNonce};
 
 /// AEAD algorithm selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,15 +39,27 @@ impl Aead {
                     .expect("32-byte key for chacha20poly1305");
                 let nonce = ChachaNonce::from_slice(nonce);
                 cipher
-                    .encrypt(nonce, Payload { msg: plaintext, aad })
+                    .encrypt(
+                        nonce,
+                        Payload {
+                            msg: plaintext,
+                            aad,
+                        },
+                    )
                     .expect("encryption succeeds")
             }
             AeadAlgorithm::Aes256Gcm => {
-                let cipher = Aes256Gcm::new_from_slice(&self.key)
-                    .expect("32-byte key for aes256gcm");
+                let cipher =
+                    Aes256Gcm::new_from_slice(&self.key).expect("32-byte key for aes256gcm");
                 let nonce = AesNonce::from_slice(nonce);
                 cipher
-                    .encrypt(nonce, Payload { msg: plaintext, aad })
+                    .encrypt(
+                        nonce,
+                        Payload {
+                            msg: plaintext,
+                            aad,
+                        },
+                    )
                     .expect("encryption succeeds")
             }
         }
@@ -66,15 +78,27 @@ impl Aead {
                     .expect("32-byte key for chacha20poly1305");
                 let nonce = ChachaNonce::from_slice(nonce);
                 cipher
-                    .decrypt(nonce, Payload { msg: ciphertext, aad })
+                    .decrypt(
+                        nonce,
+                        Payload {
+                            msg: ciphertext,
+                            aad,
+                        },
+                    )
                     .map_err(|_| CryptoError::AeadDecryptionFailed)
             }
             AeadAlgorithm::Aes256Gcm => {
-                let cipher = Aes256Gcm::new_from_slice(&self.key)
-                    .expect("32-byte key for aes256gcm");
+                let cipher =
+                    Aes256Gcm::new_from_slice(&self.key).expect("32-byte key for aes256gcm");
                 let nonce = AesNonce::from_slice(nonce);
                 cipher
-                    .decrypt(nonce, Payload { msg: ciphertext, aad })
+                    .decrypt(
+                        nonce,
+                        Payload {
+                            msg: ciphertext,
+                            aad,
+                        },
+                    )
                     .map_err(|_| CryptoError::AeadDecryptionFailed)
             }
         }

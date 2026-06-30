@@ -125,7 +125,9 @@ impl SignatureScheme for MlDsa65 {
             .expect("valid secret key length");
         let sk = ml_dsa_65::PrivateKey::try_from_bytes(arr).expect("valid secret key");
         // Empty context string matches PQClean's detached_sign behavior.
-        let sig = sk.try_sign(msg, &[]).expect("ML-DSA-65 signing must succeed");
+        let sig = sk
+            .try_sign(msg, &[])
+            .expect("ML-DSA-65 signing must succeed");
         MlDsa65Signature(sig.to_vec())
     }
 
@@ -148,6 +150,45 @@ impl SignatureScheme for MlDsa65 {
 
     fn algorithm_name() -> &'static str {
         "ML-DSA-65"
+    }
+}
+
+// ── Cross-language interop helpers (A-10) ──────────────────────────
+
+impl MlDsa65 {
+    /// Deterministic key generation from a 32-byte seed (FIPS 204 Algorithm 1).
+    ///
+    /// This is used for cross-language test vector generation (A-10).
+    /// The same seed MUST produce the same keypair in all FIPS 204
+    /// implementations (Rust fips204, Go KarpelesLab/mldsa, etc.).
+    pub fn keypair_from_seed(seed: &[u8; 32]) -> (MlDsa65PublicKey, MlDsa65SecretKey) {
+        let (pk, sk) = ml_dsa_65::KG::keygen_from_seed(seed);
+        (
+            MlDsa65PublicKey(pk.into_bytes().to_vec()),
+            MlDsa65SecretKey(sk.into_bytes().to_vec()),
+        )
+    }
+
+    /// Deterministic signing using a 32-byte randomness seed.
+    ///
+    /// This produces reproducible signatures for test vector generation (A-10).
+    /// Uses `try_sign_with_seed` which sets the randomness to the seed value
+    /// (FIPS 204 deterministic signing variant).
+    pub fn sign_deterministic(
+        secret: &MlDsa65SecretKey,
+        msg: &[u8],
+        seed: &[u8; 32],
+    ) -> MlDsa65Signature {
+        let arr: [u8; ML_DSA_65_SECRETKEY_LEN] = secret
+            .0
+            .as_slice()
+            .try_into()
+            .expect("valid secret key length");
+        let sk = ml_dsa_65::PrivateKey::try_from_bytes(arr).expect("valid secret key");
+        let sig = sk
+            .try_sign_with_seed(seed, msg, &[])
+            .expect("ML-DSA-65 deterministic signing must succeed");
+        MlDsa65Signature(sig.to_vec())
     }
 }
 
@@ -196,5 +237,48 @@ mod tests {
         assert!(MlDsa65PublicKey::from_bytes(&[0u8; 10]).is_err());
         assert!(MlDsa65SecretKey::from_bytes(&[0u8; 10]).is_err());
         assert!(MlDsa65Signature::from_bytes(&[0u8; 10]).is_err());
+    }
+
+    #[test]
+    fn keypair_from_seed_deterministic() {
+        let seed = [0x42u8; 32];
+        let (pk1, sk1) = MlDsa65::keypair_from_seed(&seed);
+        let (pk2, sk2) = MlDsa65::keypair_from_seed(&seed);
+        assert_eq!(pk1.0, pk2.0, "same seed must produce same public key");
+        assert_eq!(sk1.0, sk2.0, "same seed must produce same secret key");
+        assert_eq!(pk1.0.len(), ML_DSA_65_PUBKEY_LEN);
+        assert_eq!(sk1.0.len(), ML_DSA_65_SECRETKEY_LEN);
+    }
+
+    #[test]
+    fn keypair_from_seed_different_seeds() {
+        let seed1 = [0x01u8; 32];
+        let seed2 = [0x02u8; 32];
+        let (pk1, _) = MlDsa65::keypair_from_seed(&seed1);
+        let (pk2, _) = MlDsa65::keypair_from_seed(&seed2);
+        assert_ne!(pk1.0, pk2.0, "different seeds must produce different keys");
+    }
+
+    #[test]
+    fn sign_deterministic_reproducible() {
+        let seed = [0x42u8; 32];
+        let (pk, sk) = MlDsa65::keypair_from_seed(&seed);
+        let msg = b"test message for deterministic signing";
+        let sign_seed = [0u8; 32];
+        let sig1 = MlDsa65::sign_deterministic(&sk, msg, &sign_seed);
+        let sig2 = MlDsa65::sign_deterministic(&sk, msg, &sign_seed);
+        assert_eq!(sig1.0, sig2.0, "deterministic signing must be reproducible");
+        assert_eq!(sig1.0.len(), ML_DSA_65_SIGNATURE_LEN);
+        assert!(MlDsa65::verify(&pk, msg, &sig1));
+    }
+
+    #[test]
+    fn sign_deterministic_verifies_with_normal_verify() {
+        let seed = [0x42u8; 32];
+        let (pk, sk) = MlDsa65::keypair_from_seed(&seed);
+        let msg = b"cross-verification test";
+        let sign_seed = [0u8; 32];
+        let sig = MlDsa65::sign_deterministic(&sk, msg, &sign_seed);
+        assert!(MlDsa65::verify(&pk, msg, &sig));
     }
 }

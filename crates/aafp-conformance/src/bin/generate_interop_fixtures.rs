@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 //! Generate binary interop fixtures for cross-implementation testing.
 //!
 //! This binary encodes AAFP protocol messages using the Rust reference
@@ -15,9 +17,7 @@ use aafp_cbor::{encode, Value};
 use aafp_crypto::handshake_v1::{
     derive_session_id, ClientFinished, ClientHello, ServerHello, TranscriptHash,
 };
-use aafp_identity::identity_v1::{
-    AgentId, AgentRecord, CapabilityDescriptor, MetadataValue,
-};
+use aafp_identity::identity_v1::{AgentId, AgentRecord, CapabilityDescriptor, MetadataValue};
 use aafp_messaging::{encode_frame, Frame, FrameType};
 
 // Fixed test inputs (must match TEST_VECTORS.md and Go implementation)
@@ -34,8 +34,8 @@ const KEY_ALG_ML_DSA_65: u64 = 1;
 
 fn write_fixture(dir: &PathBuf, name: &str, data: &[u8]) {
     let path = dir.join(name);
-    let mut file = fs::File::create(&path)
-        .unwrap_or_else(|e| panic!("Failed to create {:?}: {}", path, e));
+    let mut file =
+        fs::File::create(&path).unwrap_or_else(|e| panic!("Failed to create {:?}: {}", path, e));
     file.write_all(data)
         .unwrap_or_else(|e| panic!("Failed to write {:?}: {}", path, e));
     println!("  wrote {} ({} bytes)", path.display(), data.len());
@@ -73,11 +73,7 @@ fn main() {
     write_cbor(&cbor_dir, "bool_true.bin", &Value::Bool(true));
     write_cbor(&cbor_dir, "bool_false.bin", &Value::Bool(false));
     write_cbor(&cbor_dir, "null.bin", &Value::Null);
-    write_cbor(
-        &cbor_dir,
-        "bstr_32.bin",
-        &Value::ByteString(vec![0xaa; 32]),
-    );
+    write_cbor(&cbor_dir, "bstr_32.bin", &Value::ByteString(vec![0xaa; 32]));
     write_cbor(
         &cbor_dir,
         "tstr_hello.bin",
@@ -98,10 +94,7 @@ fn main() {
     write_cbor(
         &cbor_dir,
         "int_map_same_length.bin",
-        &Value::IntMap(vec![
-            (10, Value::Unsigned(1)),
-            (20, Value::Unsigned(2)),
-        ]),
+        &Value::IntMap(vec![(10, Value::Unsigned(1)), (20, Value::Unsigned(2))]),
     );
 
     write_cbor(
@@ -118,11 +111,7 @@ fn main() {
     let frame_dir = output_dir.join("frames");
     fs::create_dir_all(&frame_dir).unwrap();
 
-    write_frame(
-        &frame_dir,
-        "data_empty.bin",
-        &Frame::data(0, vec![]),
-    );
+    write_frame(&frame_dir, "data_empty.bin", &Frame::data(0, vec![]));
 
     write_frame(
         &frame_dir,
@@ -149,11 +138,7 @@ fn main() {
         },
     );
 
-    write_frame(
-        &frame_dir,
-        "ping.bin",
-        &Frame::ping(0),
-    );
+    write_frame(&frame_dir, "ping.bin", &Frame::ping(0));
 
     // DATA frame with MORE flag
     write_frame(
@@ -226,15 +211,14 @@ fn main() {
         record_type: "aafp-record-v1".to_string(),
         agent_id: AgentId::from_public_key(&PUBLIC_KEY_A),
         public_key: PUBLIC_KEY_A.to_vec(),
-        capabilities: vec![
-            CapabilityDescriptor::new("inference")
-                .with_metadata("model", MetadataValue::Text("test-model".to_string())),
-        ],
+        capabilities: vec![CapabilityDescriptor::new("inference")
+            .with_metadata("model", MetadataValue::Text("test-model".to_string()))],
         endpoints: vec!["/ip4/127.0.0.1/tcp/4001".to_string()],
         created_at: TIMESTAMP_NOW,
         expires_at: TIMESTAMP_EXPIRES,
         signature: vec![],
         key_algorithm: KEY_ALG_ML_DSA_65,
+        record_version: 1,
     };
     write_cbor(&ar_dir, "without_sig.bin", &record_a.to_cbor_without_sig());
 
@@ -248,6 +232,7 @@ fn main() {
         expires_at: TIMESTAMP_EXPIRES,
         signature: vec![],
         key_algorithm: KEY_ALG_ML_DSA_65,
+        record_version: 1,
     };
     write_cbor(
         &ar_dir,
@@ -265,6 +250,7 @@ fn main() {
         expires_at: TIMESTAMP_EXPIRES,
         signature: SIGNATURE_A.to_vec(),
         key_algorithm: KEY_ALG_ML_DSA_65,
+        record_version: 1,
     };
     write_cbor(&ar_dir, "with_sig.bin", &record_with_sig.to_cbor());
 
@@ -350,11 +336,7 @@ fn main() {
     let mut th_after_ch = TranscriptHash::from_tls_binding(&TLS_BINDING);
     th_after_ch.fold(&ch_bytes);
     let h_after_ch = *th_after_ch.current();
-    write_fixture(
-        &transcript_dir,
-        "hash_after_clienthello.bin",
-        &h_after_ch,
-    );
+    write_fixture(&transcript_dir, "hash_after_clienthello.bin", &h_after_ch);
 
     let sh_bytes = encode(&sh.to_cbor_without_sig()).unwrap();
     let mut th_after_sh = th_after_ch;
@@ -374,16 +356,19 @@ fn main() {
         th_after_cf.current(),
     );
 
-    let session_id = derive_session_id(&h_after_ch, &NONCE_A, &NONCE_B);
+    let server_agent_id = AgentId::from_public_key(&PUBLIC_KEY_B);
+    let session_id = derive_session_id(&h_after_ch, &NONCE_A, &NONCE_B, server_agent_id.as_bytes());
     write_fixture(&transcript_dir, "session_id.bin", &session_id);
 
     // === Manifest ===
-    let manifest = format!(
-        r#"{{"version":"aafp-v1-interop-fixtures-1","generated_by":"rust-reference"}}"#
-    );
+    let manifest =
+        format!(r#"{{"version":"aafp-v1-interop-fixtures-1","generated_by":"rust-reference"}}"#);
     let manifest_path = output_dir.join("manifest.json");
     fs::write(&manifest_path, manifest).unwrap();
     println!("  wrote {} (manifest)", manifest_path.display());
 
-    println!("\nDone. Interop fixtures generated in {}", output_dir.display());
+    println!(
+        "\nDone. Interop fixtures generated in {}",
+        output_dir.display()
+    );
 }

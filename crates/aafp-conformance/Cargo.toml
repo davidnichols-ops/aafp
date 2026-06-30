@@ -15,7 +15,16 @@ thiserror = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lib]
 name = "aafp_conformance"
 path = "src/lib.rs"
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "mldsa65_bench"
+harness = false

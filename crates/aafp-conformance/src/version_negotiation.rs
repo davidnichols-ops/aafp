@@ -8,11 +8,11 @@
 //! to prove both implementations behave the same way for each scenario.
 
 use aafp_cbor::{decode, encode, Value};
-use aafp_core::error::{is_always_fatal, codes};
+use aafp_core::error::{codes, is_always_fatal};
 use aafp_crypto::handshake_v1::{ClientHello, TranscriptHash};
 use aafp_messaging::{
-    decode_frame, encode_frame, decode_extensions, encode_extensions,
-    Extension, Frame, FrameType, AAFP_VERSION,
+    decode_extensions, decode_frame, encode_extensions, encode_frame, Extension, Frame, FrameType,
+    AAFP_VERSION,
 };
 
 /// Known extension types for a v1 implementation (RFC-0002 §6.4).
@@ -21,19 +21,32 @@ const KNOWN_EXTENSION_TYPES: &[u16] = &[0x0001];
 
 // === Helper functions ===
 
-fn make_frame(version: u8, frame_type: FrameType, flags: u8, stream_id: u64, payload: Vec<u8>) -> Vec<u8> {
+fn make_frame(
+    version: u8,
+    frame_type: FrameType,
+    flags: u8,
+    stream_id: u64,
+    payload: Vec<u8>,
+) -> Vec<u8> {
     encode_frame(&Frame {
         frame_type,
         flags,
         stream_id,
         extensions: vec![],
         payload,
-    }).expect("frame encode")
+    })
+    .expect("frame encode")
     // Note: version is set by encode_frame to AAFP_VERSION, so for
     // testing other versions we need to patch the first byte
 }
 
-fn make_frame_with_version(version: u8, frame_type: u8, flags: u8, stream_id: u64, payload: Vec<u8>) -> Vec<u8> {
+fn make_frame_with_version(
+    version: u8,
+    frame_type: u8,
+    flags: u8,
+    stream_id: u64,
+    payload: Vec<u8>,
+) -> Vec<u8> {
     // Manually construct a frame with arbitrary version byte
     let header_size = 28;
     let mut buf = vec![0u8; header_size + payload.len()];
@@ -41,7 +54,7 @@ fn make_frame_with_version(version: u8, frame_type: u8, flags: u8, stream_id: u6
     buf[1] = frame_type;
     buf[2] = flags;
     buf[3] = 0; // reserved
-    // stream_id (big-endian u64 at offset 4)
+                // stream_id (big-endian u64 at offset 4)
     buf[4..12].copy_from_slice(&stream_id.to_be_bytes());
     // payload_len (big-endian u64 at offset 12)
     buf[12..20].copy_from_slice(&(payload.len() as u64).to_be_bytes());
@@ -96,7 +109,10 @@ fn test_vn0004_no_overlapping_versions() {
 fn test_vn0005_unknown_protocol_version_255() {
     // VN-0005: Version 255 is unknown, must reject
     let data = make_frame_with_version(255, 0x01, 0, 0, vec![0x01]);
-    assert!(decode_frame(&data).is_err(), "v255 frame should be rejected");
+    assert!(
+        decode_frame(&data).is_err(),
+        "v255 frame should be rejected"
+    );
 }
 
 #[test]
@@ -124,9 +140,11 @@ fn test_vn0007_version0_pre_rfc() {
 #[test]
 fn test_ex0001_unknown_critical_extension() {
     // EX-0001: Unknown critical extension must be detected
-    let exts = vec![
-        Extension { ext_type: 0xBEEF, critical: true, data: vec![0x01] },
-    ];
+    let exts = vec![Extension {
+        ext_type: 0xBEEF,
+        critical: true,
+        data: vec![0x01],
+    }];
     let unknown = find_unknown_critical(&exts, KNOWN_EXTENSION_TYPES);
     assert_eq!(unknown, Some(0xBEEF));
     // Error 2005 should be fatal
@@ -136,20 +154,37 @@ fn test_ex0001_unknown_critical_extension() {
 #[test]
 fn test_ex0002_unknown_non_critical_extension() {
     // EX-0002: Unknown non-critical extension should be silently dropped
-    let exts = vec![
-        Extension { ext_type: 0xBEEF, critical: false, data: vec![0x01] },
-    ];
+    let exts = vec![Extension {
+        ext_type: 0xBEEF,
+        critical: false,
+        data: vec![0x01],
+    }];
     let unknown = find_unknown_critical(&exts, KNOWN_EXTENSION_TYPES);
-    assert_eq!(unknown, None, "non-critical unknown ext should not be flagged");
+    assert_eq!(
+        unknown, None,
+        "non-critical unknown ext should not be flagged"
+    );
 }
 
 #[test]
 fn test_ex0003_mixed_criticality_extensions() {
     // EX-0003: Multiple extensions with mixed criticality
     let exts = vec![
-        Extension { ext_type: 0x0001, critical: true, data: vec![0x01] },
-        Extension { ext_type: 0x0002, critical: false, data: vec![0x02] },
-        Extension { ext_type: 0xBEEF, critical: false, data: vec![0x03] },
+        Extension {
+            ext_type: 0x0001,
+            critical: true,
+            data: vec![0x01],
+        },
+        Extension {
+            ext_type: 0x0002,
+            critical: false,
+            data: vec![0x02],
+        },
+        Extension {
+            ext_type: 0xBEEF,
+            critical: false,
+            data: vec![0x03],
+        },
     ];
     // Only 0xBEEF is unknown, and it's non-critical → no error
     assert_eq!(find_unknown_critical(&exts, KNOWN_EXTENSION_TYPES), None);
@@ -157,15 +192,26 @@ fn test_ex0003_mixed_criticality_extensions() {
     // Now make 0xBEEF critical → should be detected
     let mut exts = exts;
     exts[2].critical = true;
-    assert_eq!(find_unknown_critical(&exts, KNOWN_EXTENSION_TYPES), Some(0xBEEF));
+    assert_eq!(
+        find_unknown_critical(&exts, KNOWN_EXTENSION_TYPES),
+        Some(0xBEEF)
+    );
 }
 
 #[test]
 fn test_ex0004_duplicate_extensions() {
     // EX-0004: Duplicate extensions — first one used, second ignored
     let exts = vec![
-        Extension { ext_type: 0x0001, critical: false, data: vec![0xAA] },
-        Extension { ext_type: 0x0001, critical: false, data: vec![0xBB] },
+        Extension {
+            ext_type: 0x0001,
+            critical: false,
+            data: vec![0xAA],
+        },
+        Extension {
+            ext_type: 0x0001,
+            critical: false,
+            data: vec![0xBB],
+        },
     ];
     // find_extension should return the first one
     let found = exts.iter().find(|e| e.ext_type == 0x0001);
@@ -177,8 +223,16 @@ fn test_ex0004_duplicate_extensions() {
 fn test_ex0005_duplicate_critical_extensions() {
     // EX-0005: Duplicate critical extensions — first used, second ignored
     let exts = vec![
-        Extension { ext_type: 0x0001, critical: true, data: vec![0xAA] },
-        Extension { ext_type: 0x0001, critical: true, data: vec![0xBB] },
+        Extension {
+            ext_type: 0x0001,
+            critical: true,
+            data: vec![0xAA],
+        },
+        Extension {
+            ext_type: 0x0001,
+            critical: true,
+            data: vec![0xBB],
+        },
     ];
     let found = exts.iter().find(|e| e.ext_type == 0x0001);
     assert_eq!(found.unwrap().data, vec![0xAA]);
@@ -188,9 +242,21 @@ fn test_ex0005_duplicate_critical_extensions() {
 fn test_ex0006_extensions_non_canonical_order() {
     // EX-0006: Extensions in non-canonical order should be accepted
     let exts = vec![
-        Extension { ext_type: 0x0003, critical: false, data: vec![0x03] },
-        Extension { ext_type: 0x0001, critical: false, data: vec![0x01] },
-        Extension { ext_type: 0x0002, critical: false, data: vec![0x02] },
+        Extension {
+            ext_type: 0x0003,
+            critical: false,
+            data: vec![0x03],
+        },
+        Extension {
+            ext_type: 0x0001,
+            critical: false,
+            data: vec![0x01],
+        },
+        Extension {
+            ext_type: 0x0002,
+            critical: false,
+            data: vec![0x02],
+        },
     ];
     let encoded = encode_extensions(&exts).unwrap();
     let decoded = decode_extensions(&encoded).unwrap();
@@ -215,23 +281,31 @@ fn test_ex0008_malformed_extension_encoding() {
     let mut data = vec![0x00, 0x01, 0x00, 0x00]; // type=1, critical=false, reserved=0
     data.extend_from_slice(&10u32.to_be_bytes()); // data_len=10
     data.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]); // only 4 bytes
-    assert!(decode_extensions(&data).is_err(), "malformed extension should fail");
+    assert!(
+        decode_extensions(&data).is_err(),
+        "malformed extension should fail"
+    );
 }
 
 #[test]
 fn test_ex0009_server_proposes_unoffered_extension() {
     // EX-0009: Server includes extension client didn't propose
-    let client_exts = vec![
-        make_ext_entry(0x0001, vec![0x01], false),
-    ];
+    let client_exts = vec![make_ext_entry(0x0001, vec![0x01], false)];
     let server_exts = vec![
         make_ext_entry(0x0001, vec![0x01], false),
         make_ext_entry(0x0002, vec![0x02], false), // not proposed by client!
     ];
 
-    let client_types: std::collections::HashSet<u64> = client_exts.iter()
+    let client_types: std::collections::HashSet<u64> = client_exts
+        .iter()
         .filter_map(|e| aafp_cbor::int_map_get(e, 1))
-        .filter_map(|v| if let Value::Unsigned(n) = v { Some(*n) } else { None })
+        .filter_map(|v| {
+            if let Value::Unsigned(n) = v {
+                Some(*n)
+            } else {
+                None
+            }
+        })
         .collect();
 
     let mut violation_found = false;
@@ -242,7 +316,10 @@ fn test_ex0009_server_proposes_unoffered_extension() {
             }
         }
     }
-    assert!(violation_found, "should detect server proposing unoffered extension");
+    assert!(
+        violation_found,
+        "should detect server proposing unoffered extension"
+    );
 }
 
 // === Frame Type Tests ===
@@ -260,10 +337,16 @@ fn test_ft0001_unknown_critical_frame_type() {
     // If it decodes, the caller must check criticality and reject
     if let Ok((frame, _)) = result {
         // Unknown frame type with critical bit — caller must reject with 8004
-        let is_known = matches!(frame.frame_type,
-            FrameType::Data | FrameType::Handshake | FrameType::RpcRequest |
-            FrameType::RpcResponse | FrameType::Close | FrameType::Error |
-            FrameType::Ping | FrameType::Pong
+        let is_known = matches!(
+            frame.frame_type,
+            FrameType::Data
+                | FrameType::Handshake
+                | FrameType::RpcRequest
+                | FrameType::RpcResponse
+                | FrameType::Close
+                | FrameType::Error
+                | FrameType::Ping
+                | FrameType::Pong
         );
         assert!(!is_known, "0x09 should not be a known frame type");
         assert!(frame.flags & 0x80 != 0, "critical bit should be set");
@@ -279,10 +362,16 @@ fn test_ft0002_unknown_non_critical_frame_type() {
     // The Rust decoder may reject unknown types. If it does, that's a
     // stricter-than-RFC behavior. If it accepts, the caller should skip.
     if let Ok((frame, _)) = result {
-        let is_known = matches!(frame.frame_type,
-            FrameType::Data | FrameType::Handshake | FrameType::RpcRequest |
-            FrameType::RpcResponse | FrameType::Close | FrameType::Error |
-            FrameType::Ping | FrameType::Pong
+        let is_known = matches!(
+            frame.frame_type,
+            FrameType::Data
+                | FrameType::Handshake
+                | FrameType::RpcRequest
+                | FrameType::RpcResponse
+                | FrameType::Close
+                | FrameType::Error
+                | FrameType::Ping
+                | FrameType::Pong
         );
         assert!(!is_known, "0x80 should not be a known frame type");
         assert_eq!(frame.flags & 0x80, 0, "critical bit should not be set");
@@ -375,14 +464,23 @@ fn test_tr0003_failure_at_same_stage() {
     // TR-0003: Failure occurs at the same protocol stage in both implementations.
     // Version mismatch: rejected at frame decode stage
     let data = make_frame_with_version(2, 0x01, 0, 0, vec![0x01]);
-    assert!(decode_frame(&data).is_err(), "version mismatch should fail at frame decode");
+    assert!(
+        decode_frame(&data).is_err(),
+        "version mismatch should fail at frame decode"
+    );
 
     // Unknown critical extension: detected at extension check stage
-    let exts = vec![
-        Extension { ext_type: 0xBEEF, critical: true, data: vec![0x01] },
-    ];
+    let exts = vec![Extension {
+        ext_type: 0xBEEF,
+        critical: true,
+        data: vec![0x01],
+    }];
     let unknown = find_unknown_critical(&exts, KNOWN_EXTENSION_TYPES);
-    assert_eq!(unknown, Some(0xBEEF), "unknown critical extension should be detected");
+    assert_eq!(
+        unknown,
+        Some(0xBEEF),
+        "unknown critical extension should be detected"
+    );
 }
 
 // === Error Code Verification ===
@@ -390,13 +488,31 @@ fn test_tr0003_failure_at_same_stage() {
 #[test]
 fn test_error_codes_for_negotiation_failures() {
     // Verify that the correct error codes are fatal for each failure mode
-    assert!(is_always_fatal(codes::INVALID_VERSION), "INVALID_VERSION should be fatal");
-    assert!(is_always_fatal(codes::UNKNOWN_CRITICAL_FRAME_TYPE), "UNKNOWN_CRITICAL_FRAME_TYPE should be fatal");
-    assert!(is_always_fatal(codes::UNKNOWN_CRITICAL_EXTENSION), "UNKNOWN_CRITICAL_EXTENSION should be fatal");
-    assert!(is_always_fatal(codes::UNSUPPORTED_EXTENSIONS), "UNSUPPORTED_EXTENSIONS should be fatal");
-    assert!(is_always_fatal(codes::VERSION_MISMATCH), "VERSION_MISMATCH should be fatal");
+    assert!(
+        is_always_fatal(codes::INVALID_VERSION),
+        "INVALID_VERSION should be fatal"
+    );
+    assert!(
+        is_always_fatal(codes::UNKNOWN_CRITICAL_FRAME_TYPE),
+        "UNKNOWN_CRITICAL_FRAME_TYPE should be fatal"
+    );
+    assert!(
+        is_always_fatal(codes::UNKNOWN_CRITICAL_EXTENSION),
+        "UNKNOWN_CRITICAL_EXTENSION should be fatal"
+    );
+    assert!(
+        is_always_fatal(codes::UNSUPPORTED_EXTENSIONS),
+        "UNSUPPORTED_EXTENSIONS should be fatal"
+    );
+    assert!(
+        is_always_fatal(codes::VERSION_MISMATCH),
+        "VERSION_MISMATCH should be fatal"
+    );
     // INVALID_FLAGS (8007) is NOT always fatal per RFC-0005 §4.4
-    assert!(!is_always_fatal(codes::INVALID_FLAGS), "INVALID_FLAGS should NOT be always fatal");
+    assert!(
+        !is_always_fatal(codes::INVALID_FLAGS),
+        "INVALID_FLAGS should NOT be always fatal"
+    );
 }
 
 // === Extension Round-Trip Tests ===
@@ -404,9 +520,21 @@ fn test_error_codes_for_negotiation_failures() {
 #[test]
 fn test_extension_encode_decode_round_trip() {
     let original = vec![
-        Extension { ext_type: 0x0001, critical: true, data: vec![0xDE, 0xAD] },
-        Extension { ext_type: 0x4000, critical: false, data: vec![0xBE, 0xEF, 0xCA, 0xFE] },
-        Extension { ext_type: 0xBEEF, critical: false, data: vec![] },
+        Extension {
+            ext_type: 0x0001,
+            critical: true,
+            data: vec![0xDE, 0xAD],
+        },
+        Extension {
+            ext_type: 0x4000,
+            critical: false,
+            data: vec![0xBE, 0xEF, 0xCA, 0xFE],
+        },
+        Extension {
+            ext_type: 0xBEEF,
+            critical: false,
+            data: vec![],
+        },
     ];
     let encoded = encode_extensions(&original).unwrap();
     let decoded = decode_extensions(&encoded).unwrap();
@@ -445,7 +573,10 @@ fn test_handshake_extension_negotiation() {
 
         let known = known_types.contains(&ext_type);
         if !known && is_critical {
-            panic!("critical extension 0x{:04x} not known — should fail with 2005", ext_type);
+            panic!(
+                "critical extension 0x{:04x} not known — should fail with 2005",
+                ext_type
+            );
         }
         if known {
             server_accepted.push(ext.clone());
@@ -458,9 +589,7 @@ fn test_handshake_extension_negotiation() {
 fn test_handshake_critical_extension_rejected() {
     // If client proposes a critical extension the server doesn't know,
     // the server MUST send ERROR 2005 and close.
-    let client_exts = vec![
-        make_ext_entry(0xBEEF, vec![0x01], true),
-    ];
+    let client_exts = vec![make_ext_entry(0xBEEF, vec![0x01], true)];
     let known_types: Vec<u16> = vec![0x0001];
 
     for ext in &client_exts {
@@ -474,7 +603,10 @@ fn test_handshake_critical_extension_rejected() {
         };
 
         if !known_types.contains(&ext_type) && is_critical {
-            assert!(is_always_fatal(codes::UNSUPPORTED_EXTENSIONS), "2005 should be fatal");
+            assert!(
+                is_always_fatal(codes::UNSUPPORTED_EXTENSIONS),
+                "2005 should be fatal"
+            );
             return;
         }
     }

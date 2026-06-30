@@ -1,7 +1,7 @@
 //! AgentRecord: a self-signed record binding an agent's identity to its
 //! capabilities and endpoints. Serialized as CBOR for wire format.
 
-use crate::agent_id::{derive_agent_id, verify_agent_id, AgentId};
+use crate::agent_id::{derive_agent_id, verify_agent_id};
 use crate::keypair::{AgentKeypair, IdentityError};
 use aafp_crypto::SignatureScheme;
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,10 @@ pub struct AgentRecord {
 impl std::fmt::Debug for AgentRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentRecord")
-            .field("agent_id", &crate::agent_id::agent_id_to_hex(&self.agent_id))
+            .field(
+                "agent_id",
+                &crate::agent_id::agent_id_to_hex(&self.agent_id),
+            )
             .field("capabilities", &self.capabilities)
             .field("endpoints", &self.endpoints)
             .field("version", &self.version)
@@ -40,11 +43,7 @@ impl std::fmt::Debug for AgentRecord {
 
 impl AgentRecord {
     /// Create a new self-signed agent record.
-    pub fn new(
-        keypair: &AgentKeypair,
-        capabilities: Vec<String>,
-        endpoints: Vec<String>,
-    ) -> Self {
+    pub fn new(keypair: &AgentKeypair, capabilities: Vec<String>, endpoints: Vec<String>) -> Self {
         let agent_id = derive_agent_id(&keypair.public_key);
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -119,8 +118,7 @@ impl AgentRecord {
 
     /// CBOR-decode a record from bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self, IdentityError> {
-        ciborium::from_reader(data)
-            .map_err(|e| IdentityError::Deserialization(e.to_string()))
+        ciborium::from_reader(data).map_err(|e| IdentityError::Deserialization(e.to_string()))
     }
 
     /// Encode the unsigned portion (all fields except signature) as CBOR.
@@ -162,12 +160,14 @@ impl AgentRecord {
     /// encoding. Call `sign()` on the v1 record to re-sign with the correct
     /// v1 signature input.
     pub fn to_v1(&self) -> crate::identity_v1::AgentRecord {
-        use crate::identity_v1::{AgentRecord as V1Record, CapabilityDescriptor, KEY_ALG_ML_DSA_65};
+        use crate::identity_v1::{
+            AgentRecord as V1Record, CapabilityDescriptor, KEY_ALG_ML_DSA_65,
+        };
 
         let caps: Vec<CapabilityDescriptor> = self
             .capabilities
             .iter()
-            .map(|name| CapabilityDescriptor::new(name))
+            .map(CapabilityDescriptor::new)
             .collect();
 
         let mut record = V1Record::new(
@@ -187,13 +187,18 @@ impl AgentRecord {
     /// with the v1 signature format (domain-separated, integer-keyed CBOR).
     ///
     /// This produces a fully valid v1 record with a correct signature.
-    pub fn to_v1_signed(&self, keypair: &AgentKeypair) -> Result<crate::identity_v1::AgentRecord, IdentityError> {
-        use crate::identity_v1::{AgentRecord as V1Record, CapabilityDescriptor, KEY_ALG_ML_DSA_65};
+    pub fn to_v1_signed(
+        &self,
+        keypair: &AgentKeypair,
+    ) -> Result<crate::identity_v1::AgentRecord, IdentityError> {
+        use crate::identity_v1::{
+            AgentRecord as V1Record, CapabilityDescriptor, KEY_ALG_ML_DSA_65,
+        };
 
         let caps: Vec<CapabilityDescriptor> = self
             .capabilities
             .iter()
-            .map(|name| CapabilityDescriptor::new(name))
+            .map(CapabilityDescriptor::new)
             .collect();
 
         let mut record = V1Record::new(
@@ -268,8 +273,7 @@ mod tests {
     #[test]
     fn version_and_timestamp() {
         let kp = AgentKeypair::generate();
-        let record =
-            AgentRecord::new_with_version(&kp, vec!["cap".into()], vec![], 42, 1234567890);
+        let record = AgentRecord::new_with_version(&kp, vec!["cap".into()], vec![], 42, 1234567890);
         assert_eq!(record.version, 42);
         assert_eq!(record.timestamp, 1234567890);
         assert!(record.verify());

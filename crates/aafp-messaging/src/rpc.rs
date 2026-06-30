@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 //! RPC: request/response pattern with correlation IDs.
 //!
 //! Wire format (CBOR):
@@ -119,7 +121,11 @@ impl RpcClient {
     }
 
     /// Create a new request and a channel to receive the response.
-    pub async fn create_request(&mut self, method: &str, params: Vec<u8>) -> (RpcRequest, oneshot::Receiver<RpcResponse>) {
+    pub async fn create_request(
+        &mut self,
+        method: &str,
+        params: Vec<u8>,
+    ) -> (RpcRequest, oneshot::Receiver<RpcResponse>) {
         let id = self.next_id;
         self.next_id += 1;
         let (tx, rx) = oneshot::channel();
@@ -156,8 +162,7 @@ impl Default for RpcClient {
 /// Serialize an RPC request to CBOR bytes.
 pub fn serialize_request(req: &RpcRequest) -> Result<Vec<u8>, RpcError> {
     let mut buf = Vec::new();
-    ciborium::into_writer(req, &mut buf)
-        .map_err(|e| RpcError::Serialization(e.to_string()))?;
+    ciborium::into_writer(req, &mut buf).map_err(|e| RpcError::Serialization(e.to_string()))?;
     Ok(buf)
 }
 
@@ -169,8 +174,7 @@ pub fn deserialize_request(data: &[u8]) -> Result<RpcRequest, RpcError> {
 /// Serialize an RPC response to CBOR bytes.
 pub fn serialize_response(res: &RpcResponse) -> Result<Vec<u8>, RpcError> {
     let mut buf = Vec::new();
-    ciborium::into_writer(res, &mut buf)
-        .map_err(|e| RpcError::Serialization(e.to_string()))?;
+    ciborium::into_writer(res, &mut buf).map_err(|e| RpcError::Serialization(e.to_string()))?;
     Ok(buf)
 }
 
@@ -181,9 +185,12 @@ pub fn deserialize_response(data: &[u8]) -> Result<RpcResponse, RpcError> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(deprecated)]
+    #![allow(unused_imports)]
+    #![allow(unused_variables)]
     use super::*;
-    use tokio::time::timeout;
     use std::time::Duration;
+    use tokio::time::timeout;
 
     #[test]
     fn server_handles_request() {

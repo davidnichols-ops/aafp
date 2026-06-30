@@ -14,7 +14,7 @@
 //! - Payload Len:  8 bytes (length of payload section)
 //! - Extension Len:8 bytes (length of extension section)
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{BufMut, BytesMut};
 use std::io;
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
@@ -197,6 +197,8 @@ impl Frame {
 pub enum FrameError {
     #[error("frame too large: payload {0} bytes (max {1})")]
     PayloadTooLarge(usize, usize),
+    #[error("extension section too large: {0} bytes (max {1})")]
+    ExtensionTooLarge(usize, usize),
     #[error("incomplete frame: need {needed} bytes, have {have}")]
     Incomplete { needed: usize, have: usize },
     #[error("invalid frame type: 0x{0:02x}")]
@@ -216,10 +218,18 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, FrameError> {
         ));
     }
 
+    if frame.extensions.len() > MAX_EXTENSION_SIZE {
+        return Err(FrameError::ExtensionTooLarge(
+            frame.extensions.len(),
+            MAX_EXTENSION_SIZE,
+        ));
+    }
+
     let ext_len = frame.extensions.len() as u64;
     let payload_len = frame.payload.len() as u64;
 
-    let mut buf = Vec::with_capacity(FRAME_HEADER_SIZE + frame.extensions.len() + frame.payload.len());
+    let mut buf =
+        Vec::with_capacity(FRAME_HEADER_SIZE + frame.extensions.len() + frame.payload.len());
 
     // Header (28 bytes, big-endian)
     buf.push(AAFP_VERSION);
@@ -264,17 +274,15 @@ pub fn decode_frame(data: &[u8]) -> Result<(Frame, usize), FrameError> {
     }
 
     if ext_len > MAX_EXTENSION_SIZE {
-        return Err(FrameError::PayloadTooLarge(ext_len, MAX_EXTENSION_SIZE));
+        return Err(FrameError::ExtensionTooLarge(ext_len, MAX_EXTENSION_SIZE));
     }
 
-    let total_body = ext_len.checked_add(payload_len).ok_or(FrameError::PayloadTooLarge(
-        usize::MAX,
-        MAX_PAYLOAD_SIZE,
-    ))?;
-    let total_frame = FRAME_HEADER_SIZE.checked_add(total_body).ok_or(FrameError::PayloadTooLarge(
-        usize::MAX,
-        MAX_PAYLOAD_SIZE,
-    ))?;
+    let total_body = ext_len
+        .checked_add(payload_len)
+        .ok_or(FrameError::PayloadTooLarge(usize::MAX, MAX_PAYLOAD_SIZE))?;
+    let total_frame = FRAME_HEADER_SIZE
+        .checked_add(total_body)
+        .ok_or(FrameError::PayloadTooLarge(usize::MAX, MAX_PAYLOAD_SIZE))?;
     if data.len() < total_frame {
         return Err(FrameError::Incomplete {
             needed: total_frame,
@@ -339,16 +347,23 @@ impl Decoder for FrameCodec {
 
         // Peek at header to determine total frame size
         // Header layout: [0:4] V/T/F/R, [4:12] StreamID, [12:20] PayloadLen, [20:28] ExtLen
-        let payload_len =
-            u64::from_be_bytes(buf[12..20].try_into().unwrap()) as usize;
-        let ext_len =
-            u64::from_be_bytes(buf[20..28].try_into().unwrap()) as usize;
+        let payload_len = u64::from_be_bytes(buf[12..20].try_into().unwrap()) as usize;
+        let ext_len = u64::from_be_bytes(buf[20..28].try_into().unwrap()) as usize;
 
+        // Reject oversized payload and extensions BEFORE any allocation
+        // (RFC-0002 §3.4, §6.1 — A-5: reject before allocation)
         if payload_len > self.max_payload {
             return Err(FrameError::PayloadTooLarge(payload_len, self.max_payload));
         }
 
-        let total = FRAME_HEADER_SIZE + ext_len + payload_len;
+        if ext_len > MAX_EXTENSION_SIZE {
+            return Err(FrameError::ExtensionTooLarge(ext_len, MAX_EXTENSION_SIZE));
+        }
+
+        let total = FRAME_HEADER_SIZE
+            .checked_add(ext_len)
+            .and_then(|n| n.checked_add(payload_len))
+            .ok_or(FrameError::PayloadTooLarge(usize::MAX, self.max_payload))?;
         if buf.len() < total {
             buf.reserve(total - buf.len());
             return Ok(None);
@@ -368,6 +383,13 @@ impl Encoder<Frame> for FrameCodec {
             return Err(FrameError::PayloadTooLarge(
                 frame.payload.len(),
                 self.max_payload,
+            ));
+        }
+
+        if frame.extensions.len() > MAX_EXTENSION_SIZE {
+            return Err(FrameError::ExtensionTooLarge(
+                frame.extensions.len(),
+                MAX_EXTENSION_SIZE,
             ));
         }
 
@@ -586,8 +608,92 @@ mod tests {
         let frame = Frame::data(4, b"test".to_vec());
         let mut encoded = encode_frame(&frame).unwrap();
         encoded[3] = 0xFF; // Set reserved field to non-zero
-        // Should still decode successfully (reserved is ignored)
+                           // Should still decode successfully (reserved is ignored)
         let (decoded, _) = decode_frame(&encoded).unwrap();
         assert_eq!(decoded.payload, b"test");
+    }
+
+    // A-5: Extension limit tests
+
+    #[test]
+    fn test_extension_too_large_encode() {
+        let mut frame = Frame::data(4, b"test".to_vec());
+        frame.extensions = vec![0u8; MAX_EXTENSION_SIZE + 1];
+        assert!(matches!(
+            encode_frame(&frame),
+            Err(FrameError::ExtensionTooLarge(_, _))
+        ));
+    }
+
+    #[test]
+    fn test_extension_too_large_decode() {
+        // Craft a header with ext_len > MAX_EXTENSION_SIZE but payload_len = 0
+        let mut header = vec![0u8; FRAME_HEADER_SIZE];
+        header[0] = AAFP_VERSION;
+        header[1] = FrameType::Data.to_u8();
+        // payload_len = 0
+        header[12..20].copy_from_slice(&0u64.to_be_bytes());
+        // ext_len = MAX_EXTENSION_SIZE + 1
+        header[20..28].copy_from_slice(&((MAX_EXTENSION_SIZE as u64) + 1).to_be_bytes());
+        assert!(matches!(
+            decode_frame(&header),
+            Err(FrameError::ExtensionTooLarge(_, _))
+        ));
+    }
+
+    #[test]
+    fn test_extension_at_max_size() {
+        let mut frame = Frame::data(4, b"ok".to_vec());
+        frame.extensions = vec![0u8; MAX_EXTENSION_SIZE];
+        let encoded = encode_frame(&frame).unwrap();
+        let (decoded, _) = decode_frame(&encoded).unwrap();
+        assert_eq!(decoded.extensions.len(), MAX_EXTENSION_SIZE);
+    }
+
+    #[test]
+    fn test_extension_too_large_codec_encode() {
+        let mut codec = FrameCodec::new();
+        let mut frame = Frame::data(4, b"test".to_vec());
+        frame.extensions = vec![0u8; MAX_EXTENSION_SIZE + 1];
+        let mut buf = BytesMut::new();
+        assert!(matches!(
+            codec.encode(frame, &mut buf),
+            Err(FrameError::ExtensionTooLarge(_, _))
+        ));
+    }
+
+    #[test]
+    fn test_extension_too_large_codec_decode() {
+        let mut codec = FrameCodec::new();
+        // Craft a header with oversized extension length
+        let mut buf = BytesMut::from(&[0u8; FRAME_HEADER_SIZE][..]);
+        buf[0] = AAFP_VERSION;
+        buf[1] = FrameType::Data.to_u8();
+        // payload_len = 0
+        buf[12..20].copy_from_slice(&0u64.to_be_bytes());
+        // ext_len = MAX_EXTENSION_SIZE + 1
+        buf[20..28].copy_from_slice(&((MAX_EXTENSION_SIZE as u64) + 1).to_be_bytes());
+        assert!(matches!(
+            codec.decode(&mut buf),
+            Err(FrameError::ExtensionTooLarge(_, _))
+        ));
+    }
+
+    #[test]
+    fn test_extension_size_checked_before_allocation() {
+        // Verify that a frame claiming ext_len = u64::MAX is rejected
+        // without trying to allocate anything.
+        let mut header = vec![0u8; FRAME_HEADER_SIZE];
+        header[0] = AAFP_VERSION;
+        header[1] = FrameType::Data.to_u8();
+        header[12..20].copy_from_slice(&0u64.to_be_bytes()); // payload = 0
+        header[20..28].copy_from_slice(&u64::MAX.to_be_bytes()); // ext = u64::MAX
+        let result = decode_frame(&header);
+        assert!(result.is_err());
+        // Should be ExtensionTooLarge, not Incomplete or OOM
+        match result {
+            Err(FrameError::ExtensionTooLarge(_, _)) => {}
+            other => panic!("expected ExtensionTooLarge, got {:?}", other),
+        }
     }
 }

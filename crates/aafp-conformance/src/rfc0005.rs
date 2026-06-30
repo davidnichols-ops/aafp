@@ -13,7 +13,10 @@ use aafp_core::error::{codes, is_always_fatal, ErrorCategory, ProtocolError};
 fn test_r5_001_category_from_thousands_digit() {
     assert_eq!(ErrorCategory::from_code(0), ErrorCategory::Success);
     assert_eq!(ErrorCategory::from_code(1001), ErrorCategory::Transport);
-    assert_eq!(ErrorCategory::from_code(2001), ErrorCategory::Authentication);
+    assert_eq!(
+        ErrorCategory::from_code(2001),
+        ErrorCategory::Authentication
+    );
     assert_eq!(ErrorCategory::from_code(3001), ErrorCategory::Authorization);
     assert_eq!(ErrorCategory::from_code(4001), ErrorCategory::Discovery);
     assert_eq!(ErrorCategory::from_code(5001), ErrorCategory::Messaging);

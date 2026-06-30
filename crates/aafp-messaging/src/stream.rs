@@ -1,12 +1,8 @@
 //! Stream multiplexing: each logical stream maps to a QUIC bidirectional stream.
 
-use crate::framing::{Frame, FrameCodec, FrameError};
 use aafp_crypto::Aead;
 use aafp_identity::AgentId;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio_util::codec::Framed;
 
 /// Unique stream identifier.
 pub type StreamId = u64;

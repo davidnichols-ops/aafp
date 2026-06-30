@@ -135,10 +135,9 @@ impl LookupParams {
 
     pub fn to_cbor(&self) -> Value {
         let mut entries = vec![(1i64, Value::TextString(self.capability.clone()))];
+        // A-2 (Rev 6): Omit limit when absent (NOT null)
         if let Some(limit) = self.limit {
             entries.push((2, Value::Unsigned(limit)));
-        } else {
-            entries.push((2, Value::Null));
         }
         int_map(entries)
     }
@@ -157,13 +156,21 @@ impl LookupParams {
             None => return Err(DiscoveryError::MissingField("capability")),
         };
 
+        // A-2 (Rev 6): limit must be omitted when absent, not null
         let limit = match get(2) {
             Some(Value::Unsigned(n)) => Some(*n),
-            Some(Value::Null) | None => None,
+            None => None,
+            Some(Value::Null) => {
+                return Err(DiscoveryError::InvalidField {
+                    field: "limit",
+                    message: "null is not valid; field must be omitted when absent (A-2)"
+                        .to_string(),
+                })
+            }
             Some(other) => {
                 return Err(DiscoveryError::InvalidField {
                     field: "limit",
-                    message: format!("expected uint or null, got {:?}", other),
+                    message: format!("expected uint, got {:?}", other),
                 })
             }
         };
@@ -509,7 +516,10 @@ mod tests {
 
     #[test]
     fn test_announce_result_roundtrip() {
-        let peers = vec![make_record(vec!["inference"]), make_record(vec!["translation"])];
+        let peers = vec![
+            make_record(vec!["inference"]),
+            make_record(vec!["translation"]),
+        ];
         let result = AnnounceResult::new(peers);
 
         let cbor = result.to_cbor();

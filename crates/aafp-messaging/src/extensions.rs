@@ -45,7 +45,10 @@ pub fn encode_extensions(exts: &[Extension]) -> Result<Vec<u8>, ExtensionError> 
     let mut buf = Vec::new();
     for ext in exts {
         if ext.data.len() > u32::MAX as usize {
-            return Err(ExtensionError::DataTooLarge(ext.data.len(), u32::MAX as usize));
+            return Err(ExtensionError::DataTooLarge(
+                ext.data.len(),
+                u32::MAX as usize,
+            ));
         }
         buf.extend_from_slice(&ext.ext_type.to_be_bytes());
         buf.push(if ext.critical { 0x01 } else { 0x00 });
@@ -97,7 +100,7 @@ pub fn decode_extensions(data: &[u8]) -> Result<Vec<Extension>, ExtensionError> 
 }
 
 /// Find the first extension of a given type. Returns None if not found.
-pub fn find_extension<'a>(exts: &'a [Extension], ext_type: u16) -> Option<&'a Extension> {
+pub fn find_extension(exts: &[Extension], ext_type: u16) -> Option<&Extension> {
     exts.iter().find(|e| e.ext_type == ext_type)
 }
 
@@ -195,15 +198,9 @@ mod tests {
         ];
         // 0x0001 is non-critical, 0x0002 is critical
         // If we only know about 0x0001, 0x0002 is unknown critical
-        assert_eq!(
-            find_unknown_critical(&exts, &[0x0001]),
-            Some(0x0002)
-        );
+        assert_eq!(find_unknown_critical(&exts, &[0x0001]), Some(0x0002));
         // If we know both, no unknown critical
-        assert_eq!(
-            find_unknown_critical(&exts, &[0x0001, 0x0002]),
-            None
-        );
+        assert_eq!(find_unknown_critical(&exts, &[0x0001, 0x0002]), None);
     }
 
     #[test]

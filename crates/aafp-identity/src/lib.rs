@@ -4,6 +4,10 @@
 //! See `AAFP_Architecture_Deliverable.md` Phase 2.3 for the identity design.
 
 pub mod agent_id;
+/// Legacy MVP AgentRecord module. Uses serde with string keys — NOT RFC-compliant.
+/// Use [`identity_v1`] instead for wire serialization.
+#[deprecated = "Use identity_v1 instead. Legacy agent_record uses serde/string keys, not RFC-compliant."]
+#[allow(deprecated)]
 pub mod agent_record;
 pub mod identity_v1;
 pub mod keypair;
@@ -15,14 +19,9 @@ pub use agent_id::{
 // v1 RFC-compliant types (integer keys, canonical CBOR per RFC-0003).
 // Use these for wire serialization.
 pub use identity_v1::{
-    AgentRecord as AgentRecordV1, CapabilityDescriptor, CapabilityDescriptor as CapabilityDescriptorV1,
-    IdentityError as IdentityErrorV1, MetadataValue, RECORD_DOMAIN_SEPARATOR,
-    RECORD_TYPE_V1, UCAN_DOMAIN_SEPARATOR, KEY_ALG_ML_DSA_65, MAX_RECORD_EXPIRY,
-    RECOMMENDED_RENEWAL,
+    AgentRecord as AgentRecordV1, CapabilityDescriptor, IdentityError as IdentityErrorV1,
+    MetadataValue, KEY_ALG_ML_DSA_65, MAX_RECORD_EXPIRY, RECOMMENDED_RENEWAL,
+    RECORD_DOMAIN_SEPARATOR, RECORD_TYPE_V1, UCAN_DOMAIN_SEPARATOR,
 };
-// Legacy MVP types — uses serde with string keys. Suitable for local state
-// management but NOT RFC-compliant for wire serialization. Use AgentRecordV1
-// for any data that goes over the network.
-pub use agent_record::AgentRecord;
 pub use keypair::{AgentKeypair, IdentityError};
 pub use ucan::{Capability, UcanHeader, UcanPayload, UcanToken};

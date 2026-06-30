@@ -123,7 +123,12 @@ fn build_handshake_vector(
     let ch_signature = MlDsa65::sign(client_sk, &ch_sig_input);
 
     // === ServerHello ===
-    let session_id = derive_session_id(&h_after_ch, &FIXED_CLIENT_NONCE, &FIXED_SERVER_NONCE);
+    let session_id = derive_session_id(
+        &h_after_ch,
+        &FIXED_CLIENT_NONCE,
+        &FIXED_SERVER_NONCE,
+        server_agent_id.as_bytes(),
+    );
 
     let sh = ServerHello {
         protocol_version: PROTOCOL_VERSION,
@@ -213,13 +218,31 @@ pub fn generate_handshake_markdown() -> String {
 
     md.push_str("## Fixed Inputs\n\n");
     md.push_str("| Parameter | Value (hex) |\n|-----------|-------------|\n");
-    md.push_str(&format!("| TLS_BINDING | `{}` |\n", hex::encode(v.tls_binding)));
-    md.push_str(&format!("| Client nonce | `{}` |\n", hex::encode(v.client_nonce)));
-    md.push_str(&format!("| Server nonce | `{}` |\n", hex::encode(v.server_nonce)));
-    md.push_str(&format!("| Expires at | {} (2025-01-08T00:00:00Z) |\n", FIXED_EXPIRES_AT));
-    md.push_str(&format!("| Domain separator | `{}` (\"aafp-v1-handshake\") |\n", hex::encode(DOMAIN_SEPARATOR)));
+    md.push_str(&format!(
+        "| TLS_BINDING | `{}` |\n",
+        hex::encode(v.tls_binding)
+    ));
+    md.push_str(&format!(
+        "| Client nonce | `{}` |\n",
+        hex::encode(v.client_nonce)
+    ));
+    md.push_str(&format!(
+        "| Server nonce | `{}` |\n",
+        hex::encode(v.server_nonce)
+    ));
+    md.push_str(&format!(
+        "| Expires at | {} (2025-01-08T00:00:00Z) |\n",
+        FIXED_EXPIRES_AT
+    ));
+    md.push_str(&format!(
+        "| Domain separator | `{}` (\"aafp-v1-handshake\") |\n",
+        hex::encode(DOMAIN_SEPARATOR)
+    ));
     md.push_str(&format!("| Protocol version | {} |\n", PROTOCOL_VERSION));
-    md.push_str(&format!("| Key algorithm | {} (ML-DSA-65) |\n\n", KEY_ALG_ML_DSA_65));
+    md.push_str(&format!(
+        "| Key algorithm | {} (ML-DSA-65) |\n\n",
+        KEY_ALG_ML_DSA_65
+    ));
 
     md.push_str("## Key Material\n\n");
     md.push_str("### Client Public Key (ML-DSA-65, 1952 bytes)\n\n");
@@ -238,9 +261,18 @@ pub fn generate_handshake_markdown() -> String {
     md.push_str("`h = SHA-256(h_prev || cbor_bytes)`\n\n");
 
     md.push_str("| Checkpoint | SHA-256 (hex) |\n|-----------|---------------|\n");
-    md.push_str(&format!("| After ClientHello | `{}` |\n", v.transcript_after_client_hello_hex));
-    md.push_str(&format!("| After ServerHello | `{}` |\n", v.transcript_after_server_hello_hex));
-    md.push_str(&format!("| After ClientFinished | `{}` |\n\n", v.transcript_after_client_finished_hex));
+    md.push_str(&format!(
+        "| After ClientHello | `{}` |\n",
+        v.transcript_after_client_hello_hex
+    ));
+    md.push_str(&format!(
+        "| After ServerHello | `{}` |\n",
+        v.transcript_after_server_hello_hex
+    ));
+    md.push_str(&format!(
+        "| After ClientFinished | `{}` |\n\n",
+        v.transcript_after_client_finished_hex
+    ));
 
     md.push_str("## ClientHello\n\n");
     md.push_str("### CBOR (without signature, keys 1-6,8,10)\n\n");
@@ -256,7 +288,10 @@ pub fn generate_handshake_markdown() -> String {
     md.push_str("```\n");
     md.push_str(&v.client_hello_signature_hex);
     md.push_str("\n```\n\n");
-    md.push_str(&format!("**Verification**: {}\n\n", v.client_hello_signature_valid));
+    md.push_str(&format!(
+        "**Verification**: {}\n\n",
+        v.client_hello_signature_valid
+    ));
 
     md.push_str("## ServerHello\n\n");
     md.push_str("### CBOR (without signature, keys 1-7,9,10)\n\n");
@@ -272,7 +307,10 @@ pub fn generate_handshake_markdown() -> String {
     md.push_str("```\n");
     md.push_str(&v.server_hello_signature_hex);
     md.push_str("\n```\n\n");
-    md.push_str(&format!("**Verification**: {}\n\n", v.server_hello_signature_valid));
+    md.push_str(&format!(
+        "**Verification**: {}\n\n",
+        v.server_hello_signature_valid
+    ));
 
     md.push_str("## ClientFinished\n\n");
     md.push_str("### CBOR (without signature, key 1 only)\n\n");
@@ -288,7 +326,10 @@ pub fn generate_handshake_markdown() -> String {
     md.push_str("```\n");
     md.push_str(&v.client_finished_signature_hex);
     md.push_str("\n```\n\n");
-    md.push_str(&format!("**Verification**: {}\n\n", v.client_finished_signature_valid));
+    md.push_str(&format!(
+        "**Verification**: {}\n\n",
+        v.client_finished_signature_valid
+    ));
 
     md.push_str("## Session ID Derivation\n\n");
     md.push_str("`session_id = HKDF-Extract(salt=h_after_client_hello, ikm=client_nonce || server_nonce)`\n\n");
@@ -297,7 +338,9 @@ pub fn generate_handshake_markdown() -> String {
     md.push_str("## Second Implementation Verification Steps\n\n");
     md.push_str("1. Deserialize the client and server public keys from the hex above.\n");
     md.push_str("2. Compute `h_init = SHA-256(TLS_BINDING)`.\n");
-    md.push_str("3. Encode ClientHello as canonical CBOR (keys 1-6,8,10, excluding 7=sig, 9=mac).\n");
+    md.push_str(
+        "3. Encode ClientHello as canonical CBOR (keys 1-6,8,10, excluding 7=sig, 9=mac).\n",
+    );
     md.push_str("4. Compute `h_ch = SHA-256(h_init || cbor_client_hello)`.\n");
     md.push_str("5. Verify `h_ch` matches the transcript checkpoint.\n");
     md.push_str("6. Compute signature input = `\"aafp-v1-handshake\" || h_ch`.\n");
@@ -321,9 +364,18 @@ mod tests {
         let (server_pk, server_sk) = MlDsa65::keypair();
         let v = build_handshake_vector(&client_pk, &client_sk, &server_pk, &server_sk);
 
-        assert!(v.client_hello_signature_valid, "ClientHello signature must verify");
-        assert!(v.server_hello_signature_valid, "ServerHello signature must verify");
-        assert!(v.client_finished_signature_valid, "ClientFinished signature must verify");
+        assert!(
+            v.client_hello_signature_valid,
+            "ClientHello signature must verify"
+        );
+        assert!(
+            v.server_hello_signature_valid,
+            "ServerHello signature must verify"
+        );
+        assert!(
+            v.client_finished_signature_valid,
+            "ClientFinished signature must verify"
+        );
     }
 
     #[test]
@@ -352,12 +404,18 @@ mod tests {
         let (server_pk, server_sk) = MlDsa65::keypair();
         let v = build_handshake_vector(&client_pk, &client_sk, &server_pk, &server_sk);
 
-        // session_id = derive_session_id(h_after_ch, client_nonce, server_nonce)
+        // session_id = derive_session_id(h_after_ch, client_nonce, server_nonce, server_agent_id)
         let h_ch = hex::decode(&v.transcript_after_client_hello_hex).unwrap();
         let mut h_ch_arr = [0u8; 32];
         h_ch_arr.copy_from_slice(&h_ch);
 
-        let expected_sid = derive_session_id(&h_ch_arr, &FIXED_CLIENT_NONCE, &FIXED_SERVER_NONCE);
+        let server_agent_id = AgentId::from_public_key(&server_pk.0);
+        let expected_sid = derive_session_id(
+            &h_ch_arr,
+            &FIXED_CLIENT_NONCE,
+            &FIXED_SERVER_NONCE,
+            server_agent_id.as_bytes(),
+        );
         assert_eq!(
             hex::encode(expected_sid),
             v.session_id_hex,
@@ -409,7 +467,11 @@ mod tests {
         let sh_sig = hex::decode(&v.server_hello_signature_hex).unwrap();
         let cf_sig = hex::decode(&v.client_finished_signature_hex).unwrap();
 
-        assert_eq!(client_pk_bytes.len(), 1952, "ML-DSA-65 public key is 1952 bytes");
+        assert_eq!(
+            client_pk_bytes.len(),
+            1952,
+            "ML-DSA-65 public key is 1952 bytes"
+        );
         assert_eq!(server_pk_bytes.len(), 1952);
         assert_eq!(ch_sig.len(), 3309, "ML-DSA-65 signature is 3309 bytes");
         assert_eq!(sh_sig.len(), 3309);
@@ -442,7 +504,10 @@ mod tests {
 
     #[test]
     fn test_fixed_nonces_are_distinct() {
-        assert_ne!(FIXED_CLIENT_NONCE, FIXED_SERVER_NONCE, "nonces must be distinct");
+        assert_ne!(
+            FIXED_CLIENT_NONCE, FIXED_SERVER_NONCE,
+            "nonces must be distinct"
+        );
         assert_ne!(FIXED_CLIENT_NONCE, FIXED_TLS_BINDING);
         assert_ne!(FIXED_SERVER_NONCE, FIXED_TLS_BINDING);
     }
