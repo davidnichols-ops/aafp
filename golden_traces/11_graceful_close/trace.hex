@@ -1,0 +1,17 @@
+# Golden trace: 11_graceful_close
+# Description: Graceful CLOSE frame (standalone shutdown)
+# RFC reference: RFC-0002 §4.5
+# Total bytes: 48
+# Frames: 1
+
+# --- Frame 0 (offset 0, 48 bytes) ---
+#   Type: 0x05 (CLOSE)
+#   Flags: 0x00
+#   StreamID: 0
+#   PayloadLen: 20
+#   ExtLen: 0
+#   Description: CLOSE frame
+  00000030  01 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00    ................
+  00000030  00 00 00 14 00 00 00 00 00 00 00 00 a2 01 00 02    ................
+  00000030  6f 6e 6f 72 6d 61 6c 20 73 68 75 74 64 6f 77 6e    onormal shutdown
+

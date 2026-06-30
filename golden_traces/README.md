@@ -23,6 +23,14 @@ containing:
 | 7 | 07_rpc_request_response | 2 | 114 | success | Canonical RPC request/response on stream 42 |
 | 8 | 08_error_exchange | 3 | 159 | terminated | RPC error response + graceful CLOSE |
 | 9 | 09_discovery_announce | 2 | 10815 | success | Discovery announce with AgentRecord and peer list |
+| 10 | 10_ping_pong | 2 | 56 | success | PING/PONG keepalive exchange |
+| 11 | 11_graceful_close | 1 | 48 | terminated | Graceful CLOSE frame (standalone shutdown) |
+| 12 | 12_fatal_error | 1 | 79 | failure (2001) | Fatal ERROR frame (INVALID_SIGNATURE) |
+| 13 | 13_nonfatal_error | 1 | 65 | non-fatal | Non-fatal ERROR frame (UNKNOWN_METHOD) |
+| 14 | 14_capability_exchange | 2 | 123 | success | Capability exchange RPC (lookup + response) |
+| 15 | 15_data_with_extension | 1 | 54 | success | DATA frame with timestamp extension |
+| 16 | 16_full_handshake_with_transcripts | 3 | 14178 | success | Full handshake with transcript hashes and session ID |
+| 17 | 17_fragmented_data | 2 | 69 | success | Fragmented DATA frames (MORE flag) |
 
 ## Verification
 
@@ -74,8 +82,6 @@ Additional traces to capture as the implementation matures:
 - Expired AgentRecord
 - Mismatched key_algorithm
 - Multiple concurrent streams
-- Fragmented DATA frames (MORE flag)
 - Compressed payload
-- PING/PONG keepalive exchange
 - Non-critical unknown frame type (skip behavior)
 - Discovery lookup request/response

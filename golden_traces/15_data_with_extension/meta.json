@@ -1,0 +1,21 @@
+{
+  "name": "15_data_with_extension",
+  "description": "DATA frame with extension (timestamp extension)",
+  "rfc_reference": "RFC-0002 §3.3, §6",
+  "total_bytes": 54,
+  "outcome": "success",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 54,
+      "type": "0x01",
+      "type_name": "DATA",
+      "flags": "0x00",
+      "stream_id": 10,
+      "payload_length": 11,
+      "extension_length": 15,
+      "description": "DATA frame"
+    }
+  ]
+}

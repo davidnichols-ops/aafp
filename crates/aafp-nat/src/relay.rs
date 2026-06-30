@@ -5,7 +5,7 @@
 
 use aafp_core::Multiaddr;
 use aafp_identity::AgentId;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

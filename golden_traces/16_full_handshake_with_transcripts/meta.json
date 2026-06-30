@@ -1,0 +1,56 @@
+{
+  "name": "16_full_handshake_with_transcripts",
+  "description": "Complete successful handshake with transcript hashes",
+  "rfc_reference": "RFC-0002 §5",
+  "total_bytes": 14178,
+  "outcome": "success",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 5384,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 5356,
+      "extension_length": 0,
+      "description": "HANDSHAKE frame"
+    },
+    {
+      "index": 1,
+      "offset": 5384,
+      "length": 5417,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 5389,
+      "extension_length": 0,
+      "description": "HANDSHAKE frame"
+    },
+    {
+      "index": 2,
+      "offset": 10801,
+      "length": 3377,
+      "type": "0x02",
+      "type_name": "HANDSHAKE",
+      "flags": "0x00",
+      "stream_id": 0,
+      "payload_length": 3349,
+      "extension_length": 0,
+      "description": "HANDSHAKE frame"
+    }
+  ],
+  "transcript_hashes": [
+    {
+      "stage": "after_client_hello",
+      "hash": "ad7b69d9d1bf9e7b545144c167d7e623827bb2e8274877bfc5fe20a279725dd6"
+    },
+    {
+      "stage": "after_server_hello",
+      "hash": "546cd8e647d89fa3d511b37fb3acc3fdaf3d5d7089962b30261308ddc92bee5d"
+    }
+  ],
+  "session_id": "0e6a6d703be2a13842204f1ef988e7a908cb4fbc2946764bce6ae409d0dffcab"
+}

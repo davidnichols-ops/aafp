@@ -1,0 +1,31 @@
+# Golden trace: 14_capability_exchange
+# Description: Capability exchange RPC (lookup + response with capabilities)
+# RFC reference: RFC-0003 §4, RFC-0004 §3
+# Total bytes: 123
+# Frames: 2
+
+# --- Frame 0 (offset 0, 66 bytes) ---
+#   Type: 0x03 (RPC_REQUEST)
+#   Flags: 0x00
+#   StreamID: 5
+#   PayloadLen: 38
+#   ExtLen: 0
+#   Description: RPC_REQUEST frame
+  0000007b  01 03 00 00 00 00 00 00 00 00 00 05 00 00 00 00    ................
+  0000007b  00 00 00 26 00 00 00 00 00 00 00 00 a3 01 01 02    ...&............
+  0000007b  76 61 61 66 70 2e 63 61 70 61 62 69 6c 69 74 79    vaafp.capability
+  0000007b  2e 6c 6f 6f 6b 75 70 03 69 69 6e 66 65 72 65 6e    .lookup.iinferen
+  0000007b  63 65                                              ce
+
+# --- Frame 1 (offset 66, 57 bytes) ---
+#   Type: 0x04 (RPC_RESPONSE)
+#   Flags: 0x00
+#   StreamID: 5
+#   PayloadLen: 29
+#   ExtLen: 0
+#   Description: RPC_RESPONSE frame
+  0000007b  01 04 00 00 00 00 00 00 00 00 00 05 00 00 00 00    ................
+  0000007b  00 00 00 1d 00 00 00 00 00 00 00 00 a3 01 01 02    ................
+  0000007b  82 69 69 6e 66 65 72 65 6e 63 65 6b 74 72 61 6e    .iinferencektran
+  0000007b  73 6c 61 74 69 6f 6e 03 f6                         slation..
+

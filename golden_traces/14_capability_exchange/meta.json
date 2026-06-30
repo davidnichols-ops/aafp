@@ -1,0 +1,33 @@
+{
+  "name": "14_capability_exchange",
+  "description": "Capability exchange RPC (lookup + response with capabilities)",
+  "rfc_reference": "RFC-0003 §4, RFC-0004 §3",
+  "total_bytes": 123,
+  "outcome": "success",
+  "frames": [
+    {
+      "index": 0,
+      "offset": 0,
+      "length": 66,
+      "type": "0x03",
+      "type_name": "RPC_REQUEST",
+      "flags": "0x00",
+      "stream_id": 5,
+      "payload_length": 38,
+      "extension_length": 0,
+      "description": "RPC_REQUEST frame"
+    },
+    {
+      "index": 1,
+      "offset": 66,
+      "length": 57,
+      "type": "0x04",
+      "type_name": "RPC_RESPONSE",
+      "flags": "0x00",
+      "stream_id": 5,
+      "payload_length": 29,
+      "extension_length": 0,
+      "description": "RPC_RESPONSE frame"
+    }
+  ]
+}

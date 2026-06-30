@@ -1,0 +1,19 @@
+# Golden trace: 13_nonfatal_error
+# Description: Non-fatal ERROR frame (UNKNOWN_METHOD 5002)
+# RFC reference: RFC-0002 §4.6, RFC-0005 §3.6
+# Total bytes: 65
+# Frames: 1
+
+# --- Frame 0 (offset 0, 65 bytes) ---
+#   Type: 0x06 (ERROR)
+#   Flags: 0x00
+#   StreamID: 42
+#   PayloadLen: 37
+#   ExtLen: 0
+#   Description: ERROR frame
+  00000041  01 06 00 00 00 00 00 00 00 00 00 2a 00 00 00 00    ...........*....
+  00000041  00 00 00 25 00 00 00 00 00 00 00 00 a4 01 19 13    ...%............
+  00000041  8a 02 78 19 52 50 43 20 6d 65 74 68 6f 64 20 6e    ..x.RPC method n
+  00000041  6f 74 20 72 65 63 6f 67 6e 69 7a 65 64 03 f6 04    ot recognized...
+  00000041  f4                                                 .
+
