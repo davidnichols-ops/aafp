@@ -547,12 +547,8 @@ impl<'a> FrameProcessingPipeline<'a> {
                     format!("frame decode error: {}", other),
                 ),
             };
-            // Determine phase: if it's a size issue, it's Phase 4/5
-            let phase = if code == aafp_core::error::codes::FRAME_TOO_LARGE {
-                PipelinePhase::Phase4ReadPayload
-            } else {
-                PipelinePhase::Phase4ReadPayload
-            };
+            // Both size and decode errors are attributed to Phase 4 (payload read).
+            let phase = PipelinePhase::Phase4ReadPayload;
             PipelineError::new(phase, code, fatal, msg)
         })
     }
@@ -598,15 +594,13 @@ impl<'a> FrameProcessingPipeline<'a> {
 
     /// Phase 9: Validate transcript state (handshake frames only).
     fn validate_transcript_state(&self, frame: &Frame) -> Result<(), PipelineError> {
-        if frame.frame_type == FrameType::Handshake {
-            if !self.ctx.transcript_state_valid() {
-                return Err(PipelineError::new(
-                    PipelinePhase::Phase9ValidateTranscript,
-                    aafp_core::error::codes::HANDSHAKE_FAILED,
-                    true,
-                    "transcript state invalid for handshake frame",
-                ));
-            }
+        if frame.frame_type == FrameType::Handshake && !self.ctx.transcript_state_valid() {
+            return Err(PipelineError::new(
+                PipelinePhase::Phase9ValidateTranscript,
+                aafp_core::error::codes::HANDSHAKE_FAILED,
+                true,
+                "transcript state invalid for handshake frame",
+            ));
         }
         Ok(())
     }
