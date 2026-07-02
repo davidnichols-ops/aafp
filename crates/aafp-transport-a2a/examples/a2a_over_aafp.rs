@@ -3,14 +3,15 @@
 //! This example starts a server agent that implements a simple A2A handler,
 //! then connects a client agent that sends a message, receives streaming
 //! updates, and cancels the task.
+//! Updated for A2A v1.0: Role enum, flat Part, SCREAMING_SNAKE_CASE states.
 
 use std::sync::Arc;
 
 use aafp_sdk::AgentBuilder;
 use aafp_transport_a2a::{
     dispatch_request, A2aClient, A2aError, A2aServerHandler, AgentCapabilities, AgentCard, Message,
-    Part, PushNotificationConfig, Task, TaskListFilter, TaskState, TaskStatus, TaskUpdateEvent,
-    TextPart,
+    Part, PushNotificationConfig, Role, Task, TaskListFilter, TaskState, TaskStatus,
+    TaskUpdateEvent,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -35,20 +36,19 @@ impl A2aServerHandler for DemoAgent {
         let id = *counter;
         *counter += 1;
 
-        println!("  [server] Received message from: {}", message.role);
+        println!("  [server] Received message from: {:?}", message.role);
 
         let task = Task {
             id: format!("task-{id}"),
-            context_id: format!("ctx-{id}"),
+            context_id: Some(format!("ctx-{id}")),
             status: TaskStatus {
-                state: TaskState::Working,
+                state: TaskState::TaskStateWorking,
                 timestamp: Some("2026-07-01T12:00:00Z".to_string()),
                 message: None,
             },
             artifacts: None,
             history: Some(vec![message]),
             metadata: None,
-            kind: None,
         };
 
         println!("  [server] Created task: {}", task.id);
@@ -65,27 +65,25 @@ impl A2aServerHandler for DemoAgent {
         let events = vec![
             TaskUpdateEvent::Status(aafp_transport_a2a::TaskStatusUpdateEvent {
                 task_id: task.id.clone(),
-                context_id: task.context_id.clone(),
+                context_id: task.context_id.clone().unwrap_or_default(),
                 status: TaskStatus {
-                    state: TaskState::Working,
+                    state: TaskState::TaskStateWorking,
                     timestamp: Some("2026-07-01T12:00:01Z".to_string()),
                     message: None,
                 },
                 r#final: Some(false),
                 metadata: None,
-                kind: None,
             }),
             TaskUpdateEvent::Status(aafp_transport_a2a::TaskStatusUpdateEvent {
                 task_id: task.id.clone(),
-                context_id: task.context_id.clone(),
+                context_id: task.context_id.clone().unwrap_or_default(),
                 status: TaskStatus {
-                    state: TaskState::Completed,
+                    state: TaskState::TaskStateCompleted,
                     timestamp: Some("2026-07-01T12:00:02Z".to_string()),
                     message: None,
                 },
                 r#final: Some(true),
                 metadata: None,
-                kind: None,
             }),
         ];
 
@@ -155,6 +153,7 @@ impl A2aServerHandler for DemoAgent {
             default_output_modes: vec!["text".to_string()],
             skills: vec![],
             supports_authenticated_extended_agent_card: None,
+            supported_interfaces: None,
         })
     }
 }
@@ -209,15 +208,14 @@ async fn main() -> anyhow::Result<()> {
     // 1. Send a message
     println!("\n--- Step 1: SendMessage ---");
     let message = Message {
-        role: "user".to_string(),
-        parts: Some(vec![Part::Text(TextPart {
-            text: "Please analyze the data".to_string(),
-            metadata: None,
-        })]),
-        message_id: Some("msg-1".to_string()),
+        role: Role::RoleUser,
+        parts: vec![Part::text("Please analyze the data")],
+        message_id: "msg-1".to_string(),
         context_id: None,
         task_id: None,
         metadata: None,
+        extensions: None,
+        reference_task_ids: None,
     };
     let task = client.send_message(message).await?;
     println!(
@@ -228,15 +226,14 @@ async fn main() -> anyhow::Result<()> {
     // 2. Send a streaming message
     println!("\n--- Step 2: SendStreamingMessage ---");
     let stream_message = Message {
-        role: "user".to_string(),
-        parts: Some(vec![Part::Text(TextPart {
-            text: "Stream me the results".to_string(),
-            metadata: None,
-        })]),
-        message_id: Some("msg-2".to_string()),
+        role: Role::RoleUser,
+        parts: vec![Part::text("Stream me the results")],
+        message_id: "msg-2".to_string(),
         context_id: None,
         task_id: None,
         metadata: None,
+        extensions: None,
+        reference_task_ids: None,
     };
     let events = client.send_streaming_message(stream_message).await?;
     println!("[client] Received {} streaming events", events.len());

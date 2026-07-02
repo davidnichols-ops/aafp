@@ -2,6 +2,10 @@
 //!
 //! Each method serializes a JSON-RPC 2.0 request, sends it via the AAFP
 //! transport, reads the response, and deserializes the result.
+//!
+//! Per A2A v1.0, SendMessage params are wrapped in a SendMessageRequest
+//! (`{"message": {...}}`), and Task responses are wrapped in
+//! `{"task": {...}}`.
 
 use crate::error::{A2aError, AafpA2aError};
 use crate::server::TaskUpdateEvent;
@@ -91,10 +95,16 @@ impl A2aClient {
     }
 
     /// Send a message to the agent. Returns the created or updated Task.
+    ///
+    /// Per A2A v1.0, params are wrapped in `{"message": {...}}` and the
+    /// response result contains `{"task": {...}}`.
     pub async fn send_message(&mut self, message: Message) -> Result<Task, AafpA2aError> {
-        let params = serde_json::to_value(&message)?;
+        let params = serde_json::json!({ "message": serde_json::to_value(&message)? });
         let result = self.request("SendMessage", params).await?;
-        Ok(serde_json::from_value(result)?)
+        let response: SendMessageResponse = serde_json::from_value(result)?;
+        response
+            .task
+            .ok_or(AafpA2aError::A2a(A2aError::InvalidAgentResponse))
     }
 
     /// Send a streaming message. Returns a sequence of update events.
@@ -106,7 +116,7 @@ impl A2aClient {
         &mut self,
         message: Message,
     ) -> Result<Vec<TaskUpdateEvent>, AafpA2aError> {
-        let params = serde_json::to_value(&message)?;
+        let params = serde_json::json!({ "message": serde_json::to_value(&message)? });
         let result = self.request("SendStreamingMessage", params).await?;
         Ok(serde_json::from_value(result)?)
     }
@@ -115,21 +125,30 @@ impl A2aClient {
     pub async fn get_task(&mut self, task_id: &str) -> Result<Task, AafpA2aError> {
         let params = serde_json::json!({ "id": task_id });
         let result = self.request("GetTask", params).await?;
-        Ok(serde_json::from_value(result)?)
+        let task_val = result
+            .get("task")
+            .cloned()
+            .ok_or(AafpA2aError::A2a(A2aError::InvalidAgentResponse))?;
+        Ok(serde_json::from_value(task_val)?)
     }
 
     /// List tasks matching the filter.
     pub async fn list_tasks(&mut self, filter: TaskListFilter) -> Result<Vec<Task>, AafpA2aError> {
         let params = serde_json::to_value(&filter)?;
         let result = self.request("ListTasks", params).await?;
-        Ok(serde_json::from_value(result)?)
+        let response: ListTasksResponse = serde_json::from_value(result)?;
+        Ok(response.tasks)
     }
 
     /// Cancel a task by ID.
     pub async fn cancel_task(&mut self, task_id: &str) -> Result<Task, AafpA2aError> {
         let params = serde_json::json!({ "id": task_id });
         let result = self.request("CancelTask", params).await?;
-        Ok(serde_json::from_value(result)?)
+        let task_val = result
+            .get("task")
+            .cloned()
+            .ok_or(AafpA2aError::A2a(A2aError::InvalidAgentResponse))?;
+        Ok(serde_json::from_value(task_val)?)
     }
 
     /// Subscribe to task updates. Returns a sequence of update events.

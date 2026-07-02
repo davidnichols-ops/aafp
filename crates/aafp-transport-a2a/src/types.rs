@@ -5,7 +5,11 @@
 //! - protobuf Message → JSON object (camelCase fields)
 //! - bytes → base64 string
 //! - Timestamp → ISO 8601 string in UTC
-//! - enum → string
+//! - enum → SCREAMING_SNAKE_CASE string (ProtoJSON convention, A2A v1.0 §5.5)
+//!
+//! Updated for A2A v1.0.0 spec (2025): the `kind` discriminator on Part was
+//! removed (Appendix A.2.1), TaskState/Role use ProtoJSON SCREAMING_SNAKE_CASE,
+//! and Message gained `extensions` and `referenceTaskIds` fields.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +19,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
-    pub context_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_id: Option<String>,
     pub status: TaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifacts: Option<Vec<Artifact>>,
@@ -23,8 +28,6 @@ pub struct Task {
     pub history: Option<Vec<Message>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,16 +40,30 @@ pub struct TaskStatus {
     pub message: Option<Message>,
 }
 
+/// Task lifecycle states per A2A v1.0 §4.1.3.
+/// Serialized as SCREAMING_SNAKE_CASE per ProtoJSON (A2A v1.0 §5.5).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TaskState {
-    Submitted,
-    Working,
-    InputRequired,
-    Completed,
-    Canceled,
-    Failed,
-    Unknown,
+    TaskStateUnspecified,
+    TaskStateSubmitted,
+    TaskStateWorking,
+    TaskStateCompleted,
+    TaskStateFailed,
+    TaskStateCanceled,
+    TaskStateInputRequired,
+    TaskStateRejected,
+    TaskStateAuthRequired,
+}
+
+/// Message sender role per A2A v1.0 §4.1.5.
+/// Serialized as SCREAMING_SNAKE_CASE per ProtoJSON (A2A v1.0 §5.5).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Role {
+    RoleUnspecified,
+    RoleUser,
+    RoleAgent,
 }
 
 // --- Messages ---
@@ -54,58 +71,98 @@ pub enum TaskState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
-    pub role: String, // "user" or "agent"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parts: Option<Vec<Part>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message_id: Option<String>,
+    pub role: Role,
+    pub parts: Vec<Part>,
+    pub message_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_task_ids: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum Part {
-    Text(TextPart),
-    Data(DataPart),
-    File(FilePart),
-}
-
+/// A Part is a container for one section of communication content.
+///
+/// Per A2A v1.0 §4.1.6, exactly one of `text`, `raw`, `url`, `data` MUST be
+/// set. The v0.3 `kind` discriminator was removed in v1.0 (Appendix A.2.1).
+/// The `metadata`, `filename`, and `mediaType` fields are optional and
+/// available for all part types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TextPart {
-    pub text: String,
+pub struct Part {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>, // base64-encoded bytes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DataPart {
-    pub data: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
-}
+impl Part {
+    /// Create a text part.
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: Some(text.into()),
+            raw: None,
+            url: None,
+            data: None,
+            metadata: None,
+            filename: None,
+            media_type: None,
+        }
+    }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FilePart {
-    pub file: FileWithBytes,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
-}
+    /// Create a data part with structured JSON content.
+    pub fn data(data: serde_json::Value) -> Self {
+        Self {
+            text: None,
+            raw: None,
+            url: None,
+            data: Some(data),
+            metadata: None,
+            filename: None,
+            media_type: None,
+        }
+    }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileWithBytes {
-    pub bytes: String, // base64
-    pub mime_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    /// Create a file part from base64-encoded bytes.
+    pub fn file_bytes(bytes: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self {
+            text: None,
+            raw: Some(bytes.into()),
+            url: None,
+            data: None,
+            metadata: None,
+            filename: None,
+            media_type: Some(mime_type.into()),
+        }
+    }
+
+    /// Create a file part from a URL.
+    pub fn file_url(url: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self {
+            text: None,
+            raw: None,
+            url: Some(url.into()),
+            data: None,
+            metadata: None,
+            filename: None,
+            media_type: Some(mime_type.into()),
+        }
+    }
 }
 
 // --- Artifacts ---
@@ -121,24 +178,33 @@ pub struct Artifact {
     pub parts: Vec<Part>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<Vec<String>>,
 }
 
 // --- Streaming events ---
 
+/// Status update event sent during streaming operations.
+/// Per A2A v1.0 §4.2.1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskStatusUpdateEvent {
     pub task_id: String,
     pub context_id: String,
     pub status: TaskStatus,
+    /// `final` signals the last event in a stream. RFC 0008 uses this for
+    /// stream completion signaling. The v1.0 data model places completion
+    /// signaling in metadata, but `final` is retained for backward
+    /// compatibility and is ignored by implementations that don't use it
+    /// (per §5.7 "Unrecognized Fields").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub r#final: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
 }
 
+/// Artifact update event sent during streaming operations.
+/// Per A2A v1.0 §4.2.2.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskArtifactUpdateEvent {
@@ -151,8 +217,6 @@ pub struct TaskArtifactUpdateEvent {
     pub last_chunk: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
 }
 
 // --- Push notifications ---
@@ -190,6 +254,8 @@ pub struct AgentCard {
     pub skills: Vec<AgentSkill>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supports_authenticated_extended_agent_card: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supported_interfaces: Option<Vec<AgentInterface>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,15 +285,79 @@ pub struct AgentSkill {
     pub default_output_modes: Option<Vec<String>>,
 }
 
-// --- Task query filter ---
+/// A supported protocol interface, used for binding declaration.
+/// Per A2A v1.0 §4.4.6 and RFC 0008 §"Agent Card Declaration".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInterface {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_binding: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<String>,
+}
 
+// --- Task query filter (ListTasks params) ---
+
+/// Filter/pagination parameters for ListTasks.
+/// Per A2A v1.0 §9.4.4, field names are `contextId`, `status`, `pageSize`,
+/// `pageToken`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskListFilter {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub state: Option<TaskState>,
+    pub status: Option<TaskState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
+    pub page_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_token: Option<String>,
+}
+
+// --- Response wrappers ---
+
+/// SendMessageResponse per A2A v1.0 §9.4.1.
+/// Contains either a Task or a Message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendMessageResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<Task>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<Message>,
+}
+
+impl From<Task> for SendMessageResponse {
+    fn from(task: Task) -> Self {
+        Self {
+            task: Some(task),
+            message: None,
+        }
+    }
+}
+
+/// ListTasksResponse per A2A v1.0 §9.4.4.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTasksResponse {
+    pub tasks: Vec<Task>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_page_token: Option<String>,
+}
+
+impl From<Vec<Task>> for ListTasksResponse {
+    fn from(tasks: Vec<Task>) -> Self {
+        let len = tasks.len() as u32;
+        Self {
+            tasks,
+            total_size: Some(len),
+            page_size: Some(len),
+            next_page_token: Some(String::new()),
+        }
+    }
 }

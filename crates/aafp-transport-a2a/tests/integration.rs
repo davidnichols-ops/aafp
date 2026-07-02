@@ -2,6 +2,7 @@
 //!
 //! These tests start a real QUIC server, perform the AAFP handshake, and
 //! exchange A2A JSON-RPC messages over the secure channel.
+//! Updated for A2A v1.0: Role enum, flat Part, SCREAMING_SNAKE_CASE states.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use std::sync::Arc;
 use aafp_sdk::AgentBuilder;
 use aafp_transport_a2a::{
     dispatch_request, A2aClient, A2aError, A2aServerHandler, Message, Part, PushNotificationConfig,
-    Task, TaskListFilter, TaskState, TaskStatus, TaskUpdateEvent, TextPart,
+    Role, Task, TaskListFilter, TaskState, TaskStatus, TaskUpdateEvent,
 };
 use async_trait::async_trait;
 use tokio::sync::Mutex;
@@ -36,16 +37,15 @@ impl TestHandler {
 
         let task = Task {
             id: format!("task-{id}"),
-            context_id: format!("ctx-{id}"),
+            context_id: Some(format!("ctx-{id}")),
             status: TaskStatus {
-                state: TaskState::Working,
+                state: TaskState::TaskStateWorking,
                 timestamp: Some("2026-07-01T00:00:00Z".to_string()),
                 message: None,
             },
             artifacts: None,
             history: Some(vec![message]),
             metadata: None,
-            kind: None,
         };
         self.tasks
             .lock()
@@ -68,11 +68,10 @@ impl A2aServerHandler for TestHandler {
         let task = self.create_task(message).await;
         let event = aafp_transport_a2a::TaskStatusUpdateEvent {
             task_id: task.id.clone(),
-            context_id: task.context_id.clone(),
+            context_id: task.context_id.clone().unwrap_or_default(),
             status: task.status.clone(),
             r#final: Some(true),
             metadata: None,
-            kind: None,
         };
         Ok(vec![TaskUpdateEvent::Status(event)])
     }
@@ -95,7 +94,7 @@ impl A2aServerHandler for TestHandler {
         let task = tasks
             .get_mut(&task_id)
             .ok_or(A2aError::TaskNotFound { task_id })?;
-        task.status.state = TaskState::Canceled;
+        task.status.state = TaskState::TaskStateCanceled;
         Ok(task.clone())
     }
 
@@ -109,11 +108,10 @@ impl A2aServerHandler for TestHandler {
             .ok_or(A2aError::TaskNotFound { task_id })?;
         let event = aafp_transport_a2a::TaskStatusUpdateEvent {
             task_id: task.id,
-            context_id: task.context_id,
+            context_id: task.context_id.unwrap_or_default(),
             status: task.status,
             r#final: Some(true),
             metadata: None,
-            kind: None,
         };
         Ok(vec![TaskUpdateEvent::Status(event)])
     }
@@ -164,6 +162,7 @@ impl A2aServerHandler for TestHandler {
             default_output_modes: vec!["text".to_string()],
             skills: vec![],
             supports_authenticated_extended_agent_card: None,
+            supported_interfaces: None,
         })
     }
 }
@@ -194,6 +193,20 @@ async fn start_test_server(
     (addr, handle)
 }
 
+/// Helper to create a user message with a text part.
+fn user_message(text: &str, msg_id: &str) -> Message {
+    Message {
+        role: Role::RoleUser,
+        parts: vec![Part::text(text)],
+        message_id: msg_id.to_string(),
+        context_id: None,
+        task_id: None,
+        metadata: None,
+        extensions: None,
+        reference_task_ids: None,
+    }
+}
+
 #[tokio::test]
 async fn test_send_message() {
     let handler = Arc::new(TestHandler::new());
@@ -207,21 +220,12 @@ async fn test_send_message() {
 
     let mut client = A2aClient::connect(&client_agent, &addr).await.unwrap();
 
-    let message = Message {
-        role: "user".to_string(),
-        parts: Some(vec![Part::Text(TextPart {
-            text: "Hello, agent!".to_string(),
-            metadata: None,
-        })]),
-        message_id: None,
-        context_id: None,
-        task_id: None,
-        metadata: None,
-    };
-
-    let task = client.send_message(message).await.unwrap();
+    let task = client
+        .send_message(user_message("Hello, agent!", "msg-1"))
+        .await
+        .unwrap();
     assert!(task.id.starts_with("task-"));
-    assert_eq!(task.status.state, TaskState::Working);
+    assert_eq!(task.status.state, TaskState::TaskStateWorking);
 
     client.close().await.unwrap();
 }
@@ -240,18 +244,10 @@ async fn test_get_list_cancel_task() {
     let mut client = A2aClient::connect(&client_agent, &addr).await.unwrap();
 
     // Create a task
-    let message = Message {
-        role: "user".to_string(),
-        parts: Some(vec![Part::Text(TextPart {
-            text: "Do something".to_string(),
-            metadata: None,
-        })]),
-        message_id: None,
-        context_id: None,
-        task_id: None,
-        metadata: None,
-    };
-    let task = client.send_message(message).await.unwrap();
+    let task = client
+        .send_message(user_message("Do something", "msg-1"))
+        .await
+        .unwrap();
     let task_id = task.id.clone();
 
     // Get the task
@@ -264,7 +260,7 @@ async fn test_get_list_cancel_task() {
 
     // Cancel the task
     let canceled = client.cancel_task(&task_id).await.unwrap();
-    assert_eq!(canceled.status.state, TaskState::Canceled);
+    assert_eq!(canceled.status.state, TaskState::TaskStateCanceled);
 
     client.close().await.unwrap();
 }
@@ -282,19 +278,10 @@ async fn test_streaming_message() {
 
     let mut client = A2aClient::connect(&client_agent, &addr).await.unwrap();
 
-    let message = Message {
-        role: "user".to_string(),
-        parts: Some(vec![Part::Text(TextPart {
-            text: "Stream me updates".to_string(),
-            metadata: None,
-        })]),
-        message_id: None,
-        context_id: None,
-        task_id: None,
-        metadata: None,
-    };
-
-    let events = client.send_streaming_message(message).await.unwrap();
+    let events = client
+        .send_streaming_message(user_message("Stream me updates", "msg-1"))
+        .await
+        .unwrap();
     assert!(!events.is_empty());
 
     // The last event should have final: true

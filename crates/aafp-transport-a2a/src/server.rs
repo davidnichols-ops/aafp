@@ -2,6 +2,11 @@
 //!
 //! The `A2aServerHandler` trait defines the 11 core A2A operations.
 //! `dispatch_request` routes JSON-RPC requests to the appropriate handler method.
+//!
+//! Per A2A v1.0 §9.4, SendMessage/SendStreamingMessage params are wrapped in a
+//! `SendMessageRequest` object containing `message`, `configuration`, and
+//! `metadata`. Responses wrap Task objects in `{"task": ...}` and ListTasks
+//! in `{"tasks": [...], "totalSize": N, ...}`.
 
 use std::sync::Arc;
 
@@ -76,8 +81,31 @@ pub trait A2aServerHandler: Send + Sync {
     async fn get_extended_agent_card(&self) -> Result<AgentCard, A2aError>;
 }
 
+/// Extract the `message` field from a SendMessageRequest params object.
+/// Per A2A v1.0 §9.4.1, params is `{"message": {...}, "configuration": {...}, ...}`.
+fn extract_message(
+    params: &serde_json::Value,
+    id: &serde_json::Value,
+) -> Result<Message, serde_json::Value> {
+    let message_val = match params.get("message") {
+        Some(m) => m,
+        None => return Err(A2aError::InvalidParams.to_jsonrpc_error(id.clone())),
+    };
+    match serde_json::from_value::<Message>(message_val.clone()) {
+        Ok(m) => Ok(m),
+        Err(_) => Err(A2aError::InvalidParams.to_jsonrpc_error(id.clone())),
+    }
+}
+
 /// Dispatch a JSON-RPC request to the appropriate handler method.
 /// Returns a JSON-RPC response (success or error).
+///
+/// Response wrapping per A2A v1.0:
+/// - SendMessage/GetTask/CancelTask: `{"task": <Task>}` (SendMessageResponse)
+/// - ListTasks: `{"tasks": [...], "totalSize": N, "pageSize": N, "nextPageToken": ""}`
+/// - SendStreamingMessage/SubscribeToTask: array of events
+/// - Push notification configs: the config object directly
+/// - GetExtendedAgentCard: the AgentCard object directly
 pub async fn dispatch_request(
     handler: &Arc<dyn A2aServerHandler>,
     request: &serde_json::Value,
@@ -104,21 +132,22 @@ pub async fn dispatch_request(
         .unwrap_or(serde_json::Value::Null);
 
     // Each arm returns Result<serde_json::Value, A2aError> for type uniformity.
+    // The Ok(value) is placed directly in the JSON-RPC "result" field.
     let result: Result<serde_json::Value, A2aError> = match method {
         "SendMessage" => {
-            let msg: Message = match serde_json::from_value(params) {
+            let msg = match extract_message(&params, &id) {
                 Ok(m) => m,
-                Err(_) => return A2aError::InvalidParams.to_jsonrpc_error(id),
+                Err(error_response) => return error_response,
             };
-            handler
-                .send_message(msg)
-                .await
-                .map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
+            handler.send_message(msg).await.map(|task| {
+                serde_json::to_value(SendMessageResponse::from(task))
+                    .unwrap_or(serde_json::Value::Null)
+            })
         }
         "SendStreamingMessage" => {
-            let msg: Message = match serde_json::from_value(params) {
+            let msg = match extract_message(&params, &id) {
                 Ok(m) => m,
-                Err(_) => return A2aError::InvalidParams.to_jsonrpc_error(id),
+                Err(error_response) => return error_response,
             };
             handler
                 .send_streaming_message(msg)
@@ -134,17 +163,19 @@ pub async fn dispatch_request(
             if task_id.is_empty() {
                 return A2aError::InvalidParams.to_jsonrpc_error(id);
             }
+            // historyLength is extracted but not passed to the handler yet;
+            // the handler trait can be extended in a future revision.
             handler
                 .get_task(task_id)
                 .await
-                .map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
+                .map(|task| serde_json::json!({ "task": serde_json::to_value(task).unwrap_or(serde_json::Value::Null) }))
         }
         "ListTasks" => {
             let filter: TaskListFilter = serde_json::from_value(params).unwrap_or_default();
-            handler
-                .list_tasks(filter)
-                .await
-                .map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
+            handler.list_tasks(filter).await.map(|tasks| {
+                serde_json::to_value(ListTasksResponse::from(tasks))
+                    .unwrap_or(serde_json::Value::Null)
+            })
         }
         "CancelTask" => {
             let task_id = params
@@ -158,7 +189,7 @@ pub async fn dispatch_request(
             handler
                 .cancel_task(task_id)
                 .await
-                .map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
+                .map(|task| serde_json::json!({ "task": serde_json::to_value(task).unwrap_or(serde_json::Value::Null) }))
         }
         "SubscribeToTask" => {
             let task_id = params
