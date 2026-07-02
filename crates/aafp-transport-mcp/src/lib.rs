@@ -359,13 +359,8 @@ impl AafpMcpTransport {
 
 /// Extract TLS channel binding from a QUIC connection using the TLS exporter.
 fn extract_tls_binding(conn: &QuicConnection) -> Result<[u8; 32], AafpMcpError> {
-    let mut binding = [0u8; 32];
-    conn.raw()
-        .export_keying_material(&mut binding, TLS_EXPORTER_LABEL.as_bytes(), &[])
-        .map_err(|e| {
-            AafpMcpError::Sdk(SdkError::Handshake(format!("TLS exporter failed: {e:?}")))
-        })?;
-    Ok(binding)
+    conn.export_tls_binding(TLS_EXPORTER_LABEL.as_bytes(), &[])
+        .map_err(|e| AafpMcpError::Sdk(SdkError::Handshake(e.to_string())))
 }
 
 /// Read an AAFP DATA frame from a QUIC receive stream and return the payload.

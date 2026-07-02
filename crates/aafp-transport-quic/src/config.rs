@@ -254,12 +254,14 @@ mod tests {
         let handle = tokio::spawn(async move {
             let conn = server_clone.accept().await.unwrap();
             // handshake_data is present once TLS completes with ALPN.
+            #[allow(deprecated)]
             assert!(conn.raw().handshake_data().is_some());
             tokio::time::sleep(Duration::from_millis(50)).await;
         });
 
         // Connection succeeds only if ALPN negotiation succeeds.
         let conn = client.dial(&server_addr).await.unwrap();
+        #[allow(deprecated)]
         assert!(conn.raw().handshake_data().is_some());
 
         handle.await.unwrap();

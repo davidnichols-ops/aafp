@@ -109,14 +109,9 @@ impl AgentServer {
         *self.accepted_count.lock().await += 1;
 
         // Extract TLS channel binding
-        let mut tls_binding = [0u8; 32];
-        conn.raw()
-            .export_keying_material(
-                &mut tls_binding,
-                aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(),
-                &[],
-            )
-            .map_err(|e| SdkError::Handshake(format!("TLS exporter failed: {e:?}")))?;
+        let tls_binding = conn
+            .export_tls_binding(aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(), &[])
+            .map_err(|e| SdkError::Handshake(e.to_string()))?;
 
         // Drive the AAFP v1 handshake
         let (mut session, conn, peer_info) =

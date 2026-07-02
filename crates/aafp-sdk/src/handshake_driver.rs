@@ -644,13 +644,8 @@ mod tests {
                 let conn = server_transport.accept().await.unwrap();
 
                 // Extract TLS binding
-                let mut tls_binding = [0u8; 32];
-                conn.raw()
-                    .export_keying_material(
-                        &mut tls_binding,
-                        aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(),
-                        &[],
-                    )
+                let tls_binding = conn
+                    .export_tls_binding(aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(), &[])
                     .unwrap();
 
                 // Drive server handshake
@@ -669,13 +664,8 @@ mod tests {
         let conn = client_transport.dial(&server_addr).await.unwrap();
 
         // Extract TLS binding
-        let mut tls_binding = [0u8; 32];
-        conn.raw()
-            .export_keying_material(
-                &mut tls_binding,
-                aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(),
-                &[],
-            )
+        let tls_binding = conn
+            .export_tls_binding(aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(), &[])
             .unwrap();
 
         // Drive client handshake

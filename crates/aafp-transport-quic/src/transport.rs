@@ -169,7 +169,46 @@ impl QuicConnection {
         self.conn.close(code.into(), reason);
     }
 
+    /// Export TLS channel binding material using the TLS exporter (RFC 5705).
+    ///
+    /// This wraps `quinn::Connection::export_keying_material()` to provide
+    /// access to TLS channel binding without exposing the underlying quinn
+    /// connection. The binding material is used by the AAFP v1 handshake to
+    /// bind the application-layer identity verification to the TLS session,
+    /// preventing man-in-the-middle attacks.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - A label string that identifies the intended use of the
+    ///   exported keying material (e.g., `TLS_EXPORTER_LABEL`).
+    /// * `context` - Optional context string (pass empty `&[]` if not needed).
+    ///
+    /// # Returns
+    ///
+    /// A 32-byte binding material derived from the TLS session keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Transport` if the TLS exporter fails (e.g., if the
+    /// handshake has not completed or the connection is closed).
+    pub fn export_tls_binding(&self, label: &[u8], context: &[u8]) -> Result<[u8; 32], Error> {
+        let mut binding = [0u8; 32];
+        self.conn
+            .export_keying_material(&mut binding, label, context)
+            .map_err(|e| Error::Transport(format!("TLS exporter failed: {e:?}")))?;
+        Ok(binding)
+    }
+
     /// Get the quinn connection (for advanced use).
+    ///
+    /// **Deprecated:** This method exposes the underlying `quinn::Connection`,
+    /// creating a leaky abstraction. New code should use `export_tls_binding()`
+    /// or other typed methods instead. This method is retained for backwards
+    /// compatibility but may be removed in a future version.
+    #[deprecated(
+        since = "0.1.0",
+        note = "use `export_tls_binding()` or other typed methods instead"
+    )]
     pub fn raw(&self) -> &Connection {
         &self.conn
     }
