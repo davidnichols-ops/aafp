@@ -125,10 +125,9 @@
 use std::sync::Arc;
 
 use aafp_core::{AuthorizationProvider, Error as CoreError};
-use aafp_crypto::TLS_EXPORTER_LABEL;
 use aafp_identity::AgentId;
 use aafp_messaging::{encode_frame, Frame, AAFP_VERSION, FRAME_HEADER_SIZE};
-use aafp_sdk::{drive_client_handshake, drive_server_handshake, Agent, SdkError};
+use aafp_sdk::{establish_session, Agent, SdkError};
 use aafp_transport_quic::{QuicConnection, QuicRecvStream, QuicSendStream};
 use rmcp::service::{RxJsonRpcMessage, ServiceRole, TxJsonRpcMessage};
 use rmcp::transport::Transport;
@@ -223,31 +222,13 @@ impl AafpMcpTransport {
         // 1. Establish QUIC connection
         let conn = agent.transport.dial(addr).await?;
 
-        // 2. Extract TLS channel binding
-        let tls_binding = extract_tls_binding(&conn)?;
+        // 2. Drive AAFP v1 handshake + authorization + session transitions
+        let (_session, conn, peer_info) =
+            establish_session(conn, &agent.keypair, auth_provider, true, None)
+                .await
+                .map_err(AafpMcpError::from)?;
 
-        // 3. Drive AAFP v1 handshake
-        let (mut session, conn, peer_info) =
-            drive_client_handshake(conn, &agent.keypair, tls_binding, None).await?;
-
-        // 4. Authorization
-        let auth_ctx = auth_provider
-            .authorize(&peer_info.agent_id, &peer_info.public_key)
-            .await
-            .map_err(|e| AafpMcpError::Session(format!("authorization denied: {e}")))?;
-        session
-            .on_authorization_verified(auth_ctx)
-            .map_err(|e| AafpMcpError::Session(e.to_string()))?;
-
-        // 5. Transition to MessagingEnabled
-        session
-            .on_authenticated()
-            .map_err(|e| AafpMcpError::Session(e.to_string()))?;
-        session
-            .on_messaging_enabled()
-            .map_err(|e| AafpMcpError::Session(e.to_string()))?;
-
-        // 6. Open bidirectional stream for MCP messages
+        // 3. Open bidirectional stream for MCP messages
         let (send, recv) = conn.open_bi().await?;
 
         Ok(Self {
@@ -280,31 +261,13 @@ impl AafpMcpTransport {
         // 1. Accept QUIC connection
         let conn = agent.transport.accept().await?;
 
-        // 2. Extract TLS channel binding
-        let tls_binding = extract_tls_binding(&conn)?;
+        // 2. Drive AAFP v1 handshake + authorization + session transitions
+        let (_session, conn, peer_info) =
+            establish_session(conn, &agent.keypair, auth_provider, false, None)
+                .await
+                .map_err(AafpMcpError::from)?;
 
-        // 3. Drive server-side AAFP v1 handshake
-        let (mut session, conn, peer_info) =
-            drive_server_handshake(conn, &agent.keypair, tls_binding, None).await?;
-
-        // 4. Authorization
-        let auth_ctx = auth_provider
-            .authorize(&peer_info.agent_id, &peer_info.public_key)
-            .await
-            .map_err(|e| AafpMcpError::Session(format!("authorization denied: {e}")))?;
-        session
-            .on_authorization_verified(auth_ctx)
-            .map_err(|e| AafpMcpError::Session(e.to_string()))?;
-
-        // 5. Transition to MessagingEnabled
-        session
-            .on_authenticated()
-            .map_err(|e| AafpMcpError::Session(e.to_string()))?;
-        session
-            .on_messaging_enabled()
-            .map_err(|e| AafpMcpError::Session(e.to_string()))?;
-
-        // 6. Accept the bidirectional stream opened by the client
+        // 3. Accept the bidirectional stream opened by the client
         let (send, recv) = conn.accept_bi().await?;
 
         Ok(Self {
@@ -371,24 +334,21 @@ impl AafpMcpTransport {
 
         loop {
             match read_data_frame(&mut self.recv).await {
-                Ok(Some(payload)) => {
-                    match serde_json::from_slice::<serde_json::Value>(&payload) {
-                        Ok(msg) => return Some(msg),
-                        Err(e) => {
-                            match e.classify() {
-                                serde_json::error::Category::Syntax
-                                | serde_json::error::Category::Eof => {
-                                    tracing::debug!("Ignoring unparsable message: {e}");
-                                }
-                                serde_json::error::Category::Data
-                                | serde_json::error::Category::Io => {
-                                    tracing::warn!("Protocol error in message: {e}");
-                                }
+                Ok(Some(payload)) => match serde_json::from_slice::<serde_json::Value>(&payload) {
+                    Ok(msg) => return Some(msg),
+                    Err(e) => {
+                        match e.classify() {
+                            serde_json::error::Category::Syntax
+                            | serde_json::error::Category::Eof => {
+                                tracing::debug!("Ignoring unparsable message: {e}");
                             }
-                            continue;
+                            serde_json::error::Category::Data | serde_json::error::Category::Io => {
+                                tracing::warn!("Protocol error in message: {e}");
+                            }
                         }
+                        continue;
                     }
-                }
+                },
                 Ok(None) => return None,
                 Err(AafpMcpError::Closed) => return None,
                 Err(e) => {
@@ -426,12 +386,6 @@ impl AafpMcpTransport {
     pub fn send_for_test(&self) -> Arc<Mutex<Option<QuicSendStream>>> {
         self.send.clone()
     }
-}
-
-/// Extract TLS channel binding from a QUIC connection using the TLS exporter.
-fn extract_tls_binding(conn: &QuicConnection) -> Result<[u8; 32], AafpMcpError> {
-    conn.export_tls_binding(TLS_EXPORTER_LABEL.as_bytes(), &[])
-        .map_err(|e| AafpMcpError::Sdk(SdkError::Handshake(e.to_string())))
 }
 
 /// Read an AAFP DATA frame from a QUIC receive stream and return the payload.

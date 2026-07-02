@@ -4,9 +4,8 @@
 //! application messages can be sent. There is no code path where an
 //! unauthenticated peer can send application messages.
 
-use crate::handshake_driver;
 use crate::protocol_frames::{send_close_frame, send_error_frame};
-use crate::{Agent, SdkError};
+use crate::{establish_session, Agent, SdkError};
 use aafp_core::{codes, AuthorizationProvider, ProtocolError, Session, SessionState};
 use aafp_identity::AgentId;
 use aafp_messaging::{encode_frame, Frame};
@@ -131,36 +130,13 @@ impl AgentClient {
         // 1. Establish QUIC transport connection
         let conn = agent.transport.dial(addr).await?;
 
-        // 2. Extract TLS channel binding from the QUIC connection
-        let tls_binding = extract_tls_binding(&conn)?;
-
-        // 3. Drive the AAFP v1 handshake (verifies identity, signature, version, expiry)
-        let (mut session, conn, peer_info) =
-            handshake_driver::drive_client_handshake(conn, &agent.keypair, tls_binding, None)
-                .await?;
-
-        // 4. Run authorization
-        let auth_ctx = self
-            .auth_provider
-            .authorize(&peer_info.agent_id, &peer_info.public_key)
-            .await
-            .map_err(|e| SdkError::Handshake(format!("authorization denied: {e}")))?;
-
-        session
-            .on_authorization_verified(auth_ctx)
-            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
-
-        // 5. Transition to Authenticated → MessagingEnabled
-        session
-            .on_authenticated()
-            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
-        session
-            .on_messaging_enabled()
-            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
+        // 2. Drive AAFP v1 handshake + authorization + session transitions
+        let (session, conn, peer_info) =
+            establish_session(conn, &agent.keypair, self.auth_provider.clone(), true, None).await?;
 
         let peer_id = peer_info.agent_id;
 
-        // 6. Store the authenticated, authorized, messaging-enabled connection
+        // 3. Store the authenticated, authorized, messaging-enabled connection
         let peer_conn = PeerConnection { session, conn };
         self.connections.lock().await.insert(peer_id, peer_conn);
 
@@ -282,12 +258,6 @@ impl Default for AgentClient {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Extract TLS channel binding from a QUIC connection using the TLS exporter.
-fn extract_tls_binding(conn: &QuicConnection) -> Result<[u8; 32], SdkError> {
-    conn.export_tls_binding(aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(), &[])
-        .map_err(|e| SdkError::Handshake(e.to_string()))
 }
 
 #[cfg(test)]

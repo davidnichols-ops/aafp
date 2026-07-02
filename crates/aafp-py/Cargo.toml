@@ -1,0 +1,29 @@
+[package]
+name = "aafp-py"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Python bindings for AAFP transport"
+
+# This crate is standalone (NOT in the workspace) because pyo3's
+# extension-module feature would affect all workspace members.
+[workspace]
+
+[lib]
+name = "aafp_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+aafp-transport-mcp = { path = "../aafp-transport-mcp" }
+aafp-sdk = { path = "../aafp-sdk" }
+aafp-core = { path = "../aafp-core" }
+aafp-identity = { path = "../aafp-identity" }
+aafp-crypto = { path = "../aafp-crypto" }
+aafp-messaging = { path = "../aafp-messaging" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pyo3 = { version = "0.28", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.28", features = ["attributes", "tokio-runtime"] }
+tracing = "0.1"
+hex = "0.4"

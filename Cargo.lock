@@ -201,6 +201,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "aafp-transport-a2a"
+version = "0.1.0"
+dependencies = [
+ "aafp-core",
+ "aafp-crypto",
+ "aafp-identity",
+ "aafp-messaging",
+ "aafp-sdk",
+ "aafp-transport-a2a",
+ "aafp-transport-quic",
+ "anyhow",
+ "async-trait",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "aafp-transport-mcp"
 version = "0.1.0"
 dependencies = [

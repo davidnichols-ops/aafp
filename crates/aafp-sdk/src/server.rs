@@ -4,8 +4,7 @@
 //! application messages can be processed. There is no code path where an
 //! unauthenticated peer can send application messages.
 
-use crate::handshake_driver;
-use crate::{Agent, SdkError};
+use crate::{establish_session, Agent, SdkError};
 use aafp_core::{AuthorizationProvider, Session, SessionState};
 use aafp_identity::AgentId;
 use std::collections::HashMap;
@@ -108,34 +107,15 @@ impl AgentServer {
         let conn = agent.transport.accept().await?;
         *self.accepted_count.lock().await += 1;
 
-        // Extract TLS channel binding
-        let tls_binding = conn
-            .export_tls_binding(aafp_crypto::TLS_EXPORTER_LABEL.as_bytes(), &[])
-            .map_err(|e| SdkError::Handshake(e.to_string()))?;
-
-        // Drive the AAFP v1 handshake
-        let (mut session, conn, peer_info) =
-            handshake_driver::drive_server_handshake(conn, &agent.keypair, tls_binding, None)
-                .await?;
-
-        // Run authorization
-        let auth_ctx = self
-            .auth_provider
-            .authorize(&peer_info.agent_id, &peer_info.public_key)
-            .await
-            .map_err(|e| SdkError::Handshake(format!("authorization denied: {e}")))?;
-
-        session
-            .on_authorization_verified(auth_ctx)
-            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
-
-        // Transition to Authenticated → MessagingEnabled
-        session
-            .on_authenticated()
-            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
-        session
-            .on_messaging_enabled()
-            .map_err(|e| SdkError::Handshake(format!("session state error: {e}")))?;
+        // Drive AAFP v1 handshake + authorization + session transitions
+        let (session, conn, peer_info) = establish_session(
+            conn,
+            &agent.keypair,
+            self.auth_provider.clone(),
+            false,
+            None,
+        )
+        .await?;
 
         let peer_id = peer_info.agent_id;
 

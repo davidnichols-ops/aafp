@@ -30,12 +30,14 @@ pub mod client;
 pub mod handshake_driver;
 pub mod protocol_frames;
 pub mod server;
+pub mod transport_binding;
 
 pub use builder::AgentBuilder;
 pub use client::AgentClient;
 pub use handshake_driver::{drive_client_handshake, drive_server_handshake, PeerInfo};
 pub use protocol_frames::{parse_control_frame, send_close_frame, send_error_frame, ControlFrame};
 pub use server::AgentServer;
+pub use transport_binding::establish_session;
 
 use aafp_identity::agent_record::AgentRecord;
 use aafp_identity::{AgentId, AgentKeypair};
