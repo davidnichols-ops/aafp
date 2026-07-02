@@ -1,0 +1,38 @@
+[package]
+name = "aafp-transport-a2a"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AAFP secure transport binding for the A2A (Agent2Agent) Protocol"
+
+[dependencies]
+aafp-core = { workspace = true }
+aafp-crypto = { workspace = true }
+aafp-identity = { workspace = true }
+aafp-messaging = { workspace = true }
+aafp-sdk = { workspace = true }
+aafp-transport-quic = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio-util = { workspace = true }
+aafp-transport-a2a = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = []
+# Exposes test-only APIs for conformance testing.
+# Not intended for production use.
+test-utils = []
+
+[[example]]
+name = "a2a_over_aafp"
+path = "examples/a2a_over_aafp.rs"
