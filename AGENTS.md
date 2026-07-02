@@ -11,7 +11,8 @@ cargo test --workspace        # 1011 tests, 0 failures expected (2 ignored)
 
 ## Project layout
 
-14-crate Cargo workspace under `implementations/rust/crates/`:
+15-crate Cargo workspace under `implementations/rust/crates/`
+(plus 1 standalone crate `aafp-py` not in the workspace):
 
 | Crate | Purpose |
 |-------|---------|
@@ -25,6 +26,8 @@ cargo test --workspace        # 1011 tests, 0 failures expected (2 ignored)
 | `aafp-nat` | NAT traversal stubs (AutoNAT, DCuTR, relay) |
 | `aafp-sdk` | High-level Agent SDK (client + server + handshake driver) |
 | `aafp-transport-mcp` | AAFP secure transport binding for MCP Rust SDK (rmcp) |
+| `aafp-transport-a2a` | AAFP secure transport binding for A2A protocol (RFC 0008) |
+| `aafp-py` | Python PyO3 adapter (standalone, not in workspace) |
 | `aafp-cli` | Command-line tool for agent management |
 | `aafp-conformance` | RFC conformance test suite + golden trace generation |
 | `aafp-benchmark` | Criterion benchmarks for crypto/discovery/messaging/MCP transport |

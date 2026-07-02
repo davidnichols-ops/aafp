@@ -1,6 +1,6 @@
 //! PyAgent — Python wrapper for aafp_sdk::Agent.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 use pyo3::exceptions::PyException;
@@ -12,9 +12,15 @@ use aafp_identity::AgentKeypair;
 ///
 /// All crypto (ML-DSA-65 key generation, signing) stays in Rust.
 /// Python never touches raw key material.
+///
+/// Call `await agent.shutdown()` before process exit to close the QUIC
+/// endpoint cleanly and avoid a segfault during interpreter teardown.
 #[pyclass(name = "Agent")]
 pub struct PyAgent {
     pub inner: Arc<aafp_sdk::Agent>,
+    /// Set to true once `shutdown()` has closed the QUIC endpoint.
+    /// Prevents `__del__` from closing it twice.
+    shutdown_done: Mutex<bool>,
 }
 
 #[pymethods]
@@ -38,6 +44,7 @@ impl PyAgent {
 
             Ok(PyAgent {
                 inner: Arc::new(agent),
+                shutdown_done: Mutex::new(false),
             })
         })
     }
@@ -64,6 +71,7 @@ impl PyAgent {
 
             Ok(PyAgent {
                 inner: Arc::new(agent),
+                shutdown_done: Mutex::new(false),
             })
         })
     }
@@ -92,5 +100,65 @@ impl PyAgent {
     #[getter]
     fn public_key<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new(py, &self.inner.keypair.public_key)
+    }
+
+    /// Close the QUIC endpoint and drain background tasks.
+    ///
+    /// Call this before process exit to avoid a segfault during
+    /// interpreter teardown. After `shutdown()`, the agent can no
+    /// longer accept or dial new connections.
+    ///
+    /// This is idempotent — calling it twice is safe.
+    fn shutdown<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = self.inner.clone();
+        let already_done = {
+            let mut guard = self.shutdown_done.lock().unwrap();
+            let was = *guard;
+            *guard = true;
+            was
+        };
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            if !already_done {
+                inner.transport.close();
+                // Wait for quinn's background tasks to drain. Without this,
+                // the tokio runtime drops while quinn still has pending work,
+                // causing a use-after-free segfault during interpreter teardown.
+                inner.transport.wait_idle().await;
+            }
+            Ok(())
+        })
+    }
+
+    /// Synchronously close the QUIC endpoint (best-effort, non-blocking).
+    ///
+    /// Unlike `shutdown()`, this does NOT wait for quinn's background tasks
+    /// to drain. It is intended as a safety net for when the event loop is
+    /// already closed and `await shutdown()` cannot be called. For clean
+    /// shutdown, prefer `await agent.shutdown()`.
+    ///
+    /// This is idempotent — calling it twice is safe.
+    fn close(&self) {
+        let mut guard = self.shutdown_done.lock().unwrap();
+        if !*guard {
+            self.inner.transport.close();
+            *guard = true;
+        }
+    }
+
+    /// Safety net: close the QUIC endpoint if `shutdown()` was not called.
+    ///
+    /// This runs during garbage collection / interpreter teardown.
+    /// It calls `transport.close()` synchronously (non-blocking) to
+    /// signal quinn's background tasks to stop. This alone may not
+    /// prevent a segfault if the tasks don't drain in time — users
+    /// should call `await agent.shutdown()` for a clean exit.
+    fn __del__(&self) {
+        let mut guard = self.shutdown_done.lock().unwrap();
+        if !*guard {
+            // Best-effort: close() just sends a close packet, it does not block.
+            self.inner.transport.close();
+            *guard = true;
+        }
     }
 }

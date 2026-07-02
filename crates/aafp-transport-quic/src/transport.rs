@@ -94,6 +94,15 @@ impl QuicTransport {
         self.endpoint.close(0u32.into(), b"shutdown");
     }
 
+    /// Wait for all connections on the endpoint to be cleanly shut down.
+    ///
+    /// Call after `close()` to ensure peers are notified before process
+    /// exit. This drains quinn's background tasks, preventing use-after-free
+    /// crashes when the tokio runtime is dropped.
+    pub async fn wait_idle(&self) {
+        self.endpoint.wait_idle().await;
+    }
+
     /// Get the TLS identity (cert + key).
     pub fn identity(&self) -> &TlsIdentity {
         &self.identity
