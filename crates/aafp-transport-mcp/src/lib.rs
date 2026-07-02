@@ -345,6 +345,77 @@ impl AafpMcpTransport {
         self.peer_agent_id.as_ref()
     }
 
+    /// Send a raw JSON value as an AAFP DATA frame.
+    ///
+    /// This is used by non-rmcp consumers (e.g., the Python PyO3 binding)
+    /// that need to send JSON-RPC messages without rmcp type constraints.
+    pub async fn send_raw_json(&self, json: &serde_json::Value) -> Result<(), AafpMcpError> {
+        let mut guard = self.send.lock().await;
+        let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
+
+        let json_bytes = serde_json::to_vec(json)?;
+        let frame = Frame::data(MCP_STREAM_ID, json_bytes);
+        let frame_bytes = encode_frame(&frame)?;
+        send_stream.write_all(&frame_bytes).await?;
+        Ok(())
+    }
+
+    /// Read a raw JSON value from an AAFP DATA frame.
+    ///
+    /// Returns `None` when the peer closes the stream.
+    /// Used by non-rmcp consumers (e.g., the Python PyO3 binding).
+    pub async fn recv_raw_json(&mut self) -> Option<serde_json::Value> {
+        if self.closed {
+            return None;
+        }
+
+        loop {
+            match read_data_frame(&mut self.recv).await {
+                Ok(Some(payload)) => {
+                    match serde_json::from_slice::<serde_json::Value>(&payload) {
+                        Ok(msg) => return Some(msg),
+                        Err(e) => {
+                            match e.classify() {
+                                serde_json::error::Category::Syntax
+                                | serde_json::error::Category::Eof => {
+                                    tracing::debug!("Ignoring unparsable message: {e}");
+                                }
+                                serde_json::error::Category::Data
+                                | serde_json::error::Category::Io => {
+                                    tracing::warn!("Protocol error in message: {e}");
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Ok(None) => return None,
+                Err(AafpMcpError::Closed) => return None,
+                Err(e) => {
+                    tracing::error!("Error reading AAFP frame: {e}");
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// Close the transport (raw JSON variant for non-rmcp consumers).
+    pub async fn close_raw(&mut self) -> Result<(), AafpMcpError> {
+        self.closed = true;
+
+        let mut guard = self.send.lock().await;
+        if let Some(mut send) = guard.take() {
+            send.finish();
+        }
+        drop(guard);
+
+        if let Some(conn) = self.conn.take() {
+            conn.close(0, b"transport closed");
+        }
+
+        Ok(())
+    }
+
     /// Get a reference to the send stream Arc for testing purposes.
     ///
     /// This allows tests to write raw AAFP frames directly, bypassing the
