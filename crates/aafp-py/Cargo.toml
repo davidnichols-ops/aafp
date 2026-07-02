@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 aafp-transport-mcp = { path = "../aafp-transport-mcp" }
+aafp-transport-quic = { path = "../aafp-transport-quic" }
 aafp-sdk = { path = "../aafp-sdk" }
 aafp-core = { path = "../aafp-core" }
 aafp-identity = { path = "../aafp-identity" }

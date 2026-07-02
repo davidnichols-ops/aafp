@@ -21,13 +21,13 @@ async def test_python_client_rust_server():
     """Python client connects to Rust server, calls tools/list."""
     # 1. Start Rust MCP server (mcp_over_aafp example)
     rust_dir = os.path.join(
-        os.path.dirname(__file__), "..", "..", "implementations", "rust"
+        os.path.dirname(__file__), "..", "..", ".."
     )
     rust_dir = os.path.abspath(rust_dir)
 
-    # Build and run the example
+    # Build and run the dedicated server example
     proc = subprocess.Popen(
-        ["cargo", "run", "--example", "mcp_over_aafp"],
+        ["cargo", "run", "--example", "mcp_server", "-p", "aafp-transport-mcp"],
         cwd=rust_dir,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

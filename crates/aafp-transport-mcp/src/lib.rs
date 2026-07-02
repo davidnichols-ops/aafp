@@ -386,6 +386,35 @@ impl AafpMcpTransport {
     pub fn send_for_test(&self) -> Arc<Mutex<Option<QuicSendStream>>> {
         self.send.clone()
     }
+
+    /// Get a clone of the send stream handle.
+    ///
+    /// This allows callers (e.g., the PyO3 Python binding) to send messages
+    /// concurrently with receive operations, without holding a lock on the
+    /// entire transport. The handle is an `Arc<Mutex<...>>` so it can be
+    /// shared across tasks.
+    pub fn send_handle(&self) -> Arc<Mutex<Option<QuicSendStream>>> {
+        self.send.clone()
+    }
+}
+
+/// Send a raw JSON value via a send handle extracted from an `AafpMcpTransport`.
+///
+/// This is a standalone function that allows sending without holding a lock
+/// on the entire transport — only the send stream's own mutex is locked.
+/// Used by the PyO3 Python binding for concurrent send/receive.
+pub async fn send_raw_json_on_handle(
+    send_handle: &Arc<Mutex<Option<QuicSendStream>>>,
+    json: &serde_json::Value,
+) -> Result<(), AafpMcpError> {
+    let mut guard = send_handle.lock().await;
+    let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
+
+    let json_bytes = serde_json::to_vec(json)?;
+    let frame = Frame::data(MCP_STREAM_ID, json_bytes);
+    let frame_bytes = encode_frame(&frame)?;
+    send_stream.write_all(&frame_bytes).await?;
+    Ok(())
 }
 
 /// Read an AAFP DATA frame from a QUIC receive stream and return the payload.
