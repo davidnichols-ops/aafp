@@ -6,12 +6,12 @@
 cargo fmt --all -- --check   # formatting check (0 diffs expected)
 cargo build --workspace       # build (0 warnings expected)
 cargo clippy --workspace      # lints (0 warnings expected)
-cargo test --workspace        # 995 tests, 0 failures expected
+cargo test --workspace        # 1011 tests, 0 failures expected (2 ignored)
 ```
 
 ## Project layout
 
-13-crate Cargo workspace under `implementations/rust/crates/`:
+14-crate Cargo workspace under `implementations/rust/crates/`:
 
 | Crate | Purpose |
 |-------|---------|
@@ -24,9 +24,10 @@ cargo test --workspace        # 995 tests, 0 failures expected
 | `aafp-discovery` | Capability-based DHT (in-memory) |
 | `aafp-nat` | NAT traversal stubs (AutoNAT, DCuTR, relay) |
 | `aafp-sdk` | High-level Agent SDK (client + server + handshake driver) |
+| `aafp-transport-mcp` | AAFP secure transport binding for MCP Rust SDK (rmcp) |
 | `aafp-cli` | Command-line tool for agent management |
 | `aafp-conformance` | RFC conformance test suite + golden trace generation |
-| `aafp-benchmark` | Criterion benchmarks for crypto/discovery/messaging |
+| `aafp-benchmark` | Criterion benchmarks for crypto/discovery/messaging/MCP transport |
 | `aafp-tests` | Cross-crate integration tests |
 
 ## Key conventions

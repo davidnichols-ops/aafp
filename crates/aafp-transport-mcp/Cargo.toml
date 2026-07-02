@@ -1,0 +1,42 @@
+[package]
+name = "aafp-transport-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AAFP secure transport binding for the MCP Rust SDK (rmcp)"
+
+[dependencies]
+aafp-core = { workspace = true }
+aafp-crypto = { workspace = true }
+aafp-identity = { workspace = true }
+aafp-messaging = { workspace = true }
+aafp-sdk = { workspace = true }
+aafp-transport-quic = { workspace = true }
+rmcp = { version = "1.7", features = ["client", "server"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio-util = { workspace = true }
+aafp-transport-mcp = { workspace = true, features = ["test-utils"] }
+
+[features]
+default = []
+# Exposes test-only APIs (e.g., send_for_test) for conformance testing.
+# Not intended for production use.
+test-utils = []
+
+[[example]]
+name = "mcp_over_aafp"
+path = "examples/mcp_over_aafp.rs"
+
+[[example]]
+name = "simple_transport"
+path = "examples/simple_transport.rs"

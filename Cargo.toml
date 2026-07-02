@@ -10,6 +10,7 @@ members = [
     "crates/aafp-nat",
     "crates/aafp-messaging",
     "crates/aafp-sdk",
+    "crates/aafp-transport-mcp",
     "crates/aafp-conformance",
     "crates/aafp-cli",
     "crates/aafp-benchmark",
@@ -33,6 +34,7 @@ aafp-discovery = { path = "crates/aafp-discovery" }
 aafp-nat = { path = "crates/aafp-nat" }
 aafp-messaging = { path = "crates/aafp-messaging" }
 aafp-sdk = { path = "crates/aafp-sdk" }
+aafp-transport-mcp = { path = "crates/aafp-transport-mcp" }
 aafp-conformance = { path = "crates/aafp-conformance" }
 
 # External dependencies

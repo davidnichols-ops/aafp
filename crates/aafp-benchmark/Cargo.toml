@@ -25,6 +25,11 @@ name = "replay_cache"
 path = "benches/replay_cache.rs"
 harness = false
 
+[[bench]]
+name = "mcp_transport"
+path = "benches/mcp_transport.rs"
+harness = false
+
 [dependencies]
 aafp-crypto = { workspace = true }
 aafp-identity = { workspace = true }
@@ -32,10 +37,13 @@ aafp-discovery = { workspace = true }
 aafp-messaging = { workspace = true }
 aafp-sdk = { workspace = true }
 aafp-transport-quic = { workspace = true }
+aafp-transport-mcp = { workspace = true }
 criterion = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
 tokio-util = { workspace = true }
+rmcp = { version = "1.7", features = ["client", "server"] }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
