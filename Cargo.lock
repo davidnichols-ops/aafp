@@ -190,6 +190,7 @@ dependencies = [
 name = "aafp-tests"
 version = "0.1.0"
 dependencies = [
+ "aafp-cbor",
  "aafp-crypto",
  "aafp-discovery",
  "aafp-identity",
@@ -197,6 +198,8 @@ dependencies = [
  "aafp-nat",
  "aafp-sdk",
  "aafp-transport-quic",
+ "hex",
+ "sha2",
  "tokio",
 ]
 
