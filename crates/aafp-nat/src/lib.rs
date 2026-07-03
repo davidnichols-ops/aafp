@@ -14,7 +14,15 @@
 pub mod auto_nat;
 pub mod dcutr;
 pub mod relay;
+/// Circuit relay protocol v1 (RFC 0010).
+pub mod relay_v1;
 
 pub use auto_nat::{AutoNat, NatStatus};
 pub use dcutr::Dcutr;
 pub use relay::{RelayConfig, RelayNode, RelayService};
+pub use relay_v1::{
+    AutoNatV1, CancelParams, ConnectParams, ConnectResult, NatStatusV1, RelayV1Client,
+    RelayV1Config, RelayV1Error, RelayV1RpcHandler, RelayV1Service, RenewParams, ReserveParams,
+    ReserveResult, DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_DURATION_SECS, DEFAULT_MAX_RESERVATIONS,
+    METHOD_CANCEL, METHOD_CONNECT, METHOD_RENEW, METHOD_RESERVE,
+};

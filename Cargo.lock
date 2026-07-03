@@ -155,8 +155,10 @@ dependencies = [
 name = "aafp-nat"
 version = "0.1.0"
 dependencies = [
+ "aafp-cbor",
  "aafp-core",
  "aafp-identity",
+ "aafp-messaging",
  "hex",
  "serde",
  "thiserror 1.0.69",
