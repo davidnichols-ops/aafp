@@ -171,6 +171,90 @@ fn bench_preallocated_write_allocs(c: &mut Criterion) {
     });
 }
 
+/// Measure allocations for the zero-copy send path (buffer pool + to_writer).
+fn bench_zerocopy_send_allocs(c: &mut Criterion) {
+    c.bench_function("alloc_profile_zerocopy_send", |b| {
+        // Warmup the buffer pool
+        let warmup_bufs: Vec<bytes::BytesMut> = (0..4)
+            .map(|_| aafp_transport_quic::buffer_pool::acquire())
+            .collect();
+        for buf in warmup_bufs {
+            aafp_transport_quic::buffer_pool::release(buf);
+        }
+
+        b.iter(|| {
+            let report = track_allocs(|| {
+                use aafp_messaging::{backpatch_payload_len, encode_header_into, FrameType};
+                use aafp_transport_quic::buffer_pool::{acquire, release, BytesMutWriter};
+
+                let ping = make_ping(1);
+                let mut buf = acquire();
+
+                // Write frame header
+                encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[]).unwrap();
+
+                // Serialize JSON directly into buffer
+                let payload_start = buf.len();
+                {
+                    let mut writer = BytesMutWriter::new(&mut buf);
+                    serde_json::to_writer(&mut writer, &ping).unwrap();
+                }
+                let payload_len = buf.len() - payload_start;
+
+                // Backpatch payload length
+                backpatch_payload_len(&mut buf, payload_len).unwrap();
+
+                // Simulate write (just blackbox the buffer)
+                std::hint::black_box(&buf);
+
+                release(buf);
+            });
+            print_report("ZEROCOPY SEND (pool)", &report);
+        });
+    });
+}
+
+/// Measure allocations for the zero-copy receive path (buffer pool + freeze).
+fn bench_zerocopy_recv_allocs(c: &mut Criterion) {
+    c.bench_function("alloc_profile_zerocopy_recv", |b| {
+        // Pre-encode a message to decode
+        let ping = make_ping(1);
+        let json_bytes = serde_json::to_vec(&ping).unwrap();
+        let frame = Frame::data(MCP_STREAM_ID, json_bytes);
+        let encoded = encode_frame(&frame).unwrap();
+
+        // Warmup the buffer pool
+        let warmup_bufs: Vec<bytes::BytesMut> = (0..4)
+            .map(|_| aafp_transport_quic::buffer_pool::acquire())
+            .collect();
+        for buf in warmup_bufs {
+            aafp_transport_quic::buffer_pool::release(buf);
+        }
+
+        b.iter(|| {
+            let report = track_allocs(|| {
+                use aafp_transport_quic::buffer_pool::{acquire, release};
+                use bytes::BufMut;
+
+                // Simulate reading into a pooled buffer
+                let mut buf = acquire();
+                buf.resize(encoded.len(), 0);
+                buf.as_mut().copy_from_slice(&encoded);
+
+                // Decode using zero-copy decode_frame_from
+                use aafp_messaging::decode_frame_from;
+                let decoded = decode_frame_from(&mut buf).unwrap().unwrap();
+
+                // Deserialize JSON from the zero-copy payload
+                let _: serde_json::Value = serde_json::from_slice(&decoded.payload).unwrap();
+
+                release(buf);
+            });
+            print_report("ZEROCOPY RECV (pool)", &report);
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_send_path_allocs,
@@ -178,5 +262,7 @@ criterion_group!(
     bench_round_trip_allocs,
     bench_large_msg_allocs,
     bench_preallocated_write_allocs,
+    bench_zerocopy_send_allocs,
+    bench_zerocopy_recv_allocs,
 );
 criterion_main!(benches);

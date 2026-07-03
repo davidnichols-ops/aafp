@@ -333,6 +333,35 @@ impl AafpMcpTransport {
         Ok(())
     }
 
+    /// Send a raw JSON value using the zero-copy buffer pool.
+    ///
+    /// This is the zero-copy version of `send_raw_json`. After pool warmup,
+    /// this performs 0 heap allocations per message.
+    pub async fn send_raw_json_zero_copy(
+        &self,
+        json: &serde_json::Value,
+    ) -> Result<(), AafpMcpError> {
+        let mut guard = self.send.lock().await;
+        let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
+
+        let mut buf = acquire();
+        encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[])
+            .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+
+        let payload_start = buf.len();
+        {
+            let mut writer = BytesMutWriter::new(&mut buf);
+            serde_json::to_writer(&mut writer, json)?;
+        }
+        let payload_len = buf.len() - payload_start;
+        backpatch_payload_len(&mut buf, payload_len)
+            .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+
+        send_stream.write_all(&buf).await?;
+        release(buf);
+        Ok(())
+    }
+
     /// Read a raw JSON value from an AAFP DATA frame.
     ///
     /// Returns `None` when the peer closes the stream.
@@ -344,6 +373,42 @@ impl AafpMcpTransport {
 
         loop {
             match read_data_frame(&mut self.recv).await {
+                Ok(Some(payload)) => match serde_json::from_slice::<serde_json::Value>(&payload) {
+                    Ok(msg) => return Some(msg),
+                    Err(e) => {
+                        match e.classify() {
+                            serde_json::error::Category::Syntax
+                            | serde_json::error::Category::Eof => {
+                                tracing::debug!("Ignoring unparsable message: {e}");
+                            }
+                            serde_json::error::Category::Data | serde_json::error::Category::Io => {
+                                tracing::warn!("Protocol error in message: {e}");
+                            }
+                        }
+                        continue;
+                    }
+                },
+                Ok(None) => return None,
+                Err(AafpMcpError::Closed) => return None,
+                Err(e) => {
+                    tracing::error!("Error reading AAFP frame: {e}");
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// Read a raw JSON value using the zero-copy buffer pool.
+    ///
+    /// This is the zero-copy version of `recv_raw_json`. After pool warmup,
+    /// this performs 0 heap allocations for the payload.
+    pub async fn recv_raw_json_zero_copy(&mut self) -> Option<serde_json::Value> {
+        if self.closed {
+            return None;
+        }
+
+        loop {
+            match read_data_frame_zero_copy(&mut self.recv).await {
                 Ok(Some(payload)) => match serde_json::from_slice::<serde_json::Value>(&payload) {
                     Ok(msg) => return Some(msg),
                     Err(e) => {
