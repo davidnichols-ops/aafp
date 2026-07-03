@@ -8,6 +8,7 @@ license.workspace = true
 aafp-cbor = { workspace = true }
 aafp-core = { workspace = true }
 aafp-identity = { workspace = true }
+aafp-messaging = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

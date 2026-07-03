@@ -110,6 +110,7 @@ dependencies = [
  "aafp-core",
  "aafp-crypto",
  "aafp-identity",
+ "aafp-messaging",
  "serde",
  "sha2",
  "thiserror 1.0.69",

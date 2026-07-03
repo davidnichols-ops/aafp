@@ -20,6 +20,7 @@ pub mod bootstrap;
 pub mod capability_dht;
 pub mod discovery_v1;
 pub mod regional;
+pub mod rpc_handler;
 
 pub use bootstrap::{BootstrapConfig, BootstrapDiscovery};
 pub use discovery_v1::{
@@ -29,3 +30,4 @@ pub use discovery_v1::{
     RATE_LIMIT_ANNOUNCE, RATE_LIMIT_LOOKUP,
 };
 pub use regional::{Region, RegionalDiscovery};
+pub use rpc_handler::{DiscoveryClient, DiscoveryRpcHandler};
