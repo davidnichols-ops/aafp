@@ -12,6 +12,8 @@ pub mod framing;
 pub mod keepalive;
 pub mod pipeline;
 pub mod pubsub;
+/// Networked PubSub (RFC 0009): floodsub over AAFP.
+pub mod pubsub_v1;
 /// Legacy MVP RPC module. Uses serde with string keys — NOT RFC-compliant.
 /// Use [`rpc_v1`] instead for wire serialization.
 #[deprecated = "Use rpc_v1 instead. Legacy rpc uses serde/string keys, not RFC-compliant."]
@@ -35,5 +37,10 @@ pub use pipeline::{
     ProcessedFrame, TestingContext,
 };
 pub use pubsub::{PubSub, Topic, TopicMessage};
+pub use pubsub_v1::{
+    NetworkedPubSub, PubSubError as PubSubV1Error, PubSubRpcHandler, PublishParams,
+    SubscribeParams, UnsubscribeParams, DEFAULT_TTL, METHOD_PUBLISH, METHOD_SUBSCRIBE,
+    METHOD_UNSUBSCRIBE,
+};
 pub use rpc_v1::{CloseMessage, ErrorMessage, RpcError, RpcErrorObject, RpcRequest, RpcResponse};
 pub use stream::{MessageStream, StreamId, StreamManager};
