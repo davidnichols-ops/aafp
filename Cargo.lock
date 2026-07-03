@@ -244,6 +244,7 @@ dependencies = [
  "aafp-transport-quic",
  "anyhow",
  "async-trait",
+ "bytes",
  "rmcp",
  "serde",
  "serde_json",

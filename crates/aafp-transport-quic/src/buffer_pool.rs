@@ -26,9 +26,10 @@
 //! release(buf);
 //! ```
 
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 /// Default pool size (max buffers per thread).
@@ -246,6 +247,47 @@ impl Drop for BufferGuard {
 pub fn acquire_guard() -> BufferGuard {
     BufferGuard {
         buf: Some(acquire()),
+    }
+}
+
+/// A wrapper that implements `io::Write` for `BytesMut`.
+///
+/// This allows `serde_json::to_writer()` to write directly into a
+/// pooled `BytesMut` buffer, eliminating the intermediate `Vec<u8>`
+/// allocation that `serde_json::to_vec()` would create.
+///
+/// ## Usage
+///
+/// ```
+/// use aafp_transport_quic::buffer_pool::{acquire, BytesMutWriter};
+/// use std::io::Write;
+///
+/// let mut buf = acquire();
+/// let mut writer = BytesMutWriter::new(&mut buf);
+/// writer.write_all(b"hello").unwrap();
+/// // buf now contains "hello"
+/// assert_eq!(buf.as_ref(), b"hello");
+/// ```
+pub struct BytesMutWriter<'a> {
+    /// The underlying buffer.
+    buf: &'a mut BytesMut,
+}
+
+impl<'a> BytesMutWriter<'a> {
+    /// Create a new writer wrapping a `BytesMut` buffer.
+    pub fn new(buf: &'a mut BytesMut) -> Self {
+        Self { buf }
+    }
+}
+
+impl<'a> Write for BytesMutWriter<'a> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.buf.put_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 

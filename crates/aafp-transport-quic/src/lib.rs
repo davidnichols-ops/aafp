@@ -17,6 +17,8 @@ pub mod buffer_pool;
 pub mod config;
 pub mod transport;
 
-pub use buffer_pool::{acquire, acquire_guard, release, BufferGuard, BufferPoolConfig, PoolStats};
+pub use buffer_pool::{
+    acquire, acquire_guard, release, BufferGuard, BufferPoolConfig, BytesMutWriter, PoolStats,
+};
 pub use config::{generate_self_signed_cert, ConfigError, QuicConfig, TlsIdentity, AAFP_ALPN};
 pub use transport::{QuicConnection, QuicRecvStream, QuicSendStream, QuicTransport};

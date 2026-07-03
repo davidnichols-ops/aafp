@@ -12,6 +12,7 @@ aafp-identity = { workspace = true }
 aafp-messaging = { workspace = true }
 aafp-sdk = { workspace = true }
 aafp-transport-quic = { workspace = true }
+bytes = { workspace = true }
 rmcp = { version = "1.7", features = ["client", "server"] }
 tokio = { workspace = true }
 serde = { workspace = true }

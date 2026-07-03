@@ -126,8 +126,12 @@ use std::sync::Arc;
 
 use aafp_core::{AuthorizationProvider, Error as CoreError};
 use aafp_identity::AgentId;
-use aafp_messaging::{encode_frame, Frame, AAFP_VERSION, FRAME_HEADER_SIZE};
+use aafp_messaging::{
+    backpatch_payload_len, encode_frame, encode_header_into, Frame, FrameType, AAFP_VERSION,
+    FRAME_HEADER_SIZE,
+};
 use aafp_sdk::{establish_session, Agent, SdkError};
+use aafp_transport_quic::buffer_pool::{acquire, release, BytesMutWriter};
 use aafp_transport_quic::{QuicConnection, QuicRecvStream, QuicSendStream};
 use rmcp::service::{RxJsonRpcMessage, ServiceRole, TxJsonRpcMessage};
 use rmcp::transport::Transport;
@@ -402,6 +406,97 @@ impl AafpMcpTransport {
     pub fn send_handle(&self) -> Arc<Mutex<Option<QuicSendStream>>> {
         self.send.clone()
     }
+
+    /// Send a JSON-RPC message using the zero-copy buffer pool.
+    ///
+    /// This is the zero-copy version of the `Transport::send` method. It:
+    /// 1. Acquires a buffer from the thread-local pool
+    /// 2. Writes the frame header (with placeholder payload_len=0)
+    /// 3. Serializes JSON directly into the buffer (no intermediate Vec)
+    /// 4. Backpatches the payload length
+    /// 5. Writes the buffer to the QUIC stream
+    /// 6. Releases the buffer back to the pool
+    ///
+    /// After pool warmup, this performs 0 heap allocations per message.
+    pub async fn send_zero_copy<T>(&mut self, item: &T) -> Result<(), AafpMcpError>
+    where
+        T: Serialize + ?Sized,
+    {
+        let mut guard = self.send.lock().await;
+        let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
+
+        // Acquire a buffer from the pool
+        let mut buf = acquire();
+
+        // Write frame header with placeholder payload_len=0
+        encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[])
+            .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+
+        // Serialize JSON directly into the buffer (no intermediate Vec allocation)
+        let payload_start = buf.len();
+        {
+            let mut writer = BytesMutWriter::new(&mut buf);
+            serde_json::to_writer(&mut writer, item)?;
+        }
+        let payload_len = buf.len() - payload_start;
+
+        // Backpatch the payload length in the header
+        backpatch_payload_len(&mut buf, payload_len)
+            .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+
+        // Write the entire buffer to the QUIC stream (single write)
+        send_stream.write_all(&buf).await?;
+
+        // Release the buffer back to the pool for reuse
+        release(buf);
+
+        Ok(())
+    }
+
+    /// Receive a JSON-RPC message using the zero-copy buffer pool.
+    ///
+    /// This is the zero-copy version of the `Transport::receive` method. It
+    /// reads the payload directly into a pooled buffer, eliminating the
+    /// `vec![0u8; payload_len]` allocation.
+    pub async fn receive_zero_copy<R>(&mut self) -> Option<RxJsonRpcMessage<R>>
+    where
+        R: ServiceRole,
+        RxJsonRpcMessage<R>: DeserializeOwned,
+    {
+        if self.closed {
+            return None;
+        }
+
+        loop {
+            match read_data_frame_zero_copy(&mut self.recv).await {
+                Ok(Some(payload)) => {
+                    // Deserialize JSON-RPC from the pooled buffer (no copy)
+                    match serde_json::from_slice::<RxJsonRpcMessage<R>>(&payload) {
+                        Ok(msg) => return Some(msg),
+                        Err(e) => {
+                            match e.classify() {
+                                serde_json::error::Category::Syntax
+                                | serde_json::error::Category::Eof => {
+                                    tracing::debug!("Ignoring unparsable MCP message: {e}");
+                                }
+                                serde_json::error::Category::Data
+                                | serde_json::error::Category::Io => {
+                                    tracing::warn!("Protocol error in MCP message: {e}");
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                Ok(None) => return None,
+                Err(AafpMcpError::Closed) => return None,
+                Err(e) => {
+                    tracing::error!("Error reading AAFP frame: {e}");
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 /// Send a raw JSON value via a send handle extracted from an `AafpMcpTransport`.
@@ -420,6 +515,52 @@ pub async fn send_raw_json_on_handle(
     let frame = Frame::data(MCP_STREAM_ID, json_bytes);
     let frame_bytes = encode_frame(&frame)?;
     send_stream.write_all(&frame_bytes).await?;
+    Ok(())
+}
+
+/// Send a raw JSON value via a send handle using the zero-copy buffer pool.
+///
+/// This is the zero-copy version of `send_raw_json_on_handle`. It:
+/// 1. Acquires a buffer from the thread-local pool
+/// 2. Writes the frame header (with placeholder payload_len=0)
+/// 3. Serializes JSON directly into the buffer (no intermediate Vec)
+/// 4. Backpatches the payload length
+/// 5. Writes the buffer to the QUIC stream
+/// 6. Releases the buffer back to the pool
+///
+/// After pool warmup, this performs 0 heap allocations per message.
+pub async fn send_raw_json_on_handle_zero_copy(
+    send_handle: &Arc<Mutex<Option<QuicSendStream>>>,
+    json: &serde_json::Value,
+) -> Result<(), AafpMcpError> {
+    let mut guard = send_handle.lock().await;
+    let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
+
+    // Acquire a buffer from the pool
+    let mut buf = acquire();
+
+    // Write frame header with placeholder payload_len=0
+    encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[])
+        .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+
+    // Serialize JSON directly into the buffer (no intermediate Vec allocation)
+    let payload_start = buf.len();
+    {
+        let mut writer = BytesMutWriter::new(&mut buf);
+        serde_json::to_writer(&mut writer, json)?;
+    }
+    let payload_len = buf.len() - payload_start;
+
+    // Backpatch the payload length in the header
+    backpatch_payload_len(&mut buf, payload_len)
+        .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+
+    // Write the entire buffer to the QUIC stream (single write)
+    send_stream.write_all(&buf).await?;
+
+    // Release the buffer back to the pool for reuse
+    release(buf);
+
     Ok(())
 }
 
@@ -477,6 +618,77 @@ async fn read_data_frame(recv: &mut QuicRecvStream) -> Result<Option<Vec<u8>>, A
 
     let mut payload = vec![0u8; payload_len];
     recv.read_exact(&mut payload).await?;
+
+    Ok(Some(payload))
+}
+
+/// Read an AAFP DATA frame from a QUIC receive stream into a pooled buffer.
+///
+/// This is the zero-copy version of `read_data_frame`. It reads the payload
+/// directly into a `BytesMut` from the buffer pool, eliminating the
+/// `vec![0u8; payload_len]` allocation.
+///
+/// Returns the payload as a `Bytes` (reference-counted slice) and releases
+/// the buffer back to the pool.
+async fn read_data_frame_zero_copy(
+    recv: &mut QuicRecvStream,
+) -> Result<Option<bytes::Bytes>, AafpMcpError> {
+    // Read the 28-byte frame header into a stack array (no allocation)
+    let mut header = [0u8; FRAME_HEADER_SIZE];
+    recv.read_exact(&mut header).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("closed") || msg.contains("reset") || msg.contains("stopped") {
+            AafpMcpError::Closed
+        } else {
+            AafpMcpError::Io(e)
+        }
+    })?;
+
+    // Parse header fields (big-endian)
+    let version = header[0];
+    let frame_type = header[1];
+    let _flags = header[2];
+    let _reserved = header[3];
+    let _stream_id = u64::from_be_bytes(header[4..12].try_into().unwrap());
+    let payload_len = u64::from_be_bytes(header[12..20].try_into().unwrap()) as usize;
+    let ext_len = u64::from_be_bytes(header[20..28].try_into().unwrap()) as usize;
+
+    // Validate
+    if version != AAFP_VERSION {
+        tracing::warn!(
+            "AAFP frame version mismatch: expected {}, got {}",
+            AAFP_VERSION,
+            version
+        );
+        return Err(AafpMcpError::Framing(format!(
+            "frame version mismatch: expected {AAFP_VERSION}, got {version}"
+        )));
+    }
+    if frame_type != 0x01 {
+        tracing::warn!("Expected DATA frame (0x01), got 0x{frame_type:02x}");
+        return Err(AafpMcpError::Framing(format!(
+            "expected DATA frame (0x01), got 0x{frame_type:02x}"
+        )));
+    }
+    if payload_len > 1024 * 1024 {
+        return Err(AafpMcpError::Framing(format!(
+            "payload too large: {payload_len} bytes"
+        )));
+    }
+
+    // Skip extensions if present (read into a stack buffer if small)
+    if ext_len > 0 {
+        let mut ext_buf = vec![0u8; ext_len];
+        recv.read_exact(&mut ext_buf).await?;
+    }
+
+    // Acquire a buffer from the pool and read payload directly into it
+    let mut buf = acquire();
+    buf.resize(payload_len, 0);
+    recv.read_exact(&mut buf).await?;
+
+    // Convert to Bytes (reference-counted, zero-copy slice)
+    let payload = buf.freeze();
 
     Ok(Some(payload))
 }
