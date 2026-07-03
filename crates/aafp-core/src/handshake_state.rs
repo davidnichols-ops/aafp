@@ -261,7 +261,9 @@ impl fmt::Display for ServerHandshakeState {
 /// The role of the state machine owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum HandshakeRole {
+    /// The initiator of the handshake (sends ClientHello).
     Client,
+    /// The responder of the handshake (sends ServerHello).
     Server,
 }
 
@@ -284,9 +286,13 @@ pub enum FrameDisposition {
 /// Error returned when an illegal state transition is attempted.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HandshakeStateError {
+    /// The role of the state machine (client or server).
     pub role: HandshakeRole,
+    /// The state being transitioned from.
     pub from_state: String,
+    /// The state being transitioned to.
     pub to_state: String,
+    /// A human-readable explanation of why the transition is illegal.
     pub reason: String,
 }
 
@@ -312,8 +318,11 @@ impl std::error::Error for HandshakeStateError {}
 /// Error returned when an unexpected frame is received.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnexpectedFrameError {
+    /// The handshake state when the unexpected frame was received.
     pub current_state: String,
+    /// The frame type byte that was received.
     pub frame_type: u8,
+    /// The frame types allowed in the current state.
     pub allowed: Vec<u8>,
 }
 
@@ -332,8 +341,11 @@ impl std::error::Error for UnexpectedFrameError {}
 /// Error returned when a timeout occurs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HandshakeTimeoutError {
+    /// The handshake state when the timeout occurred.
     pub state: String,
+    /// The elapsed time since the deadline was set.
     pub elapsed: Duration,
+    /// The configured timeout limit for this state.
     pub limit: Duration,
 }
 
@@ -354,7 +366,9 @@ impl std::error::Error for HandshakeTimeoutError {}
 /// Error returned when a duplicate handshake message is received.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DuplicateHandshakeMessageError {
+    /// The handshake state when the duplicate was received.
     pub state: String,
+    /// The type of handshake message that was duplicated.
     pub message_type: &'static str,
 }
 

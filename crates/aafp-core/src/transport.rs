@@ -14,16 +14,23 @@ pub type Multiaddr = String;
 pub enum TransportEvent {
     /// A new incoming connection attempt.
     Incoming {
+        /// The local multiaddress receiving the connection.
         local_addr: Multiaddr,
+        /// The remote multiaddress of the incoming connection.
         remote_addr: Multiaddr,
     },
     /// A connection was established with a peer.
     ConnectionEstablished {
+        /// The AgentId of the connected peer.
         peer: AgentId,
+        /// The remote multiaddress of the peer.
         remote_addr: Multiaddr,
     },
     /// A connection was closed.
-    ConnectionClosed { peer: AgentId },
+    ConnectionClosed {
+        /// The AgentId of the disconnected peer.
+        peer: AgentId,
+    },
     /// A transport-level error.
     Error(Error),
 }
@@ -31,7 +38,7 @@ pub enum TransportEvent {
 /// A transport abstraction for establishing connections to peers.
 ///
 /// This is a simplified, synchronous-poll version of libp2p's `Transport`
-/// trait. Implementations include [`aafp_transport_quic::QuicTransport`].
+/// trait. Implementations include `aafp_transport_quic::QuicTransport`.
 pub trait Transport: Send {
     /// Start listening on the given multiaddress.
     fn listen_on(&mut self, addr: &Multiaddr) -> Result<(), Error>;

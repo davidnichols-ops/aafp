@@ -50,7 +50,9 @@ pub struct UcanPayload {
 /// A UCAN delegation token.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct UcanToken {
+    /// JWT-style header specifying the algorithm and token type.
     pub header: UcanHeader,
+    /// Payload containing issuer, audience, capabilities, and timestamps.
     pub payload: UcanPayload,
     /// ML-DSA-65 signature over CBOR(header) || CBOR(payload).
     pub signature: Vec<u8>,

@@ -19,7 +19,9 @@ use tokio::sync::RwLock;
 
 /// RPC method names (RFC-0004 §3.3).
 pub const METHOD_ANNOUNCE: &str = "aafp.discovery.announce";
+/// RPC method name for capability lookups (RFC-0004 §3.3).
 pub const METHOD_LOOKUP: &str = "aafp.discovery.lookup";
+/// RPC method name for peer exchange (RFC-0004 §3.3).
 pub const METHOD_PEX: &str = "aafp.discovery.pex";
 
 /// Default lookup limit for unauthenticated requests (RFC-0004 §3.4).
@@ -47,18 +49,22 @@ pub const MAX_CONCURRENT_STREAMS: usize = 100;
 /// ```
 #[derive(Clone, Debug)]
 pub struct AnnounceParams {
+    /// The agent record being announced to the network.
     pub record: AgentRecord,
 }
 
 impl AnnounceParams {
+    /// Create a new announce request with the given agent record.
     pub fn new(record: AgentRecord) -> Self {
         Self { record }
     }
 
+    /// Encode the params as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![(1, self.record.to_cbor())])
     }
 
+    /// Decode the params from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, DiscoveryError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
         let record_val = get(1).ok_or(DiscoveryError::MissingField("record"))?;
@@ -74,14 +80,17 @@ impl AnnounceParams {
 /// ```
 #[derive(Clone, Debug)]
 pub struct AnnounceResult {
+    /// Known peers returned by the bootstrap node.
     pub peers: Vec<AgentRecord>,
 }
 
 impl AnnounceResult {
+    /// Create a new announce result with the given peer records.
     pub fn new(peers: Vec<AgentRecord>) -> Self {
         Self { peers }
     }
 
+    /// Encode the result as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![(
             1,
@@ -89,6 +98,7 @@ impl AnnounceResult {
         )])
     }
 
+    /// Decode the result from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, DiscoveryError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
         let arr = match get(1) {
@@ -116,11 +126,14 @@ impl AnnounceResult {
 /// ```
 #[derive(Clone, Debug)]
 pub struct LookupParams {
+    /// The capability name to search for.
     pub capability: String,
+    /// Optional maximum number of results to return.
     pub limit: Option<u64>,
 }
 
 impl LookupParams {
+    /// Create a new lookup request for the given capability.
     pub fn new(capability: impl Into<String>) -> Self {
         Self {
             capability: capability.into(),
@@ -128,11 +141,13 @@ impl LookupParams {
         }
     }
 
+    /// Set the maximum number of results to return.
     pub fn with_limit(mut self, limit: u64) -> Self {
         self.limit = Some(limit);
         self
     }
 
+    /// Encode the params as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         let mut entries = vec![(1i64, Value::TextString(self.capability.clone()))];
         // A-2 (Rev 6): Omit limit when absent (NOT null)
@@ -142,6 +157,7 @@ impl LookupParams {
         int_map(entries)
     }
 
+    /// Decode the params from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, DiscoveryError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
 
@@ -182,14 +198,17 @@ impl LookupParams {
 /// Lookup response result (RFC-0004 §3.3).
 #[derive(Clone, Debug)]
 pub struct LookupResult {
+    /// Agents matching the requested capability.
     pub peers: Vec<AgentRecord>,
 }
 
 impl LookupResult {
+    /// Create a new lookup result with the given peer records.
     pub fn new(peers: Vec<AgentRecord>) -> Self {
         Self { peers }
     }
 
+    /// Encode the result as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![(
             1,
@@ -197,6 +216,7 @@ impl LookupResult {
         )])
     }
 
+    /// Decode the result from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, DiscoveryError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
         let arr = match get(1) {
@@ -230,6 +250,7 @@ pub struct CapabilityDht {
 }
 
 impl CapabilityDht {
+    /// Create a new empty capability DHT.
     pub fn new() -> Self {
         Self::default()
     }
@@ -363,21 +384,30 @@ pub fn shared_dht() -> SharedCapabilityDht {
 /// Discovery errors.
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryError {
+    /// A required CBOR field was missing from the message.
     #[error("missing field: {0}")]
     MissingField(&'static str),
+    /// A CBOR field had an invalid value.
     #[error("invalid field '{field}': {message}")]
     InvalidField {
+        /// The name of the invalid field.
         field: &'static str,
+        /// A description of why the field is invalid.
         message: String,
     },
+    /// An identity-related error occurred while decoding a record.
     #[error("identity error: {0}")]
     Identity(#[from] IdentityError),
+    /// A CBOR encoding or decoding error occurred.
     #[error("CBOR error: {0}")]
     Cbor(#[from] aafp_cbor::CborError),
+    /// The agent record failed verification.
     #[error("record invalid")]
     RecordInvalid,
+    /// The agent record has expired.
     #[error("record expired")]
     RecordExpired,
+    /// The request exceeded the configured rate limit.
     #[error("rate limit exceeded")]
     RateLimitExceeded,
 }

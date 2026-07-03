@@ -16,12 +16,16 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use thiserror::Error;
 
+/// Errors returned by capability DHT operations.
 #[derive(Debug, Error)]
 pub enum DhtError {
+    /// The agent record failed signature verification.
     #[error("record verification failed")]
     VerificationFailed,
+    /// No record was found for the requested key.
     #[error("record not found")]
     NotFound,
+    /// No agents advertise the requested capability.
     #[error("capability not found: {0}")]
     CapabilityNotFound(String),
 }
@@ -42,7 +46,7 @@ pub struct DhtRecord {
 
 /// In-memory capability DHT.
 pub struct CapabilityDht {
-    /// Map: DhtKey → Vec<DhtRecord>.
+    /// Map: DhtKey → `Vec<DhtRecord>`.
     store: HashMap<DhtKey, Vec<DhtRecord>>,
     /// Map: AgentId → Vec<capability_string> (for reverse lookup).
     agent_caps: HashMap<AgentId, Vec<String>>,

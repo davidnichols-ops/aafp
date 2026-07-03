@@ -25,12 +25,16 @@ use aafp_cbor::{int_map, Value};
 /// JSON, or text. If a method has no parameters, use an empty map `{}`.
 #[derive(Clone, Debug)]
 pub struct RpcRequest {
+    /// Correlation ID matching this request to its response.
     pub id: u64,
+    /// The method name to invoke on the server.
     pub method: String,
+    /// Method parameters as a canonical CBOR value.
     pub params: Value,
 }
 
 impl RpcRequest {
+    /// Create a new RPC request with the given ID and method, defaulting to empty params.
     pub fn new(id: u64, method: impl Into<String>) -> Self {
         Self {
             id,
@@ -39,6 +43,7 @@ impl RpcRequest {
         }
     }
 
+    /// Set the params CBOR value on this request.
     pub fn with_params(mut self, params: Value) -> Self {
         self.params = params;
         self
@@ -114,12 +119,16 @@ impl RpcRequest {
 /// Note: 2xxx and 8xxx errors MUST be sent as ERROR frames, not RPC errors.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RpcErrorObject {
+    /// The error code (RFC-0005 §6).
     pub code: u32,
+    /// Human-readable error message.
     pub message: String,
+    /// Optional opaque error data.
     pub data: Option<Vec<u8>>,
 }
 
 impl RpcErrorObject {
+    /// Create a new RPC error object with the given code and message.
     pub fn new(code: u32, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -128,11 +137,13 @@ impl RpcErrorObject {
         }
     }
 
+    /// Attach opaque error data to this error object.
     pub fn with_data(mut self, data: Vec<u8>) -> Self {
         self.data = Some(data);
         self
     }
 
+    /// Encode the error object to a canonical CBOR value with integer keys.
     pub fn to_cbor(&self) -> Value {
         let mut entries = vec![
             (1i64, Value::Unsigned(self.code as u64)),
@@ -145,6 +156,7 @@ impl RpcErrorObject {
         int_map(entries)
     }
 
+    /// Decode an error object from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RpcError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
 
@@ -200,12 +212,16 @@ impl RpcErrorObject {
 /// RPC response (RFC-0002 §4.4).
 #[derive(Clone, Debug)]
 pub struct RpcResponse {
+    /// Correlation ID matching the original request.
     pub id: u64,
+    /// The successful result value, if the call succeeded.
     pub result: Option<Value>,
+    /// An error object, if the call failed.
     pub error: Option<RpcErrorObject>,
 }
 
 impl RpcResponse {
+    /// Create a successful response with the given result value.
     pub fn success(id: u64, result: Value) -> Self {
         Self {
             id,
@@ -214,6 +230,7 @@ impl RpcResponse {
         }
     }
 
+    /// Create an error response with the given error object.
     pub fn error(id: u64, error: RpcErrorObject) -> Self {
         Self {
             id,
@@ -222,6 +239,7 @@ impl RpcResponse {
         }
     }
 
+    /// Whether this response represents a successful call (no error).
     pub fn is_success(&self) -> bool {
         self.error.is_none()
     }
@@ -305,11 +323,14 @@ impl RpcResponse {
 /// Close message (RFC-0002 §4.5).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CloseMessage {
+    /// The close code (RFC-0002 §6.6).
     pub code: u32,
+    /// Human-readable close message.
     pub message: String,
 }
 
 impl CloseMessage {
+    /// Create a new close message with the given code and message.
     pub fn new(code: u32, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -317,6 +338,7 @@ impl CloseMessage {
         }
     }
 
+    /// Encode the close message to a canonical CBOR value with integer keys.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![
             (1, Value::Unsigned(self.code as u64)),
@@ -324,6 +346,7 @@ impl CloseMessage {
         ])
     }
 
+    /// Decode a close message from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RpcError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
 
@@ -352,10 +375,12 @@ impl CloseMessage {
         Ok(Self { code, message })
     }
 
+    /// Encode the close message to CBOR bytes for use as a frame payload.
     pub fn encode(&self) -> Result<Vec<u8>, RpcError> {
         aafp_cbor::encode(&self.to_cbor()).map_err(RpcError::Cbor)
     }
 
+    /// Decode a close message from CBOR bytes (frame payload).
     pub fn decode(data: &[u8]) -> Result<Self, RpcError> {
         let (val, _) = aafp_cbor::decode(data).map_err(RpcError::Cbor)?;
         Self::from_cbor(&val)
@@ -365,13 +390,18 @@ impl CloseMessage {
 /// Error message (RFC-0002 §4.6, RFC-0005 §4.1).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ErrorMessage {
+    /// The error code (RFC-0005 §4.1).
     pub code: u32,
+    /// Human-readable error message.
     pub message: String,
+    /// Optional opaque error data.
     pub data: Option<Vec<u8>>,
+    /// Whether the error is fatal (connection must close).
     pub fatal: bool,
 }
 
 impl ErrorMessage {
+    /// Create a new error message with the given code, message, and fatality.
     pub fn new(code: u32, message: impl Into<String>, fatal: bool) -> Self {
         Self {
             code,
@@ -381,11 +411,13 @@ impl ErrorMessage {
         }
     }
 
+    /// Attach opaque error data to this error message.
     pub fn with_data(mut self, data: Vec<u8>) -> Self {
         self.data = Some(data);
         self
     }
 
+    /// Encode the error message to a canonical CBOR value with integer keys.
     pub fn to_cbor(&self) -> Value {
         let mut entries = vec![
             (1i64, Value::Unsigned(self.code as u64)),
@@ -399,6 +431,7 @@ impl ErrorMessage {
         int_map(entries)
     }
 
+    /// Decode an error message from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RpcError> {
         let get = |k: i64| -> Option<&Value> { aafp_cbor::int_map_get(val, k) };
 
@@ -462,10 +495,12 @@ impl ErrorMessage {
         })
     }
 
+    /// Encode the error message to CBOR bytes for use as a frame payload.
     pub fn encode(&self) -> Result<Vec<u8>, RpcError> {
         aafp_cbor::encode(&self.to_cbor()).map_err(RpcError::Cbor)
     }
 
+    /// Decode an error message from CBOR bytes (frame payload).
     pub fn decode(data: &[u8]) -> Result<Self, RpcError> {
         let (val, _) = aafp_cbor::decode(data).map_err(RpcError::Cbor)?;
         Self::from_cbor(&val)
@@ -475,13 +510,18 @@ impl ErrorMessage {
 /// RPC errors.
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
+    /// A required CBOR field is missing from the message.
     #[error("missing field: {0}")]
     MissingField(&'static str),
+    /// A CBOR field has an invalid type or value.
     #[error("invalid field '{field}': {message}")]
     InvalidField {
+        /// The name of the invalid field.
         field: &'static str,
+        /// A description of why the field is invalid.
         message: String,
     },
+    /// A CBOR encoding or decoding error occurred.
     #[error("CBOR error: {0}")]
     Cbor(#[from] aafp_cbor::CborError),
 }

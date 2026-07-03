@@ -21,8 +21,11 @@ use thiserror::Error;
 
 /// RPC method names (RFC 0010 §2.1).
 pub const METHOD_RESERVE: &str = "aafp.relay.reserve";
+/// RPC method name for renewing an existing reservation (RFC 0010 §2.1).
 pub const METHOD_RENEW: &str = "aafp.relay.renew";
+/// RPC method name for cancelling a reservation (RFC 0010 §2.1).
 pub const METHOD_CANCEL: &str = "aafp.relay.cancel";
+/// RPC method name for requesting a relayed connection (RFC 0010 §2.1).
 pub const METHOD_CONNECT: &str = "aafp.relay.connect";
 
 /// Default max concurrent reservations (RFC 0010 §5).
@@ -37,18 +40,25 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 50;
 /// Relay errors.
 #[derive(Debug, Error)]
 pub enum RelayV1Error {
+    /// The relay has no capacity for additional reservations or connections.
     #[error("relay at capacity")]
     AtCapacity,
+    /// No reservation exists with the given ID.
     #[error("reservation not found")]
     ReservationNotFound,
+    /// The reservation has expired.
     #[error("reservation expired")]
     ReservationExpired,
+    /// The target agent has no active reservation on this relay.
     #[error("target has no reservation")]
     NoReservation,
+    /// The requested duration exceeds the relay's configured maximum.
     #[error("duration exceeds maximum")]
     DurationExceeded,
+    /// The caller does not own the reservation being modified.
     #[error("not authorized (caller does not own reservation)")]
     NotAuthorized,
+    /// A CBOR encoding or decoding error occurred.
     #[error("CBOR error: {0}")]
     Cbor(#[from] CborError),
 }
@@ -64,9 +74,13 @@ fn cbor_err(msg: impl Into<String>) -> CborError {
 /// A relay reservation (RFC 0010 §3).
 #[derive(Clone, Debug)]
 pub struct Reservation {
+    /// Unique reservation identifier assigned by the relay.
     pub id: u64,
+    /// The agent that owns this reservation.
     pub agent_id: AgentId,
+    /// When the reservation was created.
     pub created: Instant,
+    /// When the reservation expires.
     pub expires: Instant,
 }
 
@@ -85,10 +99,15 @@ impl Reservation {
 /// A relayed connection (RFC 0010 §4).
 #[derive(Clone, Debug)]
 pub struct RelayedConnection {
+    /// Unique connection identifier assigned by the relay.
     pub id: u64,
+    /// The agent that initiated the connection.
     pub source: AgentId,
+    /// The target agent being connected to.
     pub target: AgentId,
+    /// When the connection was created.
     pub created: Instant,
+    /// Total bytes forwarded over this connection.
     pub bytes_forwarded: u64,
 }
 
@@ -99,18 +118,22 @@ pub struct RelayedConnection {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ReserveParams {
+    /// Requested reservation duration in seconds.
     pub duration_secs: u64,
 }
 
 impl ReserveParams {
+    /// Create a new reserve request with the given duration in seconds.
     pub fn new(duration_secs: u64) -> Self {
         Self { duration_secs }
     }
 
+    /// Encode the params as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![(1, Value::Unsigned(self.duration_secs))])
     }
 
+    /// Decode the params from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RelayV1Error> {
         let duration_secs = match int_map_get(val, 1) {
             Some(Value::Unsigned(n)) => *n,
@@ -127,12 +150,16 @@ impl ReserveParams {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ReserveResult {
+    /// The assigned reservation identifier.
     pub reservation_id: u64,
+    /// Unix timestamp at which the reservation expires.
     pub expires_at: u64,
+    /// The relay's multiaddr for establishing relayed connections.
     pub relay_addr: String,
 }
 
 impl ReserveResult {
+    /// Create a new reserve result.
     pub fn new(reservation_id: u64, expires_at: u64, relay_addr: String) -> Self {
         Self {
             reservation_id,
@@ -141,6 +168,7 @@ impl ReserveResult {
         }
     }
 
+    /// Encode the result as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![
             (1, Value::Unsigned(self.reservation_id)),
@@ -149,6 +177,7 @@ impl ReserveResult {
         ])
     }
 
+    /// Decode the result from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RelayV1Error> {
         let reservation_id = match int_map_get(val, 1) {
             Some(Value::Unsigned(n)) => *n,
@@ -177,11 +206,14 @@ impl ReserveResult {
 /// ```
 #[derive(Clone, Debug)]
 pub struct RenewParams {
+    /// The reservation identifier to renew.
     pub reservation_id: u64,
+    /// New requested duration in seconds.
     pub duration_secs: u64,
 }
 
 impl RenewParams {
+    /// Create a new renew request for the given reservation and duration.
     pub fn new(reservation_id: u64, duration_secs: u64) -> Self {
         Self {
             reservation_id,
@@ -189,6 +221,7 @@ impl RenewParams {
         }
     }
 
+    /// Encode the params as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![
             (1, Value::Unsigned(self.reservation_id)),
@@ -196,6 +229,7 @@ impl RenewParams {
         ])
     }
 
+    /// Decode the params from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RelayV1Error> {
         let reservation_id = match int_map_get(val, 1) {
             Some(Value::Unsigned(n)) => *n,
@@ -219,18 +253,22 @@ impl RenewParams {
 /// ```
 #[derive(Clone, Debug)]
 pub struct CancelParams {
+    /// The reservation identifier to cancel.
     pub reservation_id: u64,
 }
 
 impl CancelParams {
+    /// Create a new cancel request for the given reservation.
     pub fn new(reservation_id: u64) -> Self {
         Self { reservation_id }
     }
 
+    /// Encode the params as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![(1, Value::Unsigned(self.reservation_id))])
     }
 
+    /// Decode the params from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RelayV1Error> {
         let reservation_id = match int_map_get(val, 1) {
             Some(Value::Unsigned(n)) => *n,
@@ -247,18 +285,22 @@ impl CancelParams {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ConnectParams {
+    /// The target agent to connect to via the relay.
     pub target: AgentId,
 }
 
 impl ConnectParams {
+    /// Create a new connect request targeting the given agent.
     pub fn new(target: AgentId) -> Self {
         Self { target }
     }
 
+    /// Encode the params as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![(1, Value::ByteString(self.target.to_vec()))])
     }
 
+    /// Decode the params from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RelayV1Error> {
         let target = match int_map_get(val, 1) {
             Some(Value::ByteString(b)) => {
@@ -283,18 +325,22 @@ impl ConnectParams {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ConnectResult {
+    /// The assigned relayed connection identifier.
     pub connection_id: u64,
 }
 
 impl ConnectResult {
+    /// Create a new connect result with the given connection ID.
     pub fn new(connection_id: u64) -> Self {
         Self { connection_id }
     }
 
+    /// Encode the result as a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![(1, Value::Unsigned(self.connection_id))])
     }
 
+    /// Decode the result from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, RelayV1Error> {
         let connection_id = match int_map_get(val, 1) {
             Some(Value::Unsigned(n)) => *n,
@@ -723,8 +769,11 @@ pub struct AutoNatV1 {
 /// NAT status (RFC 0010 §6).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NatStatusV1 {
+    /// NAT status has not yet been determined.
     Unknown,
+    /// The agent is not behind NAT (publicly reachable).
     NotBehindNat,
+    /// The agent is behind NAT and needs a relay.
     BehindNat,
 }
 

@@ -30,14 +30,33 @@ pub struct Extension {
 /// Errors during extension encoding/decoding.
 #[derive(Debug, Error)]
 pub enum ExtensionError {
+    /// The extension data exceeds the maximum allowed size.
     #[error("extension data too large: {0} bytes (max {1})")]
     DataTooLarge(usize, usize),
+    /// The extension header is incomplete (not enough bytes to parse).
     #[error("incomplete extension header: need {needed}, have {have}")]
-    IncompleteHeader { needed: usize, have: usize },
+    IncompleteHeader {
+        /// Number of bytes needed to complete the header.
+        needed: usize,
+        /// Number of bytes actually available.
+        have: usize,
+    },
+    /// The extension data section is incomplete (fewer bytes than declared).
     #[error("incomplete extension data: need {needed}, have {have}")]
-    IncompleteData { needed: usize, have: usize },
+    IncompleteData {
+        /// Number of bytes needed to complete the data.
+        needed: usize,
+        /// Number of bytes actually available.
+        have: usize,
+    },
+    /// The declared extension length does not match the actual data length.
     #[error("extension length mismatch: header says {expected}, actual {actual}")]
-    LengthMismatch { expected: usize, actual: usize },
+    LengthMismatch {
+        /// The length declared in the extension header.
+        expected: usize,
+        /// The actual length of the extension data.
+        actual: usize,
+    },
 }
 
 /// Encode a list of extensions into the frame body's Extension section.

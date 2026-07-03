@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(clippy::all)]
+#![allow(missing_docs)]
 
 //! AAFP Protocol Conformance Test Suite
 //!

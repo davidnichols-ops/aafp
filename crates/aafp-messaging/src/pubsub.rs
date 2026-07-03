@@ -8,10 +8,13 @@ use std::collections::HashMap;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
+/// Errors that can occur during pubsub operations.
 #[derive(Debug, Error)]
 pub enum PubSubError {
+    /// The requested topic does not exist in the pubsub system.
     #[error("topic not found")]
     TopicNotFound,
+    /// A broadcast channel error occurred while publishing a message.
     #[error("broadcast error: {0}")]
     Broadcast(String),
 }
@@ -22,8 +25,11 @@ pub type Topic = String;
 /// A message published to a topic.
 #[derive(Clone, Debug)]
 pub struct TopicMessage {
+    /// The topic this message was published to.
     pub topic: Topic,
+    /// The AgentId of the message sender.
     pub from: AgentId,
+    /// The message payload.
     pub data: Vec<u8>,
 }
 

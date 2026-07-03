@@ -14,7 +14,9 @@ use tracing::info;
 
 /// A server-side authenticated peer connection.
 pub struct ServerPeerConnection {
+    /// The authenticated session for this peer connection.
     pub session: Session,
+    /// The underlying QUIC connection to the peer.
     pub conn: aafp_transport_quic::QuicConnection,
 }
 

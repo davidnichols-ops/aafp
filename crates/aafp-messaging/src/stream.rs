@@ -9,7 +9,9 @@ pub type StreamId = u64;
 
 /// A message stream wrapping a QUIC bidirectional stream with AEAD encryption.
 pub struct MessageStream {
+    /// The unique identifier for this stream.
     pub id: StreamId,
+    /// The AgentId of the remote peer on this stream.
     pub peer: AgentId,
     aead: Aead,
 }

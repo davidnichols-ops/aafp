@@ -26,21 +26,28 @@ use thiserror::Error;
 /// If ALPN negotiation fails, the connection MUST be closed.
 pub const AAFP_ALPN: &[u8] = b"aafp/1";
 
+/// Errors that can occur while building QUIC transport configuration.
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    /// A rustls configuration or handshake error.
     #[error("rustls error: {0}")]
     Rustls(String),
+    /// An error while generating the self-signed TLS certificate.
     #[error("certificate generation error: {0}")]
     CertGen(String),
+    /// A quinn configuration error.
     #[error("quinn error: {0}")]
     Quinn(String),
+    /// ALPN negotiation failed because the server did not select `aafp/1`.
     #[error("ALPN negotiation failed: server did not select aafp/1")]
     AlpnFailed,
 }
 
 /// A self-signed certificate and private key for QUIC TLS.
 pub struct TlsIdentity {
+    /// The self-signed DER-encoded certificate used for TLS.
     pub cert: CertificateDer<'static>,
+    /// The private key corresponding to the certificate.
     pub key: PrivateKeyDer<'static>,
 }
 

@@ -9,10 +9,13 @@ use aafp_identity::AgentId;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+/// Errors returned by AutoNAT operations.
 #[derive(Debug, Error)]
 pub enum AutoNatError {
+    /// No peers were available to perform a dial-back probe.
     #[error("no peers available for dial-back")]
     NoPeers,
+    /// A dial-back probe timed out before completing.
     #[error("dial-back timeout")]
     Timeout,
 }
@@ -29,6 +32,7 @@ pub enum NatStatus {
 }
 
 impl NatStatus {
+    /// Returns `true` if the agent is behind NAT and needs a relay.
     pub fn is_behind_nat(&self) -> bool {
         matches!(self, NatStatus::Private)
     }

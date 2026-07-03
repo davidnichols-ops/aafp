@@ -57,14 +57,26 @@ pub struct NonceReuseError;
 /// Error returned by `ReplayCache::new` for invalid parameters.
 #[derive(Debug, thiserror::Error)]
 pub enum ReplayCacheError {
+    /// Retention duration is outside the allowed range.
     #[error("retention must be between {min:?} and {max:?}, got {got:?}")]
     RetentionOutOfRange {
+        /// The provided retention duration.
         got: Duration,
+        /// Minimum allowed retention duration.
         min: Duration,
+        /// Maximum allowed retention duration.
         max: Duration,
     },
+    /// Maximum entry count is outside the allowed range.
     #[error("max_entries must be between {min} and {max}, got {got}")]
-    MaxEntriesOutOfRange { got: usize, min: usize, max: usize },
+    MaxEntriesOutOfRange {
+        /// The provided max entries value.
+        got: usize,
+        /// Minimum allowed max entries.
+        min: usize,
+        /// Maximum allowed max entries.
+        max: usize,
+    },
 }
 
 /// A single replay cache entry (RFC-0002 §6.7.2).

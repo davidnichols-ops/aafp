@@ -26,7 +26,9 @@ use tokio::sync::broadcast;
 
 /// RPC method names (RFC 0009 §2.1).
 pub const METHOD_SUBSCRIBE: &str = "aafp.pubsub.subscribe";
+/// Unsubscribe RPC method name (RFC 0009 §2.1).
 pub const METHOD_UNSUBSCRIBE: &str = "aafp.pubsub.unsubscribe";
+/// Publish RPC method name (RFC 0009 §2.1).
 pub const METHOD_PUBLISH: &str = "aafp.pubsub.publish";
 
 /// Default TTL for published messages (RFC 0009 §3.4).
@@ -47,22 +49,30 @@ pub type Topic = String;
 /// A message published to a topic.
 #[derive(Clone, Debug)]
 pub struct TopicMessage {
+    /// The topic this message was published to.
     pub topic: Topic,
+    /// The AgentId of the message sender.
     pub from: AgentId,
+    /// The message payload.
     pub data: Vec<u8>,
 }
 
 /// PubSub errors.
 #[derive(Debug, Error)]
 pub enum PubSubError {
+    /// The requested topic does not exist.
     #[error("topic not found")]
     TopicNotFound,
+    /// A broadcast channel error occurred while publishing a message.
     #[error("broadcast error: {0}")]
     Broadcast(String),
+    /// A CBOR encoding or decoding error occurred.
     #[error("CBOR error: {0}")]
     Cbor(#[from] CborError),
+    /// The message's TTL has expired and it should not be forwarded.
     #[error("message expired (TTL=0)")]
     Expired,
+    /// The message has already been seen and should be dropped.
     #[error("already seen")]
     AlreadySeen,
 }
@@ -82,20 +92,24 @@ fn cbor_err(msg: impl Into<String>) -> CborError {
 /// ```
 #[derive(Clone, Debug)]
 pub struct SubscribeParams {
+    /// The topic to subscribe to.
     pub topic: Topic,
 }
 
 impl SubscribeParams {
+    /// Create a new subscribe request for the given topic.
     pub fn new(topic: impl Into<String>) -> Self {
         Self {
             topic: topic.into(),
         }
     }
 
+    /// Encode the subscribe params to a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![(1, Value::TextString(self.topic.clone()))])
     }
 
+    /// Decode subscribe params from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, PubSubError> {
         let topic = match int_map_get(val, 1) {
             Some(Value::TextString(s)) => s.clone(),
@@ -120,13 +134,18 @@ pub type UnsubscribeParams = SubscribeParams;
 /// ```
 #[derive(Clone, Debug)]
 pub struct PublishParams {
+    /// The topic to publish to.
     pub topic: Topic,
+    /// The message payload.
     pub data: Vec<u8>,
+    /// Time-to-live hop count for floodsub propagation.
     pub ttl: u64,
+    /// List of AgentIds that have already seen this message (loop prevention).
     pub seen: Vec<AgentId>,
 }
 
 impl PublishParams {
+    /// Create a new publish request with the default TTL and empty seen list.
     pub fn new(topic: impl Into<String>, data: Vec<u8>) -> Self {
         Self {
             topic: topic.into(),
@@ -136,6 +155,7 @@ impl PublishParams {
         }
     }
 
+    /// Encode the publish params to a CBOR value.
     pub fn to_cbor(&self) -> Value {
         int_map(vec![
             (1, Value::TextString(self.topic.clone())),
@@ -153,6 +173,7 @@ impl PublishParams {
         ])
     }
 
+    /// Decode publish params from a CBOR value.
     pub fn from_cbor(val: &Value) -> Result<Self, PubSubError> {
         let topic = match int_map_get(val, 1) {
             Some(Value::TextString(s)) => s.clone(),
@@ -197,6 +218,7 @@ impl PublishParams {
         })
     }
 
+    /// Encode the publish params to CBOR bytes for use as an RPC frame payload.
     pub fn encode(&self) -> Result<Vec<u8>, PubSubError> {
         encode(&self.to_cbor()).map_err(PubSubError::Cbor)
     }

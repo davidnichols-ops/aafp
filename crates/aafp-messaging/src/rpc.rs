@@ -14,14 +14,19 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{oneshot, Mutex};
 
+/// Errors that can occur during RPC operations.
 #[derive(Debug, Error)]
 pub enum RpcError {
+    /// The requested RPC method is not registered on the server.
     #[error("method not found: {0}")]
     MethodNotFound(String),
+    /// The remote peer returned an error for this RPC call.
     #[error("rpc error: {0}")]
     Remote(String),
+    /// The RPC request timed out before a response was received.
     #[error("timeout waiting for response")]
     Timeout,
+    /// An error occurred during CBOR serialization or deserialization.
     #[error("serialization error: {0}")]
     Serialization(String),
 }
@@ -29,20 +34,27 @@ pub enum RpcError {
 /// An RPC request.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
+    /// Correlation ID matching this request to its response.
     pub id: u64,
+    /// The method name to invoke on the server.
     pub method: String,
+    /// CBOR-encoded method parameters.
     pub params: Vec<u8>,
 }
 
 /// An RPC response.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct RpcResponse {
+    /// Correlation ID matching the original request.
     pub id: u64,
+    /// The successful result payload, if the call succeeded.
     pub result: Option<Vec<u8>>,
+    /// An error message, if the call failed.
     pub error: Option<String>,
 }
 
 impl RpcResponse {
+    /// Create a successful response with the given result payload.
     pub fn success(id: u64, result: Vec<u8>) -> Self {
         Self {
             id,
@@ -51,6 +63,7 @@ impl RpcResponse {
         }
     }
 
+    /// Create an error response with the given error message.
     pub fn error(id: u64, error: String) -> Self {
         Self {
             id,
@@ -66,6 +79,7 @@ pub struct RpcServer {
 }
 
 impl RpcServer {
+    /// Create a new RPC server with no registered handlers.
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
@@ -113,6 +127,7 @@ pub struct RpcClient {
 }
 
 impl RpcClient {
+    /// Create a new RPC client with no pending requests.
     pub fn new() -> Self {
         Self {
             next_id: 1,

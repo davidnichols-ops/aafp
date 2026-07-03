@@ -1,3 +1,7 @@
+//! AAFP CLI: command-line tool for agent management.
+//!
+//! Provides commands for key generation, agent creation, and testing.
+
 use clap::{Parser, Subcommand};
 
 mod commands;

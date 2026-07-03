@@ -84,7 +84,12 @@ impl std::fmt::Display for CloseState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CloseAction {
     /// Encode and send a CLOSE frame with the given code and message.
-    SendCloseFrame { code: u32, message: String },
+    SendCloseFrame {
+        /// The close code to include in the CLOSE frame.
+        code: u32,
+        /// The human-readable close message.
+        message: String,
+    },
     /// Close the QUIC connection (graceful or forced).
     CloseQuic,
     /// No action needed (e.g., duplicate event, already closed).
@@ -94,6 +99,7 @@ pub enum CloseAction {
 /// Error returned by `CloseManager::new` for invalid timeout.
 #[derive(Debug, thiserror::Error)]
 pub enum CloseManagerError {
+    /// The configured close timeout is shorter than the minimum allowed.
     #[error("close timeout must be >= 1s, got {0:?}")]
     TimeoutTooShort(Duration),
 }

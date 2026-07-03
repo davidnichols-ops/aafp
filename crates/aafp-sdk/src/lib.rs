@@ -43,30 +43,43 @@ use aafp_identity::agent_record::AgentRecord;
 use aafp_identity::{AgentId, AgentKeypair};
 use thiserror::Error;
 
+/// Errors returned by the AAFP SDK.
 #[derive(Debug, Error)]
 pub enum SdkError {
+    /// A transport-layer error.
     #[error("transport error: {0}")]
     Transport(String),
+    /// A discovery-layer error.
     #[error("discovery error: {0}")]
     Discovery(String),
+    /// A handshake protocol error.
     #[error("handshake error: {0}")]
     Handshake(String),
+    /// A messaging-layer error.
     #[error("messaging error: {0}")]
     Messaging(String),
+    /// A frame encoding or decoding error.
     #[error("frame error: {0}")]
     Frame(#[from] aafp_messaging::FrameError),
+    /// No connection to the peer exists.
     #[error("not connected to peer")]
     NotConnected,
+    /// The peer has not completed the handshake (session not in `MessagingEnabled` state).
     #[error("peer not authenticated — session not in MessagingEnabled state")]
     NotAuthenticated,
+    /// The agent has not been started.
     #[error("agent not started")]
     NotStarted,
+    /// An identity-layer error.
     #[error("identity error: {0}")]
     Identity(#[from] aafp_identity::IdentityError),
+    /// A cryptographic error.
     #[error("crypto error: {0}")]
     Crypto(#[from] aafp_crypto::CryptoError),
+    /// A core crate error.
     #[error("core error: {0}")]
     Core(#[from] aafp_core::Error),
+    /// An I/O error.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

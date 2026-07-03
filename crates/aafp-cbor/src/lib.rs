@@ -43,36 +43,48 @@ const SIMPLE_UNDEFINED: u8 = 23;
 /// CBOR value types used in AAFP structures.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    /// An unsigned integer value.
     Unsigned(u64),
+    /// A negative integer value.
     Negative(i64),
+    /// A byte string value.
     ByteString(Vec<u8>),
+    /// A UTF-8 text string value.
     TextString(String),
+    /// An array of CBOR values.
     Array(Vec<Value>),
     /// Map with integer keys (canonical AAFP maps).
     IntMap(Vec<(i64, Value)>),
     /// Map with string keys (for CapabilityDescriptor metadata).
     StrMap(Vec<(String, Value)>),
+    /// A boolean value.
     Bool(bool),
+    /// A null value.
     Null,
 }
 
 impl Value {
+    /// Create an unsigned integer `Value` from a `u64`.
     pub fn from_u64(v: u64) -> Self {
         Self::Unsigned(v)
     }
 
+    /// Create a byte string `Value` from a byte vector.
     pub fn from_bytes(b: Vec<u8>) -> Self {
         Self::ByteString(b)
     }
 
+    /// Create a text string `Value` from any string-like input.
     pub fn from_str(s: impl Into<String>) -> Self {
         Self::TextString(s.into())
     }
 
+    /// Create a boolean `Value`.
     pub fn from_bool(b: bool) -> Self {
         Self::Bool(b)
     }
 
+    /// Create a null `Value`.
     pub fn null() -> Self {
         Self::Null
     }
@@ -82,12 +94,26 @@ impl Value {
 #[derive(Debug, Error)]
 pub enum CborError {
     #[error("unexpected end of input at offset {0}")]
+    /// The input ended before a complete CBOR value could be read.
     UnexpectedEof(usize),
     #[error("invalid CBOR at offset {offset}: {message}")]
-    Invalid { offset: usize, message: String },
+    /// The CBOR data is invalid at the given offset.
+    Invalid {
+        /// Byte offset where the invalid data was encountered.
+        offset: usize,
+        /// Human-readable description of the problem.
+        message: String,
+    },
     #[error("unsupported CBOR feature at offset {offset}: {feature}")]
-    Unsupported { offset: usize, feature: String },
+    /// An unsupported CBOR feature was encountered at the given offset.
+    Unsupported {
+        /// Byte offset where the unsupported feature was encountered.
+        offset: usize,
+        /// Name or description of the unsupported feature.
+        feature: String,
+    },
     #[error("integer key out of range: {0}")]
+    /// An integer map key is outside the representable range.
     KeyOutOfRange(i64),
 }
 

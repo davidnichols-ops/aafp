@@ -52,10 +52,15 @@ impl BenchmarkConfig {
 
 /// Collect system information for reproducibility.
 pub struct SystemInfo {
+    /// Operating system name.
     pub os: String,
+    /// CPU model identifier.
     pub cpu_model: String,
+    /// Number of CPU cores.
     pub cpu_cores: usize,
+    /// Rust compiler version.
     pub rust_version: String,
+    /// Host architecture (e.g. x86_64, aarch64).
     pub host_arch: String,
 }
 

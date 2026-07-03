@@ -10,12 +10,16 @@ use aafp_identity::AgentId;
 use std::time::Instant;
 use thiserror::Error;
 
+/// Errors returned by DCuTR upgrade operations.
 #[derive(Debug, Error)]
 pub enum DcutrError {
+    /// The connection is not relayed, so it cannot be upgraded.
     #[error("not relayed, cannot upgrade")]
     NotRelayed,
+    /// The hole punching attempt failed with the given reason.
     #[error("hole punch failed: {0}")]
     HolePunchFailed(String),
+    /// The remote peer does not support the DCuTR protocol.
     #[error("peer does not support DCuTR")]
     NotSupported,
 }

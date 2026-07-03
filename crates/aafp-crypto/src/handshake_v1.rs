@@ -109,15 +109,25 @@ impl TranscriptHash {
 /// ```
 #[derive(Clone, Debug)]
 pub struct ClientHello {
+    /// Protocol version (must equal `PROTOCOL_VERSION`).
     pub protocol_version: u64,
+    /// Agent identifier (SHA-256 of the public key, 32 bytes).
     pub agent_id: Vec<u8>,
+    /// ML-DSA-65 public key (1952 bytes).
     pub public_key: Vec<u8>,
+    /// Random 32-byte nonce.
     pub nonce: [u8; NONCE_SIZE],
+    /// Capability descriptors advertised by the client.
     pub capabilities: Vec<Value>,
+    /// Extension entries advertised by the client.
     pub extensions: Vec<Value>,
+    /// ML-DSA-65 signature over the transcript hash.
     pub signature: Vec<u8>,
+    /// Expiry timestamp (unix seconds); the identity must not be expired.
     pub expires_at: u64,
+    /// Optional DoS receiver MAC (omitted when absent per A-2).
     pub receiver_mac: Option<Vec<u8>>,
+    /// Key algorithm identifier (must equal `KEY_ALG_ML_DSA_65`).
     pub key_algorithm: u64,
 }
 
@@ -203,15 +213,25 @@ impl ClientHello {
 /// ServerHello message (RFC-0002 §5.4).
 #[derive(Clone, Debug)]
 pub struct ServerHello {
+    /// Protocol version (must equal `PROTOCOL_VERSION`).
     pub protocol_version: u64,
+    /// Agent identifier (SHA-256 of the public key, 32 bytes).
     pub agent_id: Vec<u8>,
+    /// ML-DSA-65 public key (1952 bytes).
     pub public_key: Vec<u8>,
+    /// Random 32-byte nonce.
     pub nonce: [u8; NONCE_SIZE],
+    /// Capability descriptors advertised by the server.
     pub capabilities: Vec<Value>,
+    /// Extension entries advertised by the server.
     pub extensions: Vec<Value>,
+    /// Session identifier derived from the handshake transcript (32 bytes).
     pub session_id: [u8; SESSION_ID_SIZE],
+    /// ML-DSA-65 signature over the transcript hash.
     pub signature: Vec<u8>,
+    /// Expiry timestamp (unix seconds); the identity must not be expired.
     pub expires_at: u64,
+    /// Key algorithm identifier (must equal `KEY_ALG_ML_DSA_65`).
     pub key_algorithm: u64,
 }
 
@@ -269,7 +289,9 @@ impl ServerHello {
 /// ClientFinished message (RFC-0002 §5.5).
 #[derive(Clone, Debug)]
 pub struct ClientFinished {
+    /// Session identifier matching the one from ServerHello.
     pub session_id: [u8; SESSION_ID_SIZE],
+    /// ML-DSA-65 signature over the transcript hash.
     pub signature: Vec<u8>,
 }
 
@@ -375,25 +397,46 @@ pub fn generate_nonce() -> [u8; NONCE_SIZE] {
 /// Handshake errors.
 #[derive(Debug, thiserror::Error)]
 pub enum HandshakeError {
+    /// A field had an invalid value or type.
     #[error("invalid field '{field}': {message}")]
     InvalidField {
+        /// Name of the invalid field.
         field: &'static str,
+        /// Description of why the field is invalid.
         message: String,
     },
+    /// A required field was missing from the CBOR map.
     #[error("missing field: {0}")]
     MissingField(&'static str),
+    /// A CBOR encoding/decoding error occurred.
     #[error("CBOR error: {0}")]
     Cbor(#[from] aafp_cbor::CborError),
+    /// Signature verification over the transcript failed.
     #[error("signature verification failed")]
     SignatureVerificationFailed,
+    /// The session ID did not match the expected value.
     #[error("session ID mismatch")]
     SessionIdMismatch,
+    /// Protocol version does not match the expected value.
     #[error("protocol version mismatch: expected {expected}, got {got}")]
-    VersionMismatch { expected: u64, got: u64 },
+    VersionMismatch {
+        /// Expected protocol version.
+        expected: u64,
+        /// Received protocol version.
+        got: u64,
+    },
+    /// The agent ID does not equal SHA-256(public_key).
     #[error("agent ID does not match SHA-256(public_key)")]
     InvalidAgentId,
+    /// The identity has expired (expires_at <= now).
     #[error("identity expired: expires_at={expires_at}, now={now}")]
-    IdentityExpired { expires_at: u64, now: u64 },
+    IdentityExpired {
+        /// Expiry timestamp of the identity.
+        expires_at: u64,
+        /// Current time when the check was performed.
+        now: u64,
+    },
+    /// The key algorithm is not supported.
     #[error("unsupported key algorithm: {0}")]
     UnsupportedAlgorithm(u64),
 }

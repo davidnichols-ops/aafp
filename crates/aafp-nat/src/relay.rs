@@ -8,12 +8,16 @@ use aafp_identity::AgentId;
 use std::collections::HashMap;
 use thiserror::Error;
 
+/// Errors returned by relay operations.
 #[derive(Debug, Error)]
 pub enum RelayError {
+    /// No relay node is available to use.
     #[error("no relay available")]
     NoRelay,
+    /// A relay reservation request failed with the given reason.
     #[error("relay reservation failed: {0}")]
     ReservationFailed(String),
+    /// The agent is not relayed through this node.
     #[error("not relayed through this node")]
     NotRelayed,
 }

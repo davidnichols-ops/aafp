@@ -33,11 +33,20 @@ pub enum SwarmEvent<B: NetworkBehaviour> {
     /// An event from the network behaviour.
     Behaviour(B::Event),
     /// A new connection was established.
-    ConnectionEstablished { peer: AgentId },
+    ConnectionEstablished {
+        /// The AgentId of the connected peer.
+        peer: AgentId,
+    },
     /// A connection was closed.
-    ConnectionClosed { peer: AgentId },
+    ConnectionClosed {
+        /// The AgentId of the disconnected peer.
+        peer: AgentId,
+    },
     /// A new incoming connection.
-    IncomingConnection { remote_addr: Multiaddr },
+    IncomingConnection {
+        /// The remote multiaddress of the incoming connection.
+        remote_addr: Multiaddr,
+    },
     /// An error.
     Error(Error),
 }

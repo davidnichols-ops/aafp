@@ -33,6 +33,7 @@ use std::time::SystemTime;
 
 /// Session identifier (32 bytes, derived from the handshake transcript).
 pub const SESSION_ID_SIZE: usize = 32;
+/// A session identifier: a 32-byte array derived from the handshake transcript.
 pub type SessionId = [u8; SESSION_ID_SIZE];
 
 /// Features negotiated during the handshake.
@@ -71,16 +72,22 @@ pub trait AuthorizationContext: Send + Sync {
 /// Error returned when authorization verification fails.
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorizationError {
+    /// Authorization was explicitly denied for the requested action.
     #[error("authorization denied: {0}")]
     Denied(String),
+    /// The authorization token has expired.
     #[error("authorization token expired")]
     Expired,
+    /// The authorization token has been revoked.
     #[error("authorization token revoked")]
     Revoked,
+    /// The peer lacks a required capability for the requested action.
     #[error("insufficient capability: {0}")]
     InsufficientCapability(String),
+    /// The delegation chain is invalid or broken.
     #[error("delegation chain invalid: {0}")]
     DelegationChainInvalid(String),
+    /// The authorization provider returned an internal error.
     #[error("authorization provider error: {0}")]
     Provider(String),
 }
@@ -166,6 +173,7 @@ pub struct TestingCapabilityProvider {
 }
 
 impl TestingCapabilityProvider {
+    /// Create a new testing provider that allows only the given capabilities.
     pub fn new(allowed: Vec<String>) -> Self {
         Self { allowed }
     }
@@ -289,7 +297,9 @@ impl std::fmt::Display for SessionState {
 #[derive(Debug, thiserror::Error)]
 #[error("illegal session state transition: {from} → {to}")]
 pub struct SessionStateError {
+    /// The state being transitioned from.
     pub from: SessionState,
+    /// The state being transitioned to.
     pub to: SessionState,
 }
 

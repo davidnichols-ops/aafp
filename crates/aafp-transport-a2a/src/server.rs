@@ -19,7 +19,9 @@ use crate::types::*;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum TaskUpdateEvent {
+    /// A task status update event.
     Status(TaskStatusUpdateEvent),
+    /// A task artifact update event.
     Artifact(TaskArtifactUpdateEvent),
 }
 

@@ -8,12 +8,16 @@ use std::time::Duration;
 use thiserror::Error;
 use tracing::info;
 
+/// Errors returned by bootstrap discovery operations.
 #[derive(Debug, Error)]
 pub enum BootstrapError {
+    /// No seed nodes were configured.
     #[error("no seed nodes configured")]
     NoSeeds,
+    /// Connecting to a seed node failed with the given reason.
     #[error("failed to connect to seed: {0}")]
     ConnectionFailed(String),
+    /// Bootstrap timed out before completing.
     #[error("timeout waiting for bootstrap")]
     Timeout,
 }

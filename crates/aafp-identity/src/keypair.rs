@@ -7,18 +7,25 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum IdentityError {
     #[error("invalid keypair: {0}")]
+    /// The keypair is invalid or incomplete.
     InvalidKeypair(String),
     #[error("serialization error: {0}")]
+    /// An error occurred during serialization.
     Serialization(String),
     #[error("deserialization error: {0}")]
+    /// An error occurred during deserialization.
     Deserialization(String),
     #[error("signature verification failed")]
+    /// The signature could not be verified.
     SignatureVerificationFailed,
     #[error("agent ID mismatch")]
+    /// The agent ID does not match the expected value.
     AgentIdMismatch,
     #[error("UCAN error: {0}")]
+    /// A UCAN token error occurred.
     Ucan(String),
     #[error("crypto error: {0}")]
+    /// An underlying cryptographic error occurred.
     Crypto(#[from] aafp_crypto::CryptoError),
 }
 

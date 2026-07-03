@@ -72,20 +72,30 @@ pub struct HandshakeResult {
 /// ClientHello message.
 #[derive(Debug, Clone)]
 pub struct ClientHello {
+    /// Protocol version byte.
     pub version: u8,
+    /// List of `(algorithm_id, key_share)` pairs offered by the client.
     pub key_shares: Vec<(u16, Vec<u8>)>,
+    /// Signature algorithm identifier negotiated by the client.
     pub signature_algorithm: u16,
+    /// Random 8-byte nonce for replay protection.
     pub nonce: [u8; 8],
 }
 
 /// ServerHello message.
 #[derive(Debug, Clone)]
 pub struct ServerHello {
+    /// Protocol version byte.
     pub version: u8,
+    /// Key exchange algorithm selected by the server.
     pub selected_kex_algorithm: u16,
+    /// Server's key share bytes.
     pub key_share: Vec<u8>,
+    /// Server's ML-DSA-65 public key.
     pub server_public_key: Vec<u8>,
+    /// ML-DSA-65 signature over the transcript hash.
     pub signature: Vec<u8>,
+    /// Random 8-byte nonce for replay protection.
     pub nonce: [u8; 8],
 }
 

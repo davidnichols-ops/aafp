@@ -7,48 +7,86 @@ use thiserror::Error;
 /// A2A protocol error types (mapped to JSON-RPC error codes).
 #[derive(Debug, Error)]
 pub enum A2aError {
+    /// The requested task does not exist.
     #[error("Task not found: {task_id}")]
-    TaskNotFound { task_id: String },
+    TaskNotFound {
+        /// The ID of the task that was not found.
+        task_id: String,
+    },
 
+    /// The task cannot be canceled in its current state.
     #[error("Task not cancelable: {task_id}")]
-    TaskNotCancelable { task_id: String },
+    TaskNotCancelable {
+        /// The ID of the task that cannot be canceled.
+        task_id: String,
+    },
 
+    /// The server does not support push notifications.
     #[error("Push notifications not supported")]
     PushNotificationNotSupported,
 
+    /// The requested operation is not supported by the agent.
     #[error("Unsupported operation: {operation}")]
-    UnsupportedOperation { operation: String },
+    UnsupportedOperation {
+        /// The name of the unsupported operation.
+        operation: String,
+    },
 
+    /// The requested content type is not supported.
     #[error("Content type not supported: {content_type}")]
-    ContentTypeNotSupported { content_type: String },
+    ContentTypeNotSupported {
+        /// The unsupported content type identifier.
+        content_type: String,
+    },
 
+    /// The agent returned an invalid response.
     #[error("Invalid agent response")]
     InvalidAgentResponse,
 
+    /// The extended agent card is not configured on this server.
     #[error("Extended agent card not configured")]
     ExtendedAgentCardNotConfigured,
 
+    /// A required extension is not supported by the receiver.
     #[error("Extension support required: {extension}")]
-    ExtensionSupportRequired { extension: String },
+    ExtensionSupportRequired {
+        /// The URI of the required extension.
+        extension: String,
+    },
 
+    /// The requested protocol version is not supported.
     #[error("Version not supported: {version}")]
-    VersionNotSupported { version: String },
+    VersionNotSupported {
+        /// The unsupported version string.
+        version: String,
+    },
 
     // JSON-RPC standard errors
+    /// JSON-RPC parse error (invalid JSON).
     #[error("Parse error")]
     ParseError,
 
+    /// JSON-RPC invalid request error.
     #[error("Invalid request")]
     InvalidRequest,
 
+    /// The requested JSON-RPC method does not exist.
     #[error("Method not found: {method}")]
-    MethodNotFound { method: String },
+    MethodNotFound {
+        /// The name of the unknown method.
+        method: String,
+    },
 
+    /// JSON-RPC invalid params error.
     #[error("Invalid params")]
     InvalidParams,
 
+    /// JSON-RPC internal server error.
     #[error("Internal error: {message}")]
-    Internal { message: String },
+    Internal {
+        /// A human-readable description of the internal error.
+        message: String,
+    },
 }
 
 impl A2aError {
@@ -88,24 +126,31 @@ impl A2aError {
 /// Error type for the AAFP A2A transport.
 #[derive(Debug, Error)]
 pub enum AafpA2aError {
+    /// An error from the underlying AAFP SDK.
     #[error("AAFP SDK error: {0}")]
     Sdk(#[from] aafp_sdk::SdkError),
 
+    /// An error in AAFP frame encoding or decoding.
     #[error("AAFP frame error: {0}")]
     Framing(String),
 
+    /// A JSON serialization or deserialization error.
     #[error("JSON serialization error: {0}")]
     Serde(#[from] serde_json::Error),
 
+    /// A QUIC I/O error from the underlying transport.
     #[error("QUIC I/O error: {0}")]
     Io(#[from] aafp_core::Error),
 
+    /// The transport has been closed and can no longer be used.
     #[error("Transport is closed")]
     Closed,
 
+    /// A session state error (e.g. invalid state transition).
     #[error("Session state error: {0}")]
     Session(String),
 
+    /// An A2A protocol-level error.
     #[error("A2A protocol error: {0}")]
     A2a(#[from] A2aError),
 }

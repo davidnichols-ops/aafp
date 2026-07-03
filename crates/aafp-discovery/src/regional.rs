@@ -11,10 +11,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 use thiserror::Error;
 
+/// Errors returned by regional discovery operations.
 #[derive(Debug, Error)]
 pub enum RegionalError {
+    /// The requested agent was not found in the regional store.
     #[error("agent not found")]
     AgentNotFound,
+    /// No agents are registered in the requested region.
     #[error("no agents in region")]
     NoAgentsInRegion,
 }
@@ -80,7 +83,7 @@ use serde::{Deserialize, Serialize};
 pub struct RegionalDiscovery {
     /// Map: AgentId → (Region, AgentRecord).
     agents: HashMap<AgentId, (Region, AgentRecord)>,
-    /// Map: Region → Vec<AgentId>.
+    /// Map: Region → `Vec<AgentId>`.
     by_region: HashMap<Region, Vec<AgentId>>,
 }
 

@@ -48,13 +48,21 @@ pub const FRAME_HEADER_SIZE: usize = 28;
 /// unknown frame types.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum FrameType {
+    /// Application data frame (RFC-0002 §4.1).
     Data,
+    /// Handshake frame for connection establishment (RFC-0002 §4.2).
     Handshake,
+    /// RPC request frame (RFC-0002 §4.3).
     RpcRequest,
+    /// RPC response frame (RFC-0002 §4.4).
     RpcResponse,
+    /// Close frame for graceful connection shutdown (RFC-0002 §4.5).
     Close,
+    /// Error frame for reporting protocol errors (RFC-0002 §4.6).
     Error,
+    /// Ping frame for keepalive probes (RFC-0002 §4.7).
     Ping,
+    /// Pong frame responding to a Ping (RFC-0002 §4.8).
     Pong,
     /// An unknown frame type. The raw byte is preserved for logging/error reporting.
     Unknown(u8),
@@ -114,7 +122,9 @@ impl FrameType {
 
 /// DATA frame flags (RFC-0002 §4.1).
 pub mod flags {
+    /// MORE flag: indicates more fragments will follow (RFC-0002 §4.1).
     pub const MORE: u8 = 0x01;
+    /// COMPRESSED flag: indicates the payload is compressed (RFC-0002 §4.1).
     pub const COMPRESSED: u8 = 0x02;
     /// Critical bit for unknown frame types (RFC-0006 §4.2).
     pub const CRITICAL: u8 = 0x80;
@@ -123,10 +133,15 @@ pub mod flags {
 /// AAFP frame: header + extensions + payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Frame {
+    /// The frame type (e.g., Data, RpcRequest, Close).
     pub frame_type: FrameType,
+    /// Frame-specific flags (see `flags` module).
     pub flags: u8,
+    /// The stream ID this frame belongs to.
     pub stream_id: u64,
+    /// Raw extension section bytes.
     pub extensions: Vec<u8>,
+    /// The frame payload bytes.
     pub payload: Vec<u8>,
 }
 
@@ -195,16 +210,27 @@ impl Frame {
 /// Errors that can occur during frame encoding/decoding.
 #[derive(Debug, Error)]
 pub enum FrameError {
+    /// The frame payload exceeds the maximum allowed size.
     #[error("frame too large: payload {0} bytes (max {1})")]
     PayloadTooLarge(usize, usize),
+    /// The extension section exceeds the maximum allowed size.
     #[error("extension section too large: {0} bytes (max {1})")]
     ExtensionTooLarge(usize, usize),
+    /// The frame buffer does not contain enough bytes to decode a complete frame.
     #[error("incomplete frame: need {needed} bytes, have {have}")]
-    Incomplete { needed: usize, have: usize },
+    Incomplete {
+        /// Number of bytes needed to complete the frame.
+        needed: usize,
+        /// Number of bytes actually available.
+        have: usize,
+    },
+    /// The frame type is unknown and the critical bit is set.
     #[error("invalid frame type: 0x{0:02x}")]
     UnknownFrameType(u8),
+    /// The protocol version in the frame header is not supported.
     #[error("invalid version: {0} (expected {1})")]
     InvalidVersion(u8, u8),
+    /// An I/O error occurred during encoding or decoding.
     #[error("io error: {0}")]
     Io(#[from] io::Error),
 }
@@ -325,12 +351,14 @@ impl Default for FrameCodec {
 }
 
 impl FrameCodec {
+    /// Create a new codec with the default maximum payload size.
     pub fn new() -> Self {
         Self {
             max_payload: MAX_PAYLOAD_SIZE,
         }
     }
 
+    /// Create a new codec with a custom maximum payload size.
     pub fn with_max_payload(max: usize) -> Self {
         Self { max_payload: max }
     }

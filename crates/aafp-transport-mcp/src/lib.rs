@@ -150,21 +150,27 @@ const MCP_STREAM_ID: u64 = 4;
 /// Error type for the AAFP MCP transport.
 #[derive(Debug, Error)]
 pub enum AafpMcpError {
+    /// AAFP SDK error.
     #[error("AAFP SDK error: {0}")]
     Sdk(#[from] SdkError),
 
+    /// AAFP frame encoding/decoding error.
     #[error("AAFP frame error: {0}")]
     Framing(String),
 
+    /// JSON serialization/deserialization error.
     #[error("JSON serialization error: {0}")]
     Serde(#[from] serde_json::Error),
 
+    /// QUIC I/O error.
     #[error("QUIC I/O error: {0}")]
     Io(#[from] CoreError),
 
+    /// Transport is closed.
     #[error("Transport is closed")]
     Closed,
 
+    /// Session state error.
     #[error("Session state error: {0}")]
     Session(String),
 }

@@ -114,7 +114,9 @@ pub fn parse_control_frame(frame: &Frame) -> Result<ControlFrame, SdkError> {
 /// A parsed control frame (ERROR or CLOSE).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlFrame {
+    /// An ERROR control frame sent by a peer.
     Error(ErrorMessage),
+    /// A CLOSE control frame sent by a peer.
     Close(CloseMessage),
 }
 

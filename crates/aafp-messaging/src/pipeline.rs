@@ -35,25 +35,45 @@ use std::collections::HashSet;
 /// and determine the close behavior.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum PipelinePhase {
+    /// Phase 1: Validate the 28-byte frame header.
     Phase1ValidateHeader,
+    /// Phase 2: Validate payload and extension lengths.
     Phase2ValidateLengths,
+    /// Phase 3: Reject oversized frames before any allocation.
     Phase3RejectOversized,
+    /// Phase 4: Read the payload bytes from the frame body.
     Phase4ReadPayload,
+    /// Phase 5: Read the extension bytes from the frame body.
     Phase5ReadExtensions,
+    /// Phase 6: Decode the payload as canonical CBOR.
     Phase6DecodeCbor,
+    /// Phase 7: Reject CBOR maps with duplicate keys.
     Phase7RejectDuplicateKeys,
+    /// Phase 8: Reject non-canonical CBOR encoding.
     Phase8RejectNonCanonical,
+    /// Phase 9: Validate the transcript state for handshake frames.
     Phase9ValidateTranscript,
+    /// Phase 10: Verify peer signatures.
     Phase10VerifySignatures,
+    /// Phase 11: Verify the peer's AgentId matches the claimed identity.
     Phase11VerifyAgentId,
+    /// Phase 12: Verify the session state is valid for this frame type.
     Phase12VerifySessionState,
+    /// Phase 13: Verify the peer is authorized for this frame type.
     Phase13VerifyAuthorization,
+    /// Phase 14: Verify the peer has the required capabilities.
     Phase14VerifyCapabilities,
+    /// Phase 15: Decode extensions from the extension section.
     Phase15DecodeExtensions,
+    /// Phase 16: Check for unknown critical extensions.
     Phase16CheckUnknownCritical,
+    /// Phase 17: Check for non-negotiated extensions.
     Phase17CheckNonNegotiated,
+    /// Phase 18: Process extension semantics via registered callbacks.
     Phase18ProcessExtensionSemantics,
+    /// Phase 19: Validate the final frame state after all processing.
     Phase19ValidateFinalState,
+    /// Phase 20: Deliver the processed frame to the upper layer.
     Phase20DeliverToUpperLayer,
 }
 
@@ -224,13 +244,21 @@ pub trait PipelineContext {
 /// A simple context for testing that allows controlling each phase's outcome.
 #[derive(Clone, Debug)]
 pub struct TestingContext {
+    /// Whether the peer's signature has been verified (Phase 10).
     pub signature_verified: bool,
+    /// Whether the peer's AgentId has been verified (Phase 11).
     pub agent_id_verified: bool,
+    /// Whether the session state is valid for the frame type (Phase 12).
     pub session_valid: bool,
+    /// Whether the peer is authorized for the frame type (Phase 13).
     pub authorized: bool,
+    /// Whether the peer has sufficient capabilities (Phase 14).
     pub capabilities_sufficient: bool,
+    /// Whether the transcript state is valid for handshake frames (Phase 9).
     pub transcript_valid: bool,
+    /// The set of negotiated extension types (for Phase 17).
     pub negotiated_types: HashSet<u16>,
+    /// The set of known extension types (for Phase 16).
     pub known_types: HashSet<u16>,
 }
 

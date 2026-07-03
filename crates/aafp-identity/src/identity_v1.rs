@@ -108,14 +108,23 @@ impl std::fmt::Display for AgentId {
 /// ```
 #[derive(Clone, Debug)]
 pub struct AgentRecord {
+    /// Record type string, always `"aafp-record-v1"` for v1 records.
     pub record_type: String,
+    /// 32-byte SHA-256 identifier of the agent.
     pub agent_id: AgentId,
+    /// ML-DSA-65 public key bytes (1952 bytes).
     pub public_key: Vec<u8>,
+    /// Capabilities advertised by this agent.
     pub capabilities: Vec<CapabilityDescriptor>,
+    /// Network endpoints as multiaddr strings.
     pub endpoints: Vec<String>,
+    /// Creation timestamp (unix seconds).
     pub created_at: u64,
+    /// Expiry timestamp (unix seconds).
     pub expires_at: u64,
+    /// ML-DSA-65 signature over the record (excluding the signature field).
     pub signature: Vec<u8>,
+    /// Key algorithm code (1 = ML-DSA-65).
     pub key_algorithm: u64,
     /// Monotonic version number for replay protection (A-3, Rev 6).
     /// Receivers MUST reject older versions. Equal version: accept only
@@ -405,11 +414,14 @@ impl AgentRecord {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapabilityDescriptor {
+    /// Human-readable name of the capability.
     pub name: String,
+    /// Metadata key-value pairs associated with this capability.
     pub metadata: Vec<(String, MetadataValue)>,
 }
 
 impl CapabilityDescriptor {
+    /// Create a new capability descriptor with the given name and no metadata.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -417,6 +429,7 @@ impl CapabilityDescriptor {
         }
     }
 
+    /// Add a metadata key-value pair to this capability descriptor (builder pattern).
     pub fn with_metadata(mut self, key: impl Into<String>, value: MetadataValue) -> Self {
         self.metadata.push((key.into(), value));
         self
@@ -481,13 +494,18 @@ impl CapabilityDescriptor {
 /// MetadataValue (RFC-0003 §4.3).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MetadataValue {
+    /// A boolean metadata value.
     Bool(bool),
+    /// A signed integer metadata value.
     Int(i64),
+    /// A text string metadata value.
     Text(String),
+    /// A byte string metadata value.
     Bytes(Vec<u8>),
 }
 
 impl MetadataValue {
+    /// Encode this metadata value to a canonical CBOR `Value`.
     pub fn to_cbor(&self) -> Value {
         match self {
             Self::Bool(b) => Value::Bool(*b),
@@ -503,6 +521,7 @@ impl MetadataValue {
         }
     }
 
+    /// Decode a metadata value from a CBOR `Value`.
     pub fn from_cbor(val: &Value) -> Result<Self, IdentityError> {
         match val {
             Value::Bool(b) => Ok(Self::Bool(*b)),
@@ -522,29 +541,58 @@ impl MetadataValue {
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityError {
     #[error("invalid AgentId length: expected {expected}, got {actual}")]
-    InvalidAgentIdLength { expected: usize, actual: usize },
+    /// The AgentId has an unexpected byte length.
+    InvalidAgentIdLength {
+        /// Expected byte length (32).
+        expected: usize,
+        /// Actual byte length encountered.
+        actual: usize,
+    },
     #[error("AgentId does not match SHA-256(public_key)")]
+    /// The AgentId does not match the SHA-256 hash of the provided public key.
     InvalidAgentId,
     #[error("invalid record_type: expected \"{RECORD_TYPE_V1}\", got \"{got}\"")]
-    InvalidRecordType { got: String },
+    /// The record type string is not a recognized v1 type.
+    InvalidRecordType {
+        /// The unexpected record type string received.
+        got: String,
+    },
     #[error("unsupported key algorithm: {code}")]
-    UnsupportedAlgorithm { code: u64 },
+    /// The key algorithm code is not supported.
+    UnsupportedAlgorithm {
+        /// The unsupported algorithm code.
+        code: u64,
+    },
     #[error("signature verification failed")]
+    /// The signature on the record or token could not be verified.
     SignatureVerificationFailed,
     #[error("invalid public key")]
+    /// The public key bytes are malformed or invalid.
     InvalidPublicKey,
     #[error("invalid signature length")]
+    /// The signature bytes have an unexpected length.
     InvalidSignatureLength,
     #[error("identity expired: expires_at={expires_at}, now={now}")]
-    Expired { expires_at: u64, now: u64 },
+    /// The record or token has expired.
+    Expired {
+        /// The expiry timestamp (unix seconds).
+        expires_at: u64,
+        /// The current time when the expiry was checked (unix seconds).
+        now: u64,
+    },
     #[error("missing field: {0}")]
+    /// A required CBOR field is missing from the record.
     MissingField(&'static str),
     #[error("invalid field '{field}': {message}")]
+    /// A CBOR field has an invalid value or type.
     InvalidField {
+        /// Name of the invalid field.
         field: &'static str,
+        /// Description of why the field is invalid.
         message: String,
     },
     #[error("CBOR error: {0}")]
+    /// A CBOR encoding or decoding error occurred.
     Cbor(#[from] aafp_cbor::CborError),
 }
 
