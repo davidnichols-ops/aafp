@@ -6,6 +6,7 @@ version = 4
 name = "aafp-benchmark"
 version = "0.1.0"
 dependencies = [
+ "aafp-core",
  "aafp-crypto",
  "aafp-discovery",
  "aafp-identity",

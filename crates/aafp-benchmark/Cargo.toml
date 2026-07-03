@@ -7,18 +7,22 @@ license.workspace = true
 [[bench]]
 name = "handshake"
 path = "benches/handshake.rs"
+harness = false
 
 [[bench]]
 name = "discovery"
 path = "benches/discovery.rs"
+harness = false
 
 [[bench]]
 name = "messaging"
 path = "benches/messaging.rs"
+harness = false
 
 [[bench]]
 name = "close_manager"
 path = "benches/close_manager.rs"
+harness = false
 
 [[bench]]
 name = "replay_cache"
@@ -30,7 +34,18 @@ name = "mcp_transport"
 path = "benches/mcp_transport.rs"
 harness = false
 
+[[bench]]
+name = "framing"
+path = "benches/framing.rs"
+harness = false
+
+[[bench]]
+name = "session"
+path = "benches/session.rs"
+harness = false
+
 [dependencies]
+aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }
 aafp-identity = { workspace = true }
 aafp-discovery = { workspace = true }
