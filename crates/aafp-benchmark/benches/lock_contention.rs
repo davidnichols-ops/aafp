@@ -27,6 +27,7 @@ use aafp_benchmark::env_report::{print_env_summary, BenchmarkConfig};
 use aafp_sdk::AgentBuilder;
 use aafp_transport_mcp::{
     send_raw_json_on_handle_zero_copy, send_raw_json_via_channel, AafpMcpTransport,
+    ConnectionHandle,
 };
 use rmcp::model::{ClientRequest, JsonRpcMessage, PingRequest, RequestId};
 use rmcp::service::TxJsonRpcMessage;
@@ -50,6 +51,47 @@ fn ping_value(id: i64) -> serde_json::Value {
         "id": id,
         "method": "ping"
     })
+}
+
+/// Set up a connected client-server pair for benchmarking (returns transports).
+///
+/// Returns `(client_transport, server_transport)`. Both transports are
+/// ready for use — the initial handshake ping has been exchanged.
+async fn setup_pair_async() -> (AafpMcpTransport, AafpMcpTransport) {
+    let server_agent = Arc::new(
+        AgentBuilder::new()
+            .bind("127.0.0.1:0".parse().unwrap())
+            .build()
+            .await
+            .unwrap(),
+    );
+    let addr = format!("quic://{}", server_agent.transport.local_addr().unwrap());
+
+    let client_agent = AgentBuilder::new()
+        .bind("127.0.0.1:0".parse().unwrap())
+        .build()
+        .await
+        .unwrap();
+
+    let server_agent_clone = server_agent.clone();
+    let server_handle = tokio::spawn(async move {
+        let mut t = AafpMcpTransport::accept(&server_agent_clone).await.unwrap();
+        let _ = Transport::<RoleServer>::receive(&mut t).await;
+        t
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut client = AafpMcpTransport::connect(&client_agent, &addr)
+        .await
+        .unwrap();
+
+    Transport::<RoleClient>::send(&mut client, client_ping(0))
+        .await
+        .unwrap();
+
+    let server = server_handle.await.unwrap();
+    (client, server)
 }
 
 /// Set up a connected client-server pair for benchmarking (mutex path).
@@ -371,12 +413,92 @@ fn bench_channel_senders(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: end-to-end lock-free throughput using ConnectionHandle (Track H7).
+///
+/// This measures the full lock-free path: ConnectionHandle::send() (channel)
+/// on the client side, ConnectionHandle::recv() (channel) on the server side.
+/// Both writer and reader tasks are active — no mutex on either side.
+///
+/// Compare against `bench_concurrent_senders` (mutex) and
+/// `bench_channel_senders` (channel send only, mutex recv) to see the
+/// full lock-free improvement.
+fn bench_connection_handle(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let mut group = c.benchmark_group("connection_handle_lockfree");
+    group.sample_size(10);
+
+    // Create connection once, reuse for all sender counts
+    let (client_handle, server_handle, mut client, mut server) = rt.block_on(async {
+        let (mut c, mut s) = setup_pair_async().await;
+        let ch = c.connection_handle().await;
+        let sh = s.connection_handle().await;
+        (ch, sh, c, s)
+    });
+
+    for num_senders in [1, 2, 4, 8] {
+        let label = format!("handle_senders_{}", num_senders);
+        group.throughput(Throughput::Elements((num_senders * MSGS_PER_SENDER) as u64));
+        group.bench_function(label.as_str(), |b| {
+            b.iter(|| {
+                let total_msgs = num_senders * MSGS_PER_SENDER;
+
+                // Spawn sender tasks
+                let mut sender_handles = Vec::new();
+                for task_id in 0..num_senders {
+                    let h = client_handle.clone();
+                    sender_handles.push(rt.spawn(async move {
+                        for i in 0..MSGS_PER_SENDER {
+                            let id = (task_id * MSGS_PER_SENDER + i) as i64;
+                            let msg = ping_value(id);
+                            h.send(&msg).await.unwrap();
+                        }
+                    }));
+                }
+
+                // Receive all messages on server side
+                let start = Instant::now();
+                rt.block_on(async {
+                    for _ in 0..total_msgs {
+                        let _ = server_handle.recv().await;
+                    }
+                });
+                let elapsed = start.elapsed();
+
+                // Wait for senders
+                rt.block_on(async {
+                    for h in sender_handles {
+                        h.await.unwrap();
+                    }
+                });
+
+                let secs = elapsed.as_secs_f64().max(1e-9);
+                total_msgs as f64 / secs
+            });
+        });
+    }
+
+    group.finish();
+
+    // Cleanup
+    rt.block_on(async {
+        drop(client_handle);
+        drop(server_handle);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<RoleServer>::close(&mut server).await.ok();
+    });
+}
+
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
 criterion_group!(
     benches,
     bench_concurrent_senders,
     bench_concurrent_raw,
-    bench_channel_senders
+    bench_channel_senders,
+    bench_connection_handle
 );
 criterion_main!(benches);
