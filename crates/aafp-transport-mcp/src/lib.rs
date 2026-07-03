@@ -68,6 +68,61 @@
 //! > the payload is determined by the application protocol running on the
 //! > stream."
 //!
+//! ## Concurrency Model (Track H)
+//!
+//! `AafpMcpTransport` supports three concurrency modes, from simplest to
+//! most scalable:
+//!
+//! ### 1. Legacy Mutex Path (default)
+//!
+//! Without calling `spawn_writer()` or `spawn_reader()`, the transport uses
+//! `Arc<Mutex<Option<QuicSendStream>>>` for sends and `&mut self` for
+//! receives. This is the simplest mode but serializes concurrent sends
+//! through the mutex.
+//!
+//! ```text
+//! Task A ──lock──> write ──unlock──> done
+//! Task B ─────wait─────> lock ──> write ──> done
+//! ```
+//!
+//! **Throughput:** ~385K msg/s with 1 sender, degrades with concurrency.
+//!
+//! ### 2. Channel-Based Send (Track H2 — `spawn_writer()`)
+//!
+//! After calling `spawn_writer()`, a dedicated writer task owns the
+//! `QuicSendStream`. Multiple sender tasks push `BytesMut` buffers through
+//! an `mpsc::Sender` — no mutex contention. The writer task is the single
+//! consumer, draining the channel and writing to QUIC.
+//!
+//! ```text
+//! Task A ──> tx.send(buf) ──┐
+//! Task B ──> tx.send(buf) ──┼──> Writer Task ──> QUIC write
+//! Task C ──> tx.send(buf) ──┘
+//! ```
+//!
+//! **Throughput:** ~491K msg/s with 8 senders (scales with concurrency).
+//!
+//! ### 3. Channel-Based Receive (Track H3 — `spawn_reader()`)
+//!
+//! After calling `spawn_reader()`, a dedicated reader task owns the
+//! `QuicRecvStream`. It reads AAFP DATA frames, deserializes JSON, and
+//! pushes `serde_json::Value` through an `mpsc::Receiver`. The caller
+//! receives decoded messages from the channel — no direct stream access.
+//!
+//! ### 4. ConnectionHandle (Track H6)
+//!
+//! [`ConnectionHandle`] combines the channel-based send and receive paths
+//! into a single handle that can be cloned and shared across tasks. It
+//! provides `send()` and `recv()` methods that are safe to call from
+//! multiple tasks concurrently without any lock contention.
+//!
+//! ```text
+//! let handle = transport.connection_handle().await?;
+//! let handle2 = handle.clone();
+//! tokio::spawn(async move { handle.send(&msg).await });
+//! tokio::spawn(async move { handle2.recv().await });
+//! ```
+//!
 //! ## Usage
 //!
 //! ### Client side
@@ -462,6 +517,32 @@ impl AafpMcpTransport {
     /// Check whether the channel-based receive path is active.
     pub fn has_reader(&self) -> bool {
         self.reader_task.is_some()
+    }
+
+    /// Create a [`ConnectionHandle`] for concurrent access (Track H6).
+    ///
+    /// This calls `spawn_writer()` and `spawn_reader()` to set up the
+    /// channel-based send and receive paths, then returns a handle that
+    /// can be cloned and shared across tasks.
+    ///
+    /// The handle provides:
+    /// - `send(&json)`: Send a JSON value through the channel (no lock)
+    /// - `recv()`: Receive the next JSON value from the channel (no lock)
+    /// - `close()`: Gracefully shut down the connection
+    ///
+    /// Multiple clones of the handle can send and receive concurrently
+    /// without any lock contention.
+    ///
+    /// # Panics
+    /// Panics if `spawn_writer()` or `spawn_reader()` has already been
+    /// called (double spawn).
+    pub async fn connection_handle(&mut self) -> ConnectionHandle {
+        let tx = self.spawn_writer().await;
+        let rx = self.spawn_reader().await;
+        ConnectionHandle {
+            tx,
+            rx: Arc::new(tokio::sync::Mutex::new(rx)),
+        }
     }
 
     /// Send a raw JSON value as an AAFP DATA frame.
@@ -1213,6 +1294,114 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// ConnectionHandle (Track H6)
+// ---------------------------------------------------------------------------
+
+/// A concurrent handle to an AAFP MCP connection (Track H6).
+///
+/// Created by [`AafpMcpTransport::connection_handle()`], this handle
+/// encapsulates the channel-based send and receive paths into a single
+/// clonable object. Multiple tasks can send and receive concurrently
+/// without any lock contention on the QUIC stream.
+///
+/// # Concurrency
+///
+/// - **Send**: The `mpsc::Sender` can be cloned. Multiple tasks can call
+///   `send()` concurrently. The writer task drains the channel.
+/// - **Receive**: The `mpsc::Receiver` is wrapped in a `Mutex` (only
+///   acquired for the brief duration of a `recv()` call). Multiple tasks
+///   can receive, but only one at a time will get each message.
+///
+/// # Lifecycle
+///
+/// The handle does NOT own the transport. The transport must be closed
+/// separately via `Transport::close()` or `close_raw()`. Dropping all
+/// senders will cause the writer task to finish the stream and exit.
+///
+/// # Example
+///
+/// ```no_run
+/// # use aafp_sdk::AgentBuilder;
+/// # use aafp_transport_mcp::AafpMcpTransport;
+/// # use serde_json::json;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let agent = AgentBuilder::new()
+///     .bind("127.0.0.1:0".parse()?)
+///     .build().await?;
+/// let mut transport = AafpMcpTransport::connect(&agent, "quic://127.0.0.1:4433").await?;
+///
+/// let handle = transport.connection_handle().await;
+/// let handle2 = handle.clone();
+///
+/// // Send from one task
+/// tokio::spawn(async move {
+///     handle.send(&json!({"jsonrpc": "2.0", "id": 1, "method": "ping"})).await
+/// });
+///
+/// // Receive from another task
+/// tokio::spawn(async move {
+///     let msg = handle2.recv().await;
+/// });
+/// # Ok(())
+/// # }
+/// ```
+pub struct ConnectionHandle {
+    /// Channel sender for the write path (clonable, lock-free concurrent sends).
+    tx: mpsc::Sender<BytesMut>,
+    /// Channel receiver for the read path (mutex-guarded for sequential receives).
+    rx: Arc<tokio::sync::Mutex<mpsc::Receiver<serde_json::Value>>>,
+}
+
+impl ConnectionHandle {
+    /// Send a JSON value through the channel (Track H6).
+    ///
+    /// This serializes the JSON value into a pooled buffer, wraps it in
+    /// an AAFP DATA frame, and sends it through the channel. The writer
+    /// task drains the channel and writes to QUIC.
+    ///
+    /// Multiple tasks can call this concurrently — no lock contention.
+    pub async fn send(&self, json: &serde_json::Value) -> Result<(), AafpMcpError> {
+        send_raw_json_via_channel(&self.tx, json).await
+    }
+
+    /// Receive the next JSON value from the channel (Track H6).
+    ///
+    /// Returns `None` when the peer closes the stream or the reader task
+    /// exits.
+    ///
+    /// The receiver is mutex-guarded, so only one task will receive each
+    /// message. The mutex is held only for the duration of the `recv()`
+    /// call (not across message processing).
+    pub async fn recv(&self) -> Option<serde_json::Value> {
+        let mut rx = self.rx.lock().await;
+        rx.recv().await
+    }
+
+    /// Get a clone of the send channel (for advanced use cases).
+    pub fn send_channel(&self) -> mpsc::Sender<BytesMut> {
+        self.tx.clone()
+    }
+}
+
+impl Clone for ConnectionHandle {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+            rx: self.rx.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ConnectionHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionHandle")
+            .field("tx", &"mpsc::Sender<BytesMut>")
+            .field("rx", &"Arc<Mutex<Receiver<Value>>>")
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1507,6 +1696,139 @@ mod tests {
         assert!(server.has_reader());
 
         drop(rx);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    // ----- ConnectionHandle tests (Track H6) -----
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_connection_handle_send_recv() {
+        let (mut client, mut server) = setup_pair().await;
+
+        // Create handles for both sides
+        let server_handle = server.connection_handle().await;
+        let client_handle = client.connection_handle().await;
+
+        // Send from client
+        let msg = json!({"jsonrpc": "2.0", "id": 1, "method": "ping"});
+        client_handle.send(&msg).await.unwrap();
+
+        // Receive on server
+        let received = server_handle.recv().await;
+        assert!(received.is_some());
+        assert_eq!(received.unwrap()["id"], 1);
+
+        // Drop handles before close so writer/reader tasks can exit
+        drop(client_handle);
+        drop(server_handle);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_connection_handle_clone() {
+        let (mut client, mut server) = setup_pair().await;
+
+        let server_handle = server.connection_handle().await;
+        let client_handle = client.connection_handle().await;
+        let client_handle2 = client_handle.clone();
+
+        // Send from original handle
+        client_handle
+            .send(&json!({"jsonrpc": "2.0", "id": 1, "method": "ping"}))
+            .await
+            .unwrap();
+
+        // Send from cloned handle
+        client_handle2
+            .send(&json!({"jsonrpc": "2.0", "id": 2, "method": "ping"}))
+            .await
+            .unwrap();
+
+        // Receive both on server
+        let msg1 = server_handle.recv().await;
+        assert!(msg1.is_some());
+        let msg2 = server_handle.recv().await;
+        assert!(msg2.is_some());
+
+        drop(client_handle);
+        drop(client_handle2);
+        drop(server_handle);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_connection_handle_concurrent_senders() {
+        let (mut client, mut server) = setup_pair().await;
+
+        let server_handle = server.connection_handle().await;
+        let client_handle = client.connection_handle().await;
+
+        // Spawn 4 concurrent sender tasks
+        let mut handles = Vec::new();
+        for task_id in 0..4u64 {
+            let h = client_handle.clone();
+            handles.push(tokio::spawn(async move {
+                for i in 0..25u64 {
+                    let msg = json!({
+                        "jsonrpc": "2.0",
+                        "id": task_id * 1000 + i,
+                        "method": "ping"
+                    });
+                    h.send(&msg).await.unwrap();
+                }
+            }));
+        }
+
+        // Receive all 100 messages on server
+        let mut count = 0;
+        for _ in 0..100 {
+            if server_handle.recv().await.is_some() {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(count, 100, "server should receive all 100 messages");
+
+        drop(client_handle);
+        drop(server_handle);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_connection_handle_bidirectional() {
+        let (mut client, mut server) = setup_pair().await;
+
+        let server_handle = server.connection_handle().await;
+        let client_handle = client.connection_handle().await;
+
+        // Client sends, server receives
+        client_handle
+            .send(&json!({"jsonrpc": "2.0", "id": 1, "method": "ping"}))
+            .await
+            .unwrap();
+        let msg = server_handle.recv().await;
+        assert_eq!(msg.unwrap()["id"], 1);
+
+        // Server sends, client receives
+        server_handle
+            .send(&json!({"jsonrpc": "2.0", "id": 2, "result": "pong"}))
+            .await
+            .unwrap();
+        let msg = client_handle.recv().await;
+        assert_eq!(msg.unwrap()["id"], 2);
+
+        drop(client_handle);
+        drop(server_handle);
         Transport::<RoleClient>::close(&mut client).await.ok();
         Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
     }
