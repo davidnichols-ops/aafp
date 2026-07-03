@@ -28,7 +28,8 @@ pub use close_manager::{
 };
 pub use extensions::{decode_extensions, encode_extensions, Extension, ExtensionError};
 pub use framing::{
-    decode_frame, encode_frame, Frame, FrameCodec, FrameError, FrameType, AAFP_VERSION,
+    backpatch_payload_len, decode_frame, decode_frame_from, encode_frame, encode_frame_into,
+    encode_header_into, DecodedFrame, Frame, FrameCodec, FrameError, FrameType, AAFP_VERSION,
     FRAME_HEADER_SIZE, MAX_EXTENSION_SIZE, MAX_PAYLOAD_SIZE,
 };
 pub use keepalive::{KeepAliveConfig, PingTracker};

@@ -14,7 +14,7 @@
 //! - Payload Len:  8 bytes (length of payload section)
 //! - Extension Len:8 bytes (length of extension section)
 
-use bytes::{BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::io;
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
@@ -337,6 +337,228 @@ pub fn decode_frame(data: &[u8]) -> Result<(Frame, usize), FrameError> {
     };
 
     Ok((frame, total_frame))
+}
+
+/// Encode a frame directly into a `BytesMut` buffer (zero-copy).
+///
+/// Writes the 28-byte header + extensions + payload directly into the
+/// provided buffer, growing it in-place if needed. No new `Vec` allocation
+/// if the buffer has sufficient capacity.
+///
+/// # Errors
+///
+/// Returns `FrameError::PayloadTooLarge` if the payload exceeds
+/// `MAX_PAYLOAD_SIZE`, or `FrameError::ExtensionTooLarge` if the
+/// extensions exceed `MAX_EXTENSION_SIZE`.
+pub fn encode_frame_into(buf: &mut BytesMut, frame: &Frame) -> Result<(), FrameError> {
+    if frame.payload.len() > MAX_PAYLOAD_SIZE {
+        return Err(FrameError::PayloadTooLarge(
+            frame.payload.len(),
+            MAX_PAYLOAD_SIZE,
+        ));
+    }
+
+    if frame.extensions.len() > MAX_EXTENSION_SIZE {
+        return Err(FrameError::ExtensionTooLarge(
+            frame.extensions.len(),
+            MAX_EXTENSION_SIZE,
+        ));
+    }
+
+    let ext_len = frame.extensions.len() as u64;
+    let payload_len = frame.payload.len() as u64;
+    let total_len = FRAME_HEADER_SIZE + frame.extensions.len() + frame.payload.len();
+
+    // Reserve space in the buffer (grows in-place if needed, no new alloc
+    // if capacity is sufficient)
+    buf.reserve(total_len);
+
+    // Header (28 bytes, big-endian)
+    buf.put_u8(AAFP_VERSION);
+    buf.put_u8(frame.frame_type.to_u8());
+    buf.put_u8(frame.flags);
+    buf.put_u8(0u8); // Reserved
+    buf.put_u64(frame.stream_id);
+    buf.put_u64(payload_len);
+    buf.put_u64(ext_len);
+
+    // Body: extensions first, then payload (RFC-0002 §3.2)
+    buf.put_slice(&frame.extensions);
+    buf.put_slice(&frame.payload);
+
+    Ok(())
+}
+
+/// Encode a frame header directly into a `BytesMut` buffer.
+///
+/// Writes only the 28-byte header, leaving space for the caller to
+/// write the payload directly (e.g., via `serde_json::to_writer`).
+/// The caller must then call `backpatch_payload_len()` to fill in
+/// the payload length field.
+///
+/// This is useful for the zero-copy send path where JSON is serialized
+/// directly into the buffer after the header.
+///
+/// # Errors
+///
+/// Returns `FrameError::ExtensionTooLarge` if extensions exceed the limit.
+pub fn encode_header_into(
+    buf: &mut BytesMut,
+    frame_type: FrameType,
+    flags: u8,
+    stream_id: u64,
+    extensions: &[u8],
+) -> Result<(), FrameError> {
+    if extensions.len() > MAX_EXTENSION_SIZE {
+        return Err(FrameError::ExtensionTooLarge(
+            extensions.len(),
+            MAX_EXTENSION_SIZE,
+        ));
+    }
+
+    let ext_len = extensions.len() as u64;
+
+    // Reserve space for header + extensions
+    buf.reserve(FRAME_HEADER_SIZE + extensions.len());
+
+    // Header (28 bytes, big-endian) — payload_len is 0, will be backpatched
+    buf.put_u8(AAFP_VERSION);
+    buf.put_u8(frame_type.to_u8());
+    buf.put_u8(flags);
+    buf.put_u8(0u8); // Reserved
+    buf.put_u64(stream_id);
+    buf.put_u64(0); // payload_len — placeholder, backpatch later
+    buf.put_u64(ext_len);
+
+    // Extensions
+    buf.put_slice(extensions);
+
+    Ok(())
+}
+
+/// Backpatch the payload length in a buffer that was written via
+/// `encode_header_into()`.
+///
+/// After writing the payload into the buffer, call this to update the
+/// payload_len field in the header. The payload length is written at
+/// byte offset 12 (after version, type, flags, reserved, stream_id).
+///
+/// # Errors
+///
+/// Returns `FrameError::PayloadTooLarge` if the payload exceeds the limit.
+pub fn backpatch_payload_len(buf: &mut BytesMut, payload_len: usize) -> Result<(), FrameError> {
+    if payload_len > MAX_PAYLOAD_SIZE {
+        return Err(FrameError::PayloadTooLarge(payload_len, MAX_PAYLOAD_SIZE));
+    }
+
+    // Payload length is at offset 12, 8 bytes, big-endian
+    if buf.len() < 20 {
+        return Err(FrameError::Incomplete {
+            needed: 20,
+            have: buf.len(),
+        });
+    }
+
+    buf[12..20].copy_from_slice(&(payload_len as u64).to_be_bytes());
+    Ok(())
+}
+
+/// A decoded frame with zero-copy payload access.
+///
+/// The payload is a `Bytes` (reference-counted slice) rather than a `Vec<u8>`,
+/// allowing zero-copy access to the payload data.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecodedFrame {
+    /// The frame type.
+    pub frame_type: FrameType,
+    /// Frame flags.
+    pub flags: u8,
+    /// The stream ID.
+    pub stream_id: u64,
+    /// Raw extension section bytes (zero-copy).
+    pub extensions: Bytes,
+    /// The frame payload bytes (zero-copy).
+    pub payload: Bytes,
+}
+
+/// Decode a frame from a `BytesMut` buffer (zero-copy).
+///
+/// Parses the header from the buffer and returns a `DecodedFrame` with
+/// `Bytes` slices pointing into the original buffer (no copy).
+/// Also returns the total number of bytes consumed.
+///
+/// # Errors
+///
+/// Returns `FrameError::Incomplete` if the buffer doesn't contain a
+/// complete frame, `FrameError::InvalidVersion` if the version doesn't
+/// match, or `FrameError::PayloadTooLarge` / `FrameError::ExtensionTooLarge`
+/// for oversized fields.
+pub fn decode_frame_from(buf: &mut BytesMut) -> Result<Option<DecodedFrame>, FrameError> {
+    if buf.len() < FRAME_HEADER_SIZE {
+        return Ok(None);
+    }
+
+    let version = buf[0];
+    let frame_type_raw = buf[1];
+    let flags = buf[2];
+    // buf[3] is reserved, ignored per RFC-0002 §3.1
+    let stream_id = u64::from_be_bytes(buf[4..12].try_into().unwrap());
+    let payload_len = u64::from_be_bytes(buf[12..20].try_into().unwrap()) as usize;
+    let ext_len = u64::from_be_bytes(buf[20..28].try_into().unwrap()) as usize;
+
+    if version != AAFP_VERSION {
+        return Err(FrameError::InvalidVersion(version, AAFP_VERSION));
+    }
+
+    if payload_len > MAX_PAYLOAD_SIZE {
+        return Err(FrameError::PayloadTooLarge(payload_len, MAX_PAYLOAD_SIZE));
+    }
+
+    if ext_len > MAX_EXTENSION_SIZE {
+        return Err(FrameError::ExtensionTooLarge(ext_len, MAX_EXTENSION_SIZE));
+    }
+
+    let total_body = ext_len
+        .checked_add(payload_len)
+        .ok_or(FrameError::PayloadTooLarge(usize::MAX, MAX_PAYLOAD_SIZE))?;
+    let total_frame = FRAME_HEADER_SIZE
+        .checked_add(total_body)
+        .ok_or(FrameError::PayloadTooLarge(usize::MAX, MAX_PAYLOAD_SIZE))?;
+
+    if buf.len() < total_frame {
+        return Ok(None);
+    }
+
+    let frame_type = FrameType::from_u8(frame_type_raw);
+
+    if frame_type.is_unknown() && (flags & flags::CRITICAL) != 0 {
+        return Err(FrameError::UnknownFrameType(frame_type_raw));
+    }
+
+    // Advance past the header
+    buf.advance(FRAME_HEADER_SIZE);
+
+    // Split off extensions (zero-copy)
+    let extensions = if ext_len > 0 {
+        buf.split_to(ext_len).freeze()
+    } else {
+        Bytes::new()
+    };
+
+    // Split off payload (zero-copy)
+    let payload = if payload_len > 0 {
+        buf.split_to(payload_len).freeze()
+    } else {
+        Bytes::new()
+    };
+
+    Ok(Some(DecodedFrame {
+        frame_type,
+        flags,
+        stream_id,
+        extensions,
+        payload,
+    }))
 }
 
 /// Tokio codec for AAFP frames over QUIC streams.
@@ -723,5 +945,206 @@ mod tests {
             Err(FrameError::ExtensionTooLarge(_, _)) => {}
             other => panic!("expected ExtensionTooLarge, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_encode_frame_into_basic() {
+        let frame = Frame::data(4, b"hello world".to_vec());
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        // Should produce the same bytes as encode_frame
+        let expected = encode_frame(&frame).unwrap();
+        assert_eq!(buf.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_encode_frame_into_with_extensions() {
+        let mut frame = Frame::data(4, b"payload".to_vec());
+        frame.extensions = b"ext_data".to_vec();
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        let expected = encode_frame(&frame).unwrap();
+        assert_eq!(buf.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_encode_frame_into_empty_payload() {
+        let frame = Frame::ping(4);
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        let expected = encode_frame(&frame).unwrap();
+        assert_eq!(buf.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_encode_frame_into_grows_buffer() {
+        let frame = Frame::data(4, vec![0u8; 8192]);
+        let mut buf = BytesMut::with_capacity(64); // too small
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        let expected = encode_frame(&frame).unwrap();
+        assert_eq!(buf.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_encode_frame_into_roundtrip() {
+        let frame = Frame::data(42, b"roundtrip test".to_vec());
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        let (decoded, consumed) = decode_frame(&buf).unwrap();
+        assert_eq!(consumed, buf.len());
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn test_encode_header_into_and_backpatch() {
+        let payload = b"backpatched payload";
+        let mut buf = BytesMut::with_capacity(1024);
+
+        // Write header with placeholder payload_len=0
+        encode_header_into(&mut buf, FrameType::Data, 0, 4, &[]).unwrap();
+        let header_end = buf.len();
+
+        // Write payload directly into buffer
+        buf.put_slice(payload);
+
+        // Backpatch the payload length
+        backpatch_payload_len(&mut buf, payload.len()).unwrap();
+
+        // Verify: decode should produce the correct frame
+        let (decoded, consumed) = decode_frame(&buf).unwrap();
+        assert_eq!(consumed, buf.len());
+        assert_eq!(decoded.frame_type, FrameType::Data);
+        assert_eq!(decoded.stream_id, 4);
+        assert_eq!(decoded.payload, payload.to_vec());
+        assert_eq!(decoded.extensions, Vec::<u8>::new());
+
+        // Verify payload_len field in header is correct
+        let payload_len_in_header = u64::from_be_bytes(buf[12..20].try_into().unwrap());
+        assert_eq!(payload_len_in_header as usize, payload.len());
+        assert_eq!(header_end, FRAME_HEADER_SIZE);
+    }
+
+    #[test]
+    fn test_encode_header_into_with_extensions() {
+        let mut buf = BytesMut::with_capacity(1024);
+        let ext = b"extension_data";
+        encode_header_into(&mut buf, FrameType::Data, 0, 4, ext).unwrap();
+
+        // Header + extensions should be written
+        assert_eq!(buf.len(), FRAME_HEADER_SIZE + ext.len());
+
+        // Verify extension length in header
+        let ext_len = u64::from_be_bytes(buf[20..28].try_into().unwrap());
+        assert_eq!(ext_len as usize, ext.len());
+    }
+
+    #[test]
+    fn test_backpatch_payload_len_too_short() {
+        let mut buf = BytesMut::with_capacity(64);
+        buf.put_u8(0); // only 1 byte
+        let result = backpatch_payload_len(&mut buf, 100);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_encode_frame_into_payload_too_large() {
+        let frame = Frame::data(4, vec![0u8; MAX_PAYLOAD_SIZE + 1]);
+        let mut buf = BytesMut::with_capacity(1024);
+        let result = encode_frame_into(&mut buf, &frame);
+        assert!(matches!(result, Err(FrameError::PayloadTooLarge(_, _))));
+    }
+
+    #[test]
+    fn test_decode_frame_from_basic() {
+        let frame = Frame::data(4, b"hello world".to_vec());
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        let decoded = decode_frame_from(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded.frame_type, FrameType::Data);
+        assert_eq!(decoded.stream_id, 4);
+        assert_eq!(decoded.payload.as_ref(), b"hello world");
+        assert_eq!(decoded.extensions.len(), 0);
+        assert_eq!(buf.len(), 0); // buffer should be consumed
+    }
+
+    #[test]
+    fn test_decode_frame_from_with_extensions() {
+        let mut frame = Frame::data(4, b"payload".to_vec());
+        frame.extensions = b"ext_data".to_vec();
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        let decoded = decode_frame_from(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded.extensions.as_ref(), b"ext_data");
+        assert_eq!(decoded.payload.as_ref(), b"payload");
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn test_decode_frame_from_incomplete() {
+        let mut buf = BytesMut::with_capacity(1024);
+        // Only 10 bytes — not enough for a header
+        buf.put_slice(&[0u8; 10]);
+        let result = decode_frame_from(&mut buf).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_decode_frame_from_empty_payload() {
+        let frame = Frame::ping(4);
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        let decoded = decode_frame_from(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded.frame_type, FrameType::Ping);
+        assert_eq!(decoded.payload.len(), 0);
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn test_decode_frame_from_multiple_frames() {
+        let mut buf = BytesMut::with_capacity(2048);
+        encode_frame_into(&mut buf, &Frame::data(1, b"first".to_vec())).unwrap();
+        encode_frame_into(&mut buf, &Frame::data(2, b"second".to_vec())).unwrap();
+
+        let f1 = decode_frame_from(&mut buf).unwrap().unwrap();
+        assert_eq!(f1.stream_id, 1);
+        assert_eq!(f1.payload.as_ref(), b"first");
+
+        let f2 = decode_frame_from(&mut buf).unwrap().unwrap();
+        assert_eq!(f2.stream_id, 2);
+        assert_eq!(f2.payload.as_ref(), b"second");
+
+        assert_eq!(buf.len(), 0);
+    }
+
+    #[test]
+    fn test_decode_frame_from_invalid_version() {
+        let mut buf = BytesMut::with_capacity(1024);
+        buf.put_u8(99); // invalid version
+        buf.put_slice(&[0u8; 27]); // rest of header
+        let result = decode_frame_from(&mut buf);
+        assert!(matches!(result, Err(FrameError::InvalidVersion(_, _))));
+    }
+
+    #[test]
+    fn test_decode_frame_from_zero_copy() {
+        // Verify that payload Bytes points to the same memory as the buffer
+        let payload = b"zero-copy test payload data";
+        let frame = Frame::data(4, payload.to_vec());
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_frame_into(&mut buf, &frame).unwrap();
+
+        let decoded = decode_frame_from(&mut buf).unwrap().unwrap();
+        // The payload should match
+        assert_eq!(decoded.payload.as_ref(), payload);
+        // And the buffer should be empty (consumed)
+        assert_eq!(buf.len(), 0);
     }
 }
