@@ -25,7 +25,9 @@
 
 use aafp_benchmark::env_report::{print_env_summary, BenchmarkConfig};
 use aafp_sdk::AgentBuilder;
-use aafp_transport_mcp::{send_raw_json_on_handle_zero_copy, AafpMcpTransport};
+use aafp_transport_mcp::{
+    send_raw_json_on_handle_zero_copy, send_raw_json_via_channel, AafpMcpTransport,
+};
 use rmcp::model::{ClientRequest, JsonRpcMessage, PingRequest, RequestId};
 use rmcp::service::TxJsonRpcMessage;
 use rmcp::transport::Transport;
@@ -50,7 +52,7 @@ fn ping_value(id: i64) -> serde_json::Value {
     })
 }
 
-/// Set up a connected client-server pair for benchmarking.
+/// Set up a connected client-server pair for benchmarking (mutex path).
 ///
 /// Returns `(client_send_handle, server_transport)`. The client transport
 /// is consumed — only its send handle is kept so multiple tasks can share it.
@@ -105,6 +107,55 @@ async fn setup_concurrent_async() -> (
     (send_handle, server)
 }
 
+/// Set up a connected client-server pair with channel-based send (Track H2).
+///
+/// Returns `(channel_sender, client_transport, server_transport)`.
+/// The client has `spawn_writer()` called, so sends go through the channel.
+async fn setup_channel_async() -> (
+    tokio::sync::mpsc::Sender<bytes::BytesMut>,
+    AafpMcpTransport,
+    AafpMcpTransport,
+) {
+    let server_agent = Arc::new(
+        AgentBuilder::new()
+            .bind("127.0.0.1:0".parse().unwrap())
+            .build()
+            .await
+            .unwrap(),
+    );
+    let addr = format!("quic://{}", server_agent.transport.local_addr().unwrap());
+
+    let client_agent = AgentBuilder::new()
+        .bind("127.0.0.1:0".parse().unwrap())
+        .build()
+        .await
+        .unwrap();
+
+    let server_agent_clone = server_agent.clone();
+    let server_handle = tokio::spawn(async move {
+        let mut t = AafpMcpTransport::accept(&server_agent_clone).await.unwrap();
+        let _ = Transport::<RoleServer>::receive(&mut t).await;
+        t
+    });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut client = AafpMcpTransport::connect(&client_agent, &addr)
+        .await
+        .unwrap();
+
+    Transport::<RoleClient>::send(&mut client, client_ping(0))
+        .await
+        .unwrap();
+
+    let server = server_handle.await.unwrap();
+
+    // Spawn the writer task — switch to channel-based send
+    let tx = client.spawn_writer().await;
+
+    (tx, client, server)
+}
+
 fn client_ping(id: i64) -> TxJsonRpcMessage<RoleClient> {
     JsonRpcMessage::request(
         ClientRequest::PingRequest(PingRequest::default()),
@@ -112,7 +163,7 @@ fn client_ping(id: i64) -> TxJsonRpcMessage<RoleClient> {
     )
 }
 
-/// Run a concurrent-sender throughput measurement.
+/// Run a concurrent-sender throughput measurement (mutex path).
 ///
 /// Spawns `num_senders` tasks, each sending `MSGS_PER_SENDER` messages
 /// through the shared send handle. The server receives all messages.
@@ -136,6 +187,51 @@ async fn run_concurrent_throughput(
                 send_raw_json_on_handle_zero_copy(&handle, &msg)
                     .await
                     .unwrap();
+            }
+        });
+        sender_handles.push(h);
+    }
+
+    // Start timer
+    let start = Instant::now();
+
+    // Receive all messages on the server side
+    for _ in 0..total_msgs {
+        let _ = server.recv_raw_json_zero_copy().await;
+    }
+
+    // Wait for all senders to finish
+    for h in sender_handles {
+        h.await.unwrap();
+    }
+
+    let elapsed = start.elapsed();
+    let secs = elapsed.as_secs_f64().max(1e-9);
+    total_msgs as f64 / secs
+}
+
+/// Run a concurrent-sender throughput measurement (channel path, Track H2).
+///
+/// Spawns `num_senders` tasks, each sending `MSGS_PER_SENDER` messages
+/// through the channel sender. The server receives all messages.
+/// Returns throughput in messages/second.
+async fn run_channel_throughput(
+    tx: &tokio::sync::mpsc::Sender<bytes::BytesMut>,
+    server: &mut AafpMcpTransport,
+    num_senders: usize,
+) -> f64 {
+    let total_msgs = num_senders * MSGS_PER_SENDER;
+
+    // Spawn sender tasks
+    let mut sender_handles = Vec::new();
+    for task_id in 0..num_senders {
+        let tx_clone = tx.clone();
+        let h = tokio::spawn(async move {
+            for i in 0..MSGS_PER_SENDER {
+                let id = (task_id * MSGS_PER_SENDER + i) as i64;
+                let msg = ping_value(id);
+                // Channel path — no mutex acquisition!
+                send_raw_json_via_channel(&tx_clone, &msg).await.unwrap();
             }
         });
         sender_handles.push(h);
@@ -235,7 +331,52 @@ fn bench_concurrent_raw(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: channel-based concurrent sender throughput (Track H2).
+///
+/// This measures the lock-free channel path after H2. Compare against
+/// `bench_concurrent_senders` (mutex path) to see the improvement.
+fn bench_channel_senders(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let mut group = c.benchmark_group("lockfree_channel_senders");
+    group.sample_size(10);
+
+    for num_senders in [1, 2, 4, 8] {
+        let label = format!("channel_senders_{}", num_senders);
+        group.throughput(Throughput::Elements((num_senders * MSGS_PER_SENDER) as u64));
+        group.bench_function(label.as_str(), |b| {
+            b.iter_with_setup(
+                || {
+                    rt.block_on(async {
+                        let (tx, client, server) = setup_channel_async().await;
+                        (tx, client, server)
+                    })
+                },
+                |(tx, mut client, mut server)| {
+                    let tps = rt.block_on(run_channel_throughput(&tx, &mut server, num_senders));
+                    rt.block_on(async {
+                        drop(tx);
+                        Transport::<RoleClient>::close(&mut client).await.ok();
+                        Transport::<RoleServer>::close(&mut server).await.ok();
+                    });
+                    tps
+                },
+            );
+        });
+    }
+
+    group.finish();
+}
+
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
-criterion_group!(benches, bench_concurrent_senders, bench_concurrent_raw);
+criterion_group!(
+    benches,
+    bench_concurrent_senders,
+    bench_concurrent_raw,
+    bench_channel_senders
+);
 criterion_main!(benches);

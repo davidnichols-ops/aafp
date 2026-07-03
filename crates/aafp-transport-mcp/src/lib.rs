@@ -133,12 +133,13 @@ use aafp_messaging::{
 use aafp_sdk::{establish_session, Agent, SdkError};
 use aafp_transport_quic::buffer_pool::{acquire, release, BytesMutWriter};
 use aafp_transport_quic::{QuicConnection, QuicRecvStream, QuicSendStream};
+use bytes::BytesMut;
 use rmcp::service::{RxJsonRpcMessage, ServiceRole, TxJsonRpcMessage};
 use rmcp::transport::Transport;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 /// AAFP stream ID used for MCP JSON-RPC messages.
 ///
@@ -150,6 +151,13 @@ use tokio::sync::Mutex;
 ///
 /// We use stream ID 4, the first client-initiated application stream.
 const MCP_STREAM_ID: u64 = 4;
+
+/// Default capacity for the bounded mpsc send channel (Track H2).
+///
+/// When the channel is full, senders await (natural backpressure).
+/// 1024 is enough to absorb bursts from 8+ concurrent senders without
+/// blocking, while keeping memory bounded (~4MB at 4KB/buffer).
+const DEFAULT_SEND_CHANNEL_CAPACITY: usize = 1024;
 
 /// Error type for the AAFP MCP transport.
 #[derive(Debug, Error)]
@@ -195,9 +203,21 @@ impl From<aafp_messaging::FrameError> for AafpMcpError {
 /// frames over a bidirectional QUIC stream. The AAFP handshake (ML-DSA-65
 /// identity verification) is performed during `connect()` / `accept()`.
 pub struct AafpMcpTransport {
-    /// Send side: wrapped in `Arc<Mutex<Option<_>>>` so the `send` future
-    /// can be `Send + 'static` (required by the `Transport` trait).
+    /// Send side (legacy): wrapped in `Arc<Mutex<Option<_>>>` so the `send`
+    /// future can be `Send + 'static` (required by the `Transport` trait).
+    ///
+    /// When `spawn_writer()` is called, the `QuicSendStream` is moved out of
+    /// this mutex into a dedicated writer task. The mutex then holds `None`.
+    /// Kept for backward compatibility with `send_handle()` / `send_for_test()`.
     send: Arc<Mutex<Option<QuicSendStream>>>,
+    /// Send side (channel-based, Track H2): when active, senders push
+    /// `BytesMut` buffers through this channel. A dedicated writer task
+    /// drains the channel and writes to the QUIC stream. This eliminates
+    /// the mutex contention that serialized concurrent senders.
+    send_channel: Option<mpsc::Sender<BytesMut>>,
+    /// Writer task join handle (for graceful shutdown in `close()`).
+    /// `None` if `spawn_writer()` was never called.
+    writer_task: Option<tokio::task::JoinHandle<()>>,
     /// Receive side: sequential access, `&mut self` is sufficient.
     recv: QuicRecvStream,
     /// QUIC connection, used for `close()`.
@@ -243,6 +263,8 @@ impl AafpMcpTransport {
 
         Ok(Self {
             send: Arc::new(Mutex::new(Some(send))),
+            send_channel: None,
+            writer_task: None,
             recv,
             conn: Some(conn),
             closed: false,
@@ -282,6 +304,8 @@ impl AafpMcpTransport {
 
         Ok(Self {
             send: Arc::new(Mutex::new(Some(send))),
+            send_channel: None,
+            writer_task: None,
             recv,
             conn: Some(conn),
             closed: false,
@@ -300,6 +324,8 @@ impl AafpMcpTransport {
     ) -> Self {
         Self {
             send: Arc::new(Mutex::new(Some(send))),
+            send_channel: None,
+            writer_task: None,
             recv,
             conn,
             closed: false,
@@ -318,11 +344,95 @@ impl AafpMcpTransport {
         self.peer_agent_id.as_ref()
     }
 
+    /// Spawn a dedicated writer task and switch to the channel-based send
+    /// path (Track H2).
+    ///
+    /// This moves the `QuicSendStream` out of the mutex into a background
+    /// task that drains an `mpsc` channel. After this call:
+    /// - `send()`, `send_zero_copy()`, `send_raw_json()`, and
+    ///   `send_raw_json_zero_copy()` push buffers through the channel
+    ///   (no mutex acquisition — lock-free for concurrent senders).
+    /// - The legacy `send_handle()` returns an `Arc<Mutex<None>>` — use
+    ///   `send_channel_handle()` instead for concurrent send.
+    /// - `close()` drops the sender, waits for the writer to drain remaining
+    ///   messages, finish the stream, and exit.
+    ///
+    /// **When to call this:** When multiple tasks will send concurrently on
+    /// the same connection. The mutex path serializes concurrent sends; the
+    /// channel path allows lock-free parallel serialization.
+    ///
+    /// **When NOT to call this:** If only one task sends at a time, the
+    /// mutex path has lower overhead (no channel hop, buffer pool reuse).
+    ///
+    /// # Panics
+    /// Panics if the send stream has already been taken (e.g., if
+    /// `spawn_writer()` was called twice, or if the transport was closed).
+    pub async fn spawn_writer(&mut self) -> mpsc::Sender<BytesMut> {
+        self.spawn_writer_with_capacity(DEFAULT_SEND_CHANNEL_CAPACITY)
+            .await
+    }
+
+    /// Like `spawn_writer()` but with a custom channel capacity.
+    pub async fn spawn_writer_with_capacity(&mut self, capacity: usize) -> mpsc::Sender<BytesMut> {
+        // Take the send stream out of the mutex — the writer task owns it now.
+        let send_stream = {
+            let mut guard = self.send.lock().await;
+            guard
+                .take()
+                .expect("spawn_writer: send stream already taken (double spawn or closed)")
+        };
+
+        let (tx, rx) = mpsc::channel::<BytesMut>(capacity);
+
+        let handle = tokio::spawn(async move {
+            writer_task_loop(send_stream, rx).await;
+        });
+
+        self.send_channel = Some(tx.clone());
+        self.writer_task = Some(handle);
+        tx
+    }
+
+    /// Get a clone of the channel sender for concurrent send from external
+    /// tasks (e.g., the PyO3 Python binding).
+    ///
+    /// Returns `None` if `spawn_writer()` has not been called.
+    pub fn send_channel_handle(&self) -> Option<mpsc::Sender<BytesMut>> {
+        self.send_channel.clone()
+    }
+
+    /// Check whether the channel-based send path is active.
+    pub fn has_writer(&self) -> bool {
+        self.send_channel.is_some()
+    }
+
     /// Send a raw JSON value as an AAFP DATA frame.
     ///
     /// This is used by non-rmcp consumers (e.g., the Python PyO3 binding)
     /// that need to send JSON-RPC messages without rmcp type constraints.
+    ///
+    /// If `spawn_writer()` has been called, this uses the channel-based path
+    /// (no mutex acquisition). Otherwise, it falls back to the legacy mutex
+    /// path.
     pub async fn send_raw_json(&self, json: &serde_json::Value) -> Result<(), AafpMcpError> {
+        if let Some(tx) = &self.send_channel {
+            // Channel path: serialize into pooled buffer, send through channel
+            let mut buf = acquire();
+            encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[])
+                .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+            let payload_start = buf.len();
+            {
+                let mut writer = BytesMutWriter::new(&mut buf);
+                serde_json::to_writer(&mut writer, json)?;
+            }
+            let payload_len = buf.len() - payload_start;
+            backpatch_payload_len(&mut buf, payload_len)
+                .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+            tx.send(buf).await.map_err(|_| AafpMcpError::Closed)?;
+            return Ok(());
+        }
+
+        // Legacy mutex path
         let mut guard = self.send.lock().await;
         let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
 
@@ -336,11 +446,31 @@ impl AafpMcpTransport {
     /// Send a raw JSON value using the zero-copy buffer pool.
     ///
     /// This is the zero-copy version of `send_raw_json`. After pool warmup,
-    /// this performs 0 heap allocations per message.
+    /// this performs 0 heap allocations per message (on the legacy mutex
+    /// path). On the channel path, the buffer is sent to the writer task
+    /// which releases it after writing.
     pub async fn send_raw_json_zero_copy(
         &self,
         json: &serde_json::Value,
     ) -> Result<(), AafpMcpError> {
+        if let Some(tx) = &self.send_channel {
+            // Channel path: serialize into pooled buffer, send through channel
+            let mut buf = acquire();
+            encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[])
+                .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+            let payload_start = buf.len();
+            {
+                let mut writer = BytesMutWriter::new(&mut buf);
+                serde_json::to_writer(&mut writer, json)?;
+            }
+            let payload_len = buf.len() - payload_start;
+            backpatch_payload_len(&mut buf, payload_len)
+                .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+            tx.send(buf).await.map_err(|_| AafpMcpError::Closed)?;
+            return Ok(());
+        }
+
+        // Legacy mutex path
         let mut guard = self.send.lock().await;
         let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
 
@@ -438,11 +568,20 @@ impl AafpMcpTransport {
     pub async fn close_raw(&mut self) -> Result<(), AafpMcpError> {
         self.closed = true;
 
-        let mut guard = self.send.lock().await;
-        if let Some(mut send) = guard.take() {
-            send.finish();
+        // Drop the channel sender to signal the writer task to drain and exit.
+        drop(self.send_channel.take());
+
+        // Wait for the writer task to finish (it drains remaining messages,
+        // finishes the stream, and exits).
+        if let Some(handle) = self.writer_task.take() {
+            let _ = handle.await;
+        } else {
+            // No writer task — use legacy mutex close path
+            let mut guard = self.send.lock().await;
+            if let Some(mut send) = guard.take() {
+                send.finish();
+            }
         }
-        drop(guard);
 
         if let Some(conn) = self.conn.take() {
             conn.close(0, b"transport closed");
@@ -479,14 +618,34 @@ impl AafpMcpTransport {
     /// 2. Writes the frame header (with placeholder payload_len=0)
     /// 3. Serializes JSON directly into the buffer (no intermediate Vec)
     /// 4. Backpatches the payload length
-    /// 5. Writes the buffer to the QUIC stream
+    /// 5. Writes the buffer to the QUIC stream (or sends through channel)
     /// 6. Releases the buffer back to the pool
     ///
-    /// After pool warmup, this performs 0 heap allocations per message.
+    /// After pool warmup, this performs 0 heap allocations per message
+    /// (on the legacy mutex path). On the channel path, the buffer is sent
+    /// to the writer task which releases it after writing.
     pub async fn send_zero_copy<T>(&mut self, item: &T) -> Result<(), AafpMcpError>
     where
         T: Serialize + ?Sized,
     {
+        if let Some(tx) = &self.send_channel {
+            // Channel path: serialize into pooled buffer, send through channel
+            let mut buf = acquire();
+            encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[])
+                .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+            let payload_start = buf.len();
+            {
+                let mut writer = BytesMutWriter::new(&mut buf);
+                serde_json::to_writer(&mut writer, item)?;
+            }
+            let payload_len = buf.len() - payload_start;
+            backpatch_payload_len(&mut buf, payload_len)
+                .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+            tx.send(buf).await.map_err(|_| AafpMcpError::Closed)?;
+            return Ok(());
+        }
+
+        // Legacy mutex path
         let mut guard = self.send.lock().await;
         let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
 
@@ -626,6 +785,54 @@ pub async fn send_raw_json_on_handle_zero_copy(
     // Release the buffer back to the pool for reuse
     release(buf);
 
+    Ok(())
+}
+
+/// Writer task loop: drains the mpsc channel and writes buffers to the QUIC
+/// send stream (Track H2).
+///
+/// This task owns the `QuicSendStream` exclusively. Multiple sender tasks
+/// push `BytesMut` buffers through the channel; this task is the single
+/// consumer, so there is no contention on the write side.
+///
+/// When all channel senders are dropped (channel closed), `recv()` returns
+/// `None`, the loop exits, and the stream is finished gracefully.
+async fn writer_task_loop(mut send_stream: QuicSendStream, mut rx: mpsc::Receiver<BytesMut>) {
+    while let Some(buf) = rx.recv().await {
+        if let Err(e) = send_stream.write_all(&buf).await {
+            tracing::error!("Writer task: QUIC write error, shutting down: {e}");
+            break;
+        }
+        // Release the buffer back to the pool (on this thread).
+        // If the pool is full, the buffer is dropped (freed).
+        release(buf);
+    }
+    // Channel closed — finish the send side of the stream
+    send_stream.finish();
+}
+
+/// Send a raw JSON value via a channel sender extracted from an
+/// `AafpMcpTransport` that has called `spawn_writer()`.
+///
+/// This is the channel-based equivalent of `send_raw_json_on_handle_zero_copy`.
+/// Multiple tasks can clone the `mpsc::Sender` and call this concurrently
+/// without any mutex contention — the writer task drains the channel.
+pub async fn send_raw_json_via_channel(
+    tx: &mpsc::Sender<BytesMut>,
+    json: &serde_json::Value,
+) -> Result<(), AafpMcpError> {
+    let mut buf = acquire();
+    encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[])
+        .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+    let payload_start = buf.len();
+    {
+        let mut writer = BytesMutWriter::new(&mut buf);
+        serde_json::to_writer(&mut writer, json)?;
+    }
+    let payload_len = buf.len() - payload_start;
+    backpatch_payload_len(&mut buf, payload_len)
+        .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+    tx.send(buf).await.map_err(|_| AafpMcpError::Closed)?;
     Ok(())
 }
 
@@ -770,7 +977,27 @@ where
         item: TxJsonRpcMessage<R>,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send + 'static {
         let send_arc = self.send.clone();
+        let send_tx = self.send_channel.clone();
         async move {
+            if let Some(tx) = send_tx {
+                // Channel path (Track H2): serialize into pooled buffer, send
+                // through channel — no mutex acquisition.
+                let mut buf = acquire();
+                encode_header_into(&mut buf, FrameType::Data, 0, MCP_STREAM_ID, &[])
+                    .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+                let payload_start = buf.len();
+                {
+                    let mut writer = BytesMutWriter::new(&mut buf);
+                    serde_json::to_writer(&mut writer, &item)?;
+                }
+                let payload_len = buf.len() - payload_start;
+                backpatch_payload_len(&mut buf, payload_len)
+                    .map_err(|e| AafpMcpError::Framing(e.to_string()))?;
+                tx.send(buf).await.map_err(|_| AafpMcpError::Closed)?;
+                return Ok(());
+            }
+
+            // Legacy mutex path
             let mut guard = send_arc.lock().await;
             let send_stream = guard.as_mut().ok_or(AafpMcpError::Closed)?;
 
@@ -832,12 +1059,20 @@ where
     async fn close(&mut self) -> Result<(), Self::Error> {
         self.closed = true;
 
-        // Take and finish the send stream
-        let mut guard = self.send.lock().await;
-        if let Some(mut send) = guard.take() {
-            send.finish();
+        // Drop the channel sender to signal the writer task to drain and exit.
+        drop(self.send_channel.take());
+
+        // Wait for the writer task to finish (it drains remaining messages,
+        // finishes the stream, and exits).
+        if let Some(handle) = self.writer_task.take() {
+            let _ = handle.await;
+        } else {
+            // No writer task — use legacy mutex close path
+            let mut guard = self.send.lock().await;
+            if let Some(mut send) = guard.take() {
+                send.finish();
+            }
         }
-        drop(guard);
 
         // Close the QUIC connection if we own it
         if let Some(conn) = self.conn.take() {
@@ -851,6 +1086,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aafp_sdk::AgentBuilder;
+    use rmcp::model::{ClientRequest, JsonRpcMessage, PingRequest, RequestId};
+    use rmcp::service::TxJsonRpcMessage;
+    use rmcp::transport::Transport;
+    use rmcp::RoleClient;
+    use serde_json::json;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     #[test]
     fn test_error_display() {
@@ -867,5 +1110,206 @@ mod tests {
         // (We can't create real QuicStreams without a QUIC connection,
         // but we can verify the struct layout is correct.)
         let _ = std::mem::size_of::<AafpMcpTransport>();
+    }
+
+    fn client_ping(id: i64) -> TxJsonRpcMessage<RoleClient> {
+        JsonRpcMessage::request(
+            ClientRequest::PingRequest(PingRequest::default()),
+            RequestId::Number(id),
+        )
+    }
+
+    /// Set up a connected client-server pair for integration tests.
+    async fn setup_pair() -> (AafpMcpTransport, AafpMcpTransport) {
+        let server_agent = Arc::new(
+            AgentBuilder::new()
+                .bind("127.0.0.1:0".parse().unwrap())
+                .build()
+                .await
+                .unwrap(),
+        );
+        let addr = format!("quic://{}", server_agent.transport.local_addr().unwrap());
+
+        let client_agent = AgentBuilder::new()
+            .bind("127.0.0.1:0".parse().unwrap())
+            .build()
+            .await
+            .unwrap();
+
+        let server_agent_clone = server_agent.clone();
+        let server_handle = tokio::spawn(async move {
+            let mut t = AafpMcpTransport::accept(&server_agent_clone).await.unwrap();
+            let _ = Transport::<rmcp::RoleServer>::receive(&mut t).await;
+            t
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let mut client = AafpMcpTransport::connect(&client_agent, &addr)
+            .await
+            .unwrap();
+        Transport::<RoleClient>::send(&mut client, client_ping(0))
+            .await
+            .unwrap();
+
+        let server = server_handle.await.unwrap();
+        (client, server)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_channel_send_single_message() {
+        let (mut client, mut server) = setup_pair().await;
+
+        // Spawn writer task — switch to channel path
+        let tx = client.spawn_writer().await;
+        assert!(client.has_writer());
+
+        // Send via channel path (Transport::send detects channel)
+        Transport::<RoleClient>::send(&mut client, client_ping(1))
+            .await
+            .unwrap();
+
+        // Server should receive it
+        let msg = server.recv_raw_json_zero_copy().await;
+        assert!(msg.is_some(), "server should receive the message");
+
+        // Drop external sender before close so the writer task can exit
+        drop(tx);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_channel_send_raw_json() {
+        let (mut client, mut server) = setup_pair().await;
+
+        let tx = client.spawn_writer().await;
+
+        let msg = json!({"jsonrpc": "2.0", "id": 42, "method": "ping"});
+        client.send_raw_json_zero_copy(&msg).await.unwrap();
+
+        let received = server.recv_raw_json_zero_copy().await;
+        assert!(received.is_some());
+        let received = received.unwrap();
+        assert_eq!(received["id"], 42);
+
+        drop(tx);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_channel_concurrent_senders() {
+        let (mut client, mut server) = setup_pair().await;
+
+        // Spawn writer and get the channel sender
+        let tx = client.spawn_writer().await;
+
+        // Spawn 4 concurrent sender tasks
+        let mut handles = Vec::new();
+        for task_id in 0..4u64 {
+            let tx_clone = tx.clone();
+            let h = tokio::spawn(async move {
+                for i in 0..50u64 {
+                    let msg = json!({
+                        "jsonrpc": "2.0",
+                        "id": task_id * 1000 + i,
+                        "method": "ping"
+                    });
+                    send_raw_json_via_channel(&tx_clone, &msg).await.unwrap();
+                }
+            });
+            handles.push(h);
+        }
+
+        // Receive all 200 messages on server side
+        let mut count = 0;
+        for _ in 0..200 {
+            let msg = server.recv_raw_json_zero_copy().await;
+            if msg.is_some() {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Wait for all senders
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(count, 200, "server should receive all 200 messages");
+
+        drop(tx);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_channel_close_drains_and_finishes() {
+        let (mut client, mut server) = setup_pair().await;
+
+        let tx = client.spawn_writer().await;
+
+        // Send some messages
+        for i in 0..10u64 {
+            let msg = json!({"jsonrpc": "2.0", "id": i, "method": "ping"});
+            send_raw_json_via_channel(&tx, &msg).await.unwrap();
+        }
+
+        // Drop external sender so close() can shut down the writer
+        drop(tx);
+
+        // Close — should drain remaining messages
+        Transport::<RoleClient>::close(&mut client).await.unwrap();
+
+        // Server should receive all 10 messages
+        let mut count = 0;
+        for _ in 0..10 {
+            if server.recv_raw_json_zero_copy().await.is_some() {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        assert_eq!(count, 10, "all messages should be drained on close");
+
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_channel_handle_returns_none_before_spawn() {
+        let (client, _server) = setup_pair().await;
+        assert!(!client.has_writer());
+        assert!(client.send_channel_handle().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_channel_handle_returns_some_after_spawn() {
+        let (mut client, _server) = setup_pair().await;
+        let tx = client.spawn_writer().await;
+        assert!(client.has_writer());
+        assert!(client.send_channel_handle().is_some());
+        drop(tx);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_legacy_mutex_path_still_works() {
+        // Verify that without spawn_writer(), the mutex path still works
+        let (mut client, mut server) = setup_pair().await;
+
+        assert!(!client.has_writer());
+
+        // Send via mutex path
+        Transport::<RoleClient>::send(&mut client, client_ping(1))
+            .await
+            .unwrap();
+
+        let msg = server.recv_raw_json_zero_copy().await;
+        assert!(msg.is_some());
+
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
     }
 }
