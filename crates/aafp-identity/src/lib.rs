@@ -11,6 +11,8 @@ pub mod agent_id;
 pub mod agent_record;
 pub mod identity_v1;
 pub mod keypair;
+/// CRL-based identity revocation (RFC-0003 amendment).
+pub mod revocation;
 pub mod ucan;
 
 pub use agent_id::{
@@ -24,4 +26,7 @@ pub use identity_v1::{
     RECORD_DOMAIN_SEPARATOR, RECORD_TYPE_V1, UCAN_DOMAIN_SEPARATOR,
 };
 pub use keypair::{AgentKeypair, IdentityError};
+pub use revocation::{
+    RevocationEntry, RevocationError, RevocationList, RevocationStore, DEFAULT_CRL_TTL_SECS,
+};
 pub use ucan::{Capability, UcanHeader, UcanPayload, UcanToken};
