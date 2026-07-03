@@ -13,6 +13,7 @@
 
 use aafp_cbor::{int_map, Value};
 use aafp_identity::identity_v1::{AgentId, AgentRecord, IdentityError};
+use arc_swap::ArcSwap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -645,6 +646,270 @@ pub fn shared_sharded_dht() -> SharedShardedDht {
     Arc::new(ShardedCapabilityDht::new())
 }
 
+// ---------------------------------------------------------------------------
+// ArcSwap Sharded DHT (Track H5 — lock-free reads)
+// ---------------------------------------------------------------------------
+
+/// Immutable snapshot of a shard's data for lock-free reads (Track H5).
+///
+/// Stored inside an `ArcSwap` so reads are completely lock-free:
+/// `shard.load()` returns an `Arc<DhtShardSnapshot>` without any atomic
+/// CAS or lock acquisition. Writes create a new snapshot and swap it in.
+#[derive(Debug, Default, Clone)]
+struct DhtShardSnapshot {
+    /// capability_name -> set of AgentIds
+    index: HashMap<String, HashSet<[u8; 32]>>,
+    /// AgentId -> AgentRecord
+    records: HashMap<[u8; 32], AgentRecord>,
+}
+
+/// 256-way sharded DHT with **lock-free reads** via ArcSwap (Track H5).
+///
+/// Each shard stores an `ArcSwap<DhtShardSnapshot>`. Reads call `load()`
+/// which returns an `Arc` to the current snapshot — no locks, no CAS,
+/// no waiting. This is optimal for read-heavy workloads (lookups are
+/// 10x more frequent than announces due to rate limiting).
+///
+/// Writes (put, evict) are copy-on-write: load the current snapshot,
+/// clone it, modify the clone, and `store()` the new version. This is
+/// O(n) per write (where n is the shard size), but writes are rare
+/// (1 announce per 60s per agent).
+///
+/// **Trade-off vs `ShardedCapabilityDht` (RwLock):**
+/// - Reads: O(1) lock-free (ArcSwap load) vs O(1) with read lock
+/// - Writes: O(n) copy-on-write vs O(1) in-place mutation
+/// - Best for: read-heavy workloads (lookups >> announces)
+pub struct ArcSwapDht {
+    shards: Box<[ArcSwap<DhtShardSnapshot>]>,
+}
+
+impl std::fmt::Debug for ArcSwapDht {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ArcSwapDht")
+            .field("shard_count", &self.shards.len())
+            .finish()
+    }
+}
+
+impl Default for ArcSwapDht {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ArcSwapDht {
+    /// Create a new ArcSwap DHT with 256 shards.
+    pub fn new() -> Self {
+        Self::with_shard_count(DHT_SHARD_COUNT)
+    }
+
+    /// Create an ArcSwap DHT with a custom shard count (for testing).
+    pub fn with_shard_count(shard_count: usize) -> Self {
+        let shards: Vec<ArcSwap<DhtShardSnapshot>> = (0..shard_count)
+            .map(|_| ArcSwap::new(Arc::new(DhtShardSnapshot::default())))
+            .collect();
+        Self {
+            shards: shards.into_boxed_slice(),
+        }
+    }
+
+    /// Compute the shard index for a given AgentId.
+    #[inline]
+    fn shard_index(&self, agent_id: &[u8; 32]) -> usize {
+        let prefix = u64::from_le_bytes(agent_id[..8].try_into().unwrap());
+        (prefix as usize) % self.shards.len()
+    }
+
+    /// Store an AgentRecord (RFC-0004 §4.3).
+    ///
+    /// Copy-on-write: loads the current shard snapshot, clones it,
+    /// modifies the clone, and swaps in the new version.
+    ///
+    /// This is O(shard_size) per call, but writes are rare (rate-limited).
+    pub fn put(&self, record: AgentRecord) -> bool {
+        let agent_id = record.agent_id.0;
+        let shard_idx = self.shard_index(&agent_id);
+        let shard = &self.shards[shard_idx];
+
+        // Load current snapshot and clone it for modification
+        let current = shard.load();
+        let mut new_snapshot = (**current).clone();
+
+        // Check if we already have a newer record for this agent
+        if let Some(existing) = new_snapshot.records.get(&agent_id) {
+            if existing.created_at > record.created_at {
+                return false; // Existing record is newer
+            }
+            // Remove old capability indices
+            let old_caps: Vec<String> = existing
+                .capabilities
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            for cap_name in &old_caps {
+                if let Some(set) = new_snapshot.index.get_mut(cap_name) {
+                    set.remove(&agent_id);
+                    if set.is_empty() {
+                        new_snapshot.index.remove(cap_name);
+                    }
+                }
+            }
+        }
+
+        // Check max records limit (per shard)
+        let max_per_shard = MAX_RECORDS / self.shards.len().max(1);
+        if new_snapshot.records.len() >= max_per_shard
+            && !new_snapshot.records.contains_key(&agent_id)
+        {
+            return false; // Shard at capacity
+        }
+
+        // Index by capabilities
+        for cap in &record.capabilities {
+            new_snapshot
+                .index
+                .entry(cap.name.clone())
+                .or_default()
+                .insert(agent_id);
+        }
+
+        new_snapshot.records.insert(agent_id, record);
+
+        // Swap in the new snapshot (atomic, lock-free for readers)
+        shard.store(Arc::new(new_snapshot));
+        true
+    }
+
+    /// Get all AgentRecords matching a capability name (RFC-0004 §4.3).
+    ///
+    /// **Lock-free**: each shard is loaded via `ArcSwap::load()` which
+    /// returns an `Arc` to the current snapshot without any lock.
+    pub fn get(&self, capability: &str) -> Vec<AgentRecord> {
+        let mut results = Vec::new();
+        for shard in self.shards.iter() {
+            let snapshot = shard.load();
+            if let Some(ids) = snapshot.index.get(capability) {
+                for id in ids {
+                    if let Some(record) = snapshot.records.get(id) {
+                        results.push(record.clone());
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Get all AgentRecords matching ALL specified capabilities (RFC-0004 §4.3).
+    ///
+    /// **Lock-free**: each shard is loaded via `ArcSwap::load()`.
+    pub fn get_all(&self, capabilities: &[String]) -> Vec<AgentRecord> {
+        if capabilities.is_empty() {
+            return Vec::new();
+        }
+        let mut results = Vec::new();
+        for shard in self.shards.iter() {
+            let snapshot = shard.load();
+            let mut result_ids: Option<HashSet<[u8; 32]>> = None;
+            for cap in capabilities {
+                let ids = snapshot.index.get(cap).cloned().unwrap_or_default();
+                result_ids = Some(match result_ids {
+                    None => ids,
+                    Some(existing) => existing.intersection(&ids).cloned().collect(),
+                });
+            }
+            if let Some(ids) = result_ids {
+                for id in ids {
+                    if let Some(record) = snapshot.records.get(&id) {
+                        results.push(record.clone());
+                    }
+                }
+            }
+        }
+        results
+    }
+
+    /// Get a specific AgentRecord by AgentId.
+    ///
+    /// **Lock-free**: loads one shard snapshot.
+    pub fn get_by_id(&self, agent_id: &AgentId) -> Option<AgentRecord> {
+        let shard_idx = self.shard_index(&agent_id.0);
+        let snapshot = self.shards[shard_idx].load();
+        snapshot.records.get(&agent_id.0).cloned()
+    }
+
+    /// Remove expired records (RFC-0004 §3.4).
+    ///
+    /// Copy-on-write per shard: load, clone, filter, swap.
+    pub fn evict_expired(&self, now: u64) -> usize {
+        let mut total = 0;
+        for shard in self.shards.iter() {
+            let current = shard.load();
+            let mut new_snapshot = (**current).clone();
+            let expired_ids: Vec<[u8; 32]> = new_snapshot
+                .records
+                .iter()
+                .filter(|(_, r)| r.is_expired(now))
+                .map(|(id, _)| *id)
+                .collect();
+            let count = expired_ids.len();
+            for id in &expired_ids {
+                if let Some(record) = new_snapshot.records.remove(id) {
+                    let cap_names: Vec<String> =
+                        record.capabilities.iter().map(|c| c.name.clone()).collect();
+                    for cap_name in &cap_names {
+                        if let Some(set) = new_snapshot.index.get_mut(cap_name) {
+                            set.remove(id);
+                            if set.is_empty() {
+                                new_snapshot.index.remove(cap_name);
+                            }
+                        }
+                    }
+                }
+            }
+            if count > 0 {
+                shard.store(Arc::new(new_snapshot));
+            }
+            total += count;
+        }
+        total
+    }
+
+    /// Total number of records stored (across all shards).
+    pub fn len(&self) -> usize {
+        self.shards.iter().map(|s| s.load().records.len()).sum()
+    }
+
+    /// Whether the DHT is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Number of distinct capabilities indexed (across all shards).
+    pub fn capability_count(&self) -> usize {
+        let mut caps: HashSet<String> = HashSet::new();
+        for shard in self.shards.iter() {
+            let snapshot = shard.load();
+            for key in snapshot.index.keys() {
+                caps.insert(key.clone());
+            }
+        }
+        caps.len()
+    }
+
+    /// Number of shards in this DHT.
+    pub fn shard_count(&self) -> usize {
+        self.shards.len()
+    }
+}
+
+/// Arc-wrapped ArcSwap DHT for sharing across tasks.
+pub type SharedArcSwapDht = Arc<ArcSwapDht>;
+
+/// Create a new shared ArcSwap DHT.
+pub fn shared_arc_swap_dht() -> SharedArcSwapDht {
+    Arc::new(ArcSwapDht::new())
+}
+
 /// Discovery errors.
 #[derive(Debug, thiserror::Error)]
 pub enum DiscoveryError {
@@ -1013,5 +1278,153 @@ mod tests {
             h.await.unwrap();
         }
         assert_eq!(dht.len().await, 80);
+    }
+
+    // ----- ArcSwap DHT tests (Track H5 — lock-free reads) -----
+
+    #[test]
+    fn test_arcswap_dht_put_and_get() {
+        let dht = ArcSwapDht::new();
+        let record = make_record(vec!["inference"]);
+        assert!(dht.put(record.clone()));
+
+        let results = dht.get("inference");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].agent_id, record.agent_id);
+    }
+
+    #[test]
+    fn test_arcswap_dht_get_all() {
+        let dht = ArcSwapDht::new();
+        let r1 = make_record(vec!["inference", "translation"]);
+        let r2 = make_record(vec!["inference", "translation"]);
+        let r3 = make_record(vec!["inference"]);
+
+        dht.put(r1);
+        dht.put(r2);
+        dht.put(r3);
+
+        let results = dht.get_all(&["inference".to_string(), "translation".to_string()]);
+        assert_eq!(results.len(), 2);
+
+        let results = dht.get("inference");
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_arcswap_dht_replace_newer_record() {
+        let dht = ArcSwapDht::new();
+        let r1 = make_record(vec!["inference"]);
+        dht.put(r1.clone());
+
+        let mut r2 = make_record(vec!["inference", "translation"]);
+        r2.agent_id = r1.agent_id.clone();
+        r2.created_at = r1.created_at + 10;
+        assert!(dht.put(r2));
+
+        let results = dht.get("translation");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_arcswap_dht_evict_expired() {
+        let dht = ArcSwapDht::new();
+        let r1 = make_record(vec!["inference"]);
+        dht.put(r1.clone());
+
+        let evicted = dht.evict_expired(r1.expires_at + 1);
+        assert_eq!(evicted, 1);
+        assert_eq!(dht.len(), 0);
+    }
+
+    #[test]
+    fn test_arcswap_dht_get_by_id() {
+        let dht = ArcSwapDht::new();
+        let record = make_record(vec!["inference"]);
+        dht.put(record.clone());
+
+        let found = dht.get_by_id(&record.agent_id);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().agent_id, record.agent_id);
+
+        let fake_id = AgentId::from_bytes(&[0u8; 32]).unwrap();
+        assert!(dht.get_by_id(&fake_id).is_none());
+    }
+
+    #[test]
+    fn test_arcswap_dht_len_and_empty() {
+        let dht = ArcSwapDht::new();
+        assert!(dht.is_empty());
+        assert_eq!(dht.len(), 0);
+
+        dht.put(make_record(vec!["inference"]));
+        assert!(!dht.is_empty());
+        assert_eq!(dht.len(), 1);
+    }
+
+    #[test]
+    fn test_arcswap_dht_capability_count() {
+        let dht = ArcSwapDht::new();
+        dht.put(make_record(vec!["inference", "translation"]));
+        dht.put(make_record(vec!["inference", "storage"]));
+
+        assert_eq!(dht.capability_count(), 3);
+    }
+
+    #[test]
+    fn test_arcswap_dht_shard_count() {
+        let dht = ArcSwapDht::new();
+        assert_eq!(dht.shard_count(), DHT_SHARD_COUNT);
+
+        let small = ArcSwapDht::with_shard_count(4);
+        assert_eq!(small.shard_count(), 4);
+    }
+
+    #[test]
+    fn test_arcswap_dht_100_records() {
+        let dht = ArcSwapDht::new();
+        for _ in 0..100 {
+            dht.put(make_record(vec!["inference", "translation"]));
+        }
+        assert_eq!(dht.len(), 100);
+        let results = dht.get("inference");
+        assert_eq!(results.len(), 100);
+    }
+
+    #[test]
+    fn test_arcswap_dht_concurrent_reads_and_writes() {
+        use std::sync::Arc;
+        use std::thread;
+        let dht = Arc::new(ArcSwapDht::new());
+
+        // Pre-populate
+        for _ in 0..50 {
+            dht.put(make_record(vec!["inference"]));
+        }
+
+        // Spawn reader and writer threads
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let dht_clone = dht.clone();
+            handles.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    let _results = dht_clone.get("inference");
+                }
+            }));
+        }
+        for _ in 0..2 {
+            let dht_clone = dht.clone();
+            handles.push(thread::spawn(move || {
+                for _ in 0..10 {
+                    dht_clone.put(make_record(vec!["inference"]));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // 50 initial + 20 new = 70
+        assert_eq!(dht.len(), 70);
     }
 }

@@ -26,11 +26,11 @@ pub mod rpc_handler;
 
 pub use bootstrap::{BootstrapConfig, BootstrapDiscovery};
 pub use discovery_v1::{
-    shared_dht, shared_sharded_dht, AnnounceParams, AnnounceResult,
-    CapabilityDht as CapabilityDhtV1, DiscoveryError, LookupParams, LookupResult,
-    ShardedCapabilityDht, SharedCapabilityDht, SharedShardedDht, DEFAULT_LIMIT_AUTH,
-    DEFAULT_LIMIT_UNAUTH, DHT_SHARD_COUNT, MAX_CONCURRENT_STREAMS, MAX_RECORDS, METHOD_ANNOUNCE,
-    METHOD_LOOKUP, METHOD_PEX, RATE_LIMIT_ANNOUNCE, RATE_LIMIT_LOOKUP,
+    shared_arc_swap_dht, shared_dht, shared_sharded_dht, AnnounceParams, AnnounceResult,
+    ArcSwapDht, CapabilityDht as CapabilityDhtV1, DiscoveryError, LookupParams, LookupResult,
+    ShardedCapabilityDht, SharedArcSwapDht, SharedCapabilityDht, SharedShardedDht,
+    DEFAULT_LIMIT_AUTH, DEFAULT_LIMIT_UNAUTH, DHT_SHARD_COUNT, MAX_CONCURRENT_STREAMS, MAX_RECORDS,
+    METHOD_ANNOUNCE, METHOD_LOOKUP, METHOD_PEX, RATE_LIMIT_ANNOUNCE, RATE_LIMIT_LOOKUP,
 };
 pub use persistent_dht::PersistentDht;
 pub use regional::{Region, RegionalDiscovery};
