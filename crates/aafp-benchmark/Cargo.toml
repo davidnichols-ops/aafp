@@ -49,6 +49,11 @@ name = "alloc_profile"
 path = "benches/alloc_profile.rs"
 harness = false
 
+[[bench]]
+name = "lock_contention"
+path = "benches/lock_contention.rs"
+harness = false
+
 [dependencies]
 aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }
