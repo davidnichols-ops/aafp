@@ -12,8 +12,11 @@
 //! binds the TLS session to the agent's ML-DSA-65 identity, providing
 //! end-to-end authentication.
 
+/// Thread-local buffer pool for zero-copy message handling.
+pub mod buffer_pool;
 pub mod config;
 pub mod transport;
 
+pub use buffer_pool::{acquire, acquire_guard, release, BufferGuard, BufferPoolConfig, PoolStats};
 pub use config::{generate_self_signed_cert, ConfigError, QuicConfig, TlsIdentity, AAFP_ALPN};
 pub use transport::{QuicConnection, QuicRecvStream, QuicSendStream, QuicTransport};
