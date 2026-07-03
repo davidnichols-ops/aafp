@@ -44,6 +44,11 @@ name = "session"
 path = "benches/session.rs"
 harness = false
 
+[[bench]]
+name = "alloc_profile"
+path = "benches/alloc_profile.rs"
+harness = false
+
 [dependencies]
 aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }
