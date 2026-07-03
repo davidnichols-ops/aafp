@@ -28,6 +28,9 @@ pub enum DhtError {
     /// No agents advertise the requested capability.
     #[error("capability not found: {0}")]
     CapabilityNotFound(String),
+    /// Persistence backend error (SQLite, I/O, etc.).
+    #[error("persistence error: {0}")]
+    Persistence(String),
 }
 
 /// A DHT key = SHA-256(capability_string) = 32 bytes.

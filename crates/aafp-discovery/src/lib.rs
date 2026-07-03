@@ -19,6 +19,8 @@ pub mod bootstrap;
 #[allow(deprecated)]
 pub mod capability_dht;
 pub mod discovery_v1;
+/// Persistent DHT backend using SQLite.
+pub mod persistent_dht;
 pub mod regional;
 pub mod rpc_handler;
 
@@ -29,5 +31,6 @@ pub use discovery_v1::{
     MAX_CONCURRENT_STREAMS, MAX_RECORDS, METHOD_ANNOUNCE, METHOD_LOOKUP, METHOD_PEX,
     RATE_LIMIT_ANNOUNCE, RATE_LIMIT_LOOKUP,
 };
+pub use persistent_dht::PersistentDht;
 pub use regional::{Region, RegionalDiscovery};
 pub use rpc_handler::{DiscoveryClient, DiscoveryRpcHandler};
