@@ -219,7 +219,12 @@ pub struct AafpMcpTransport {
     /// `None` if `spawn_writer()` was never called.
     writer_task: Option<tokio::task::JoinHandle<()>>,
     /// Receive side: sequential access, `&mut self` is sufficient.
-    recv: QuicRecvStream,
+    /// When `spawn_reader()` is called, the stream is moved to a reader
+    /// task and this becomes `None`. The caller owns the receive channel.
+    recv: Option<QuicRecvStream>,
+    /// Reader task join handle (for graceful shutdown in `close()`).
+    /// `None` if `spawn_reader()` was never called.
+    reader_task: Option<tokio::task::JoinHandle<()>>,
     /// QUIC connection, used for `close()`.
     conn: Option<QuicConnection>,
     /// Whether the transport has been closed.
@@ -265,7 +270,8 @@ impl AafpMcpTransport {
             send: Arc::new(Mutex::new(Some(send))),
             send_channel: None,
             writer_task: None,
-            recv,
+            recv: Some(recv),
+            reader_task: None,
             conn: Some(conn),
             closed: false,
             peer_agent_id: Some(peer_info.agent_id),
@@ -306,7 +312,8 @@ impl AafpMcpTransport {
             send: Arc::new(Mutex::new(Some(send))),
             send_channel: None,
             writer_task: None,
-            recv,
+            recv: Some(recv),
+            reader_task: None,
             conn: Some(conn),
             closed: false,
             peer_agent_id: Some(peer_info.agent_id),
@@ -326,7 +333,8 @@ impl AafpMcpTransport {
             send: Arc::new(Mutex::new(Some(send))),
             send_channel: None,
             writer_task: None,
-            recv,
+            recv: Some(recv),
+            reader_task: None,
             conn,
             closed: false,
             peer_agent_id: None,
@@ -404,6 +412,56 @@ impl AafpMcpTransport {
     /// Check whether the channel-based send path is active.
     pub fn has_writer(&self) -> bool {
         self.send_channel.is_some()
+    }
+
+    /// Spawn a dedicated reader task and switch to the channel-based receive
+    /// path (Track H3).
+    ///
+    /// This moves the `QuicRecvStream` into a background task that reads
+    /// AAFP DATA frames, deserializes JSON, and pushes `serde_json::Value`
+    /// through an `mpsc` channel. The returned `mpsc::Receiver` is owned
+    /// by the caller — receive messages from it directly.
+    ///
+    /// After this call:
+    /// - `recv_raw_json()`, `recv_raw_json_zero_copy()`, and
+    ///   `Transport::receive()` return `None` (the stream has been moved
+    ///   to the reader task). Use the returned receiver instead.
+    /// - `close()` will wait for the reader task to finish.
+    ///
+    /// **When to call this:** When you want to decouple QUIC I/O from
+    /// message processing. The reader task handles all I/O; your task
+    /// just receives decoded JSON values from the channel.
+    ///
+    /// # Panics
+    /// Panics if the receive stream has already been taken.
+    pub async fn spawn_reader(&mut self) -> mpsc::Receiver<serde_json::Value> {
+        self.spawn_reader_with_capacity(DEFAULT_SEND_CHANNEL_CAPACITY)
+            .await
+    }
+
+    /// Like `spawn_reader()` but with a custom channel capacity.
+    pub async fn spawn_reader_with_capacity(
+        &mut self,
+        capacity: usize,
+    ) -> mpsc::Receiver<serde_json::Value> {
+        let recv_stream = self
+            .recv
+            .take()
+            .expect("spawn_reader: receive stream already taken (double spawn or closed)");
+
+        let (tx, rx) = mpsc::channel::<serde_json::Value>(capacity);
+
+        let handle = tokio::spawn(async move {
+            reader_task_loop(recv_stream, tx).await;
+        });
+
+        self.reader_task = Some(handle);
+        rx
+    }
+
+    /// Check whether the channel-based receive path is active.
+    pub fn has_reader(&self) -> bool {
+        self.reader_task.is_some()
     }
 
     /// Send a raw JSON value as an AAFP DATA frame.
@@ -496,13 +554,18 @@ impl AafpMcpTransport {
     ///
     /// Returns `None` when the peer closes the stream.
     /// Used by non-rmcp consumers (e.g., the Python PyO3 binding).
+    ///
+    /// If `spawn_reader()` has been called, this receives from the channel
+    /// instead of reading directly from the QUIC stream.
     pub async fn recv_raw_json(&mut self) -> Option<serde_json::Value> {
         if self.closed {
             return None;
         }
 
+        // Direct receive path (reader task takes over if spawn_reader was called)
+        let recv = self.recv.as_mut()?;
         loop {
-            match read_data_frame(&mut self.recv).await {
+            match read_data_frame(recv).await {
                 Ok(Some(payload)) => match serde_json::from_slice::<serde_json::Value>(&payload) {
                     Ok(msg) => return Some(msg),
                     Err(e) => {
@@ -532,13 +595,18 @@ impl AafpMcpTransport {
     ///
     /// This is the zero-copy version of `recv_raw_json`. After pool warmup,
     /// this performs 0 heap allocations for the payload.
+    ///
+    /// If `spawn_reader()` has been called, this receives from the channel
+    /// instead of reading directly from the QUIC stream.
     pub async fn recv_raw_json_zero_copy(&mut self) -> Option<serde_json::Value> {
         if self.closed {
             return None;
         }
 
+        // Direct receive path (reader task takes over if spawn_reader was called)
+        let recv = self.recv.as_mut()?;
         loop {
-            match read_data_frame_zero_copy(&mut self.recv).await {
+            match read_data_frame_zero_copy(recv).await {
                 Ok(Some(payload)) => match serde_json::from_slice::<serde_json::Value>(&payload) {
                     Ok(msg) => return Some(msg),
                     Err(e) => {
@@ -571,6 +639,8 @@ impl AafpMcpTransport {
         // Drop the channel sender to signal the writer task to drain and exit.
         drop(self.send_channel.take());
 
+        // Drop the receive channel to signal the reader task to exit.
+
         // Wait for the writer task to finish (it drains remaining messages,
         // finishes the stream, and exits).
         if let Some(handle) = self.writer_task.take() {
@@ -581,6 +651,11 @@ impl AafpMcpTransport {
             if let Some(mut send) = guard.take() {
                 send.finish();
             }
+        }
+
+        // Wait for the reader task to finish.
+        if let Some(handle) = self.reader_task.take() {
+            let _ = handle.await;
         }
 
         if let Some(conn) = self.conn.take() {
@@ -691,8 +766,9 @@ impl AafpMcpTransport {
             return None;
         }
 
+        let recv = self.recv.as_mut()?;
         loop {
-            match read_data_frame_zero_copy(&mut self.recv).await {
+            match read_data_frame_zero_copy(recv).await {
                 Ok(Some(payload)) => {
                     // Deserialize JSON-RPC from the pooled buffer (no copy)
                     match serde_json::from_slice::<RxJsonRpcMessage<R>>(&payload) {
@@ -809,6 +885,51 @@ async fn writer_task_loop(mut send_stream: QuicSendStream, mut rx: mpsc::Receive
     }
     // Channel closed — finish the send side of the stream
     send_stream.finish();
+}
+
+/// Reader task loop: reads AAFP DATA frames from the QUIC receive stream,
+/// deserializes JSON, and pushes values through the mpsc channel (Track H3).
+///
+/// This task owns the `QuicRecvStream` exclusively. It handles all I/O,
+/// separating network reads from message processing. The caller receives
+/// decoded `serde_json::Value` from the channel — no lock contention.
+///
+/// When the channel sender is dropped (caller no longer receiving), the
+/// task exits. When the QUIC stream ends (peer closed), `read_data_frame`
+/// returns `None` and the task exits.
+async fn reader_task_loop(mut recv_stream: QuicRecvStream, tx: mpsc::Sender<serde_json::Value>) {
+    loop {
+        match read_data_frame_zero_copy(&mut recv_stream).await {
+            Ok(Some(payload)) => {
+                match serde_json::from_slice::<serde_json::Value>(&payload) {
+                    Ok(value) => {
+                        if tx.send(value).await.is_err() {
+                            // Channel closed — caller dropped the receiver
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        match e.classify() {
+                            serde_json::error::Category::Syntax
+                            | serde_json::error::Category::Eof => {
+                                tracing::debug!("Reader task: ignoring unparsable message: {e}");
+                            }
+                            serde_json::error::Category::Data | serde_json::error::Category::Io => {
+                                tracing::warn!("Reader task: protocol error in message: {e}");
+                            }
+                        }
+                        continue;
+                    }
+                }
+            }
+            Ok(None) => break, // Stream ended
+            Err(AafpMcpError::Closed) => break,
+            Err(e) => {
+                tracing::error!("Reader task: error reading AAFP frame: {e}");
+                break;
+            }
+        }
+    }
 }
 
 /// Send a raw JSON value via a channel sender extracted from an
@@ -1020,8 +1141,10 @@ where
             return None;
         }
 
+        // Direct receive path (reader task takes over if spawn_reader was called)
+        let recv = self.recv.as_mut()?;
         loop {
-            match read_data_frame(&mut self.recv).await {
+            match read_data_frame(recv).await {
                 Ok(Some(payload)) => {
                     // Deserialize JSON-RPC from payload
                     match serde_json::from_slice::<RxJsonRpcMessage<R>>(&payload) {
@@ -1062,6 +1185,8 @@ where
         // Drop the channel sender to signal the writer task to drain and exit.
         drop(self.send_channel.take());
 
+        // Drop the receive channel to signal the reader task to exit.
+
         // Wait for the writer task to finish (it drains remaining messages,
         // finishes the stream, and exits).
         if let Some(handle) = self.writer_task.take() {
@@ -1072,6 +1197,11 @@ where
             if let Some(mut send) = guard.take() {
                 send.finish();
             }
+        }
+
+        // Wait for the reader task to finish.
+        if let Some(handle) = self.reader_task.take() {
+            let _ = handle.await;
         }
 
         // Close the QUIC connection if we own it
@@ -1309,6 +1439,74 @@ mod tests {
         let msg = server.recv_raw_json_zero_copy().await;
         assert!(msg.is_some());
 
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_reader_channel_receive() {
+        let (mut client, mut server) = setup_pair().await;
+
+        // Spawn reader on server — get the receive channel
+        let mut rx = server.spawn_reader().await;
+        assert!(server.has_reader());
+
+        // Send from client
+        let tx = client.spawn_writer().await;
+        let msg = json!({"jsonrpc": "2.0", "id": 1, "method": "ping"});
+        send_raw_json_via_channel(&tx, &msg).await.unwrap();
+
+        // Receive via channel (no direct stream access)
+        let received = rx.recv().await;
+        assert!(received.is_some(), "should receive message via channel");
+        let received = received.unwrap();
+        assert_eq!(received["id"], 1);
+
+        drop(tx);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        drop(rx);
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_reader_channel_multiple_messages() {
+        let (mut client, mut server) = setup_pair().await;
+
+        let mut rx = server.spawn_reader().await;
+        let tx = client.spawn_writer().await;
+
+        // Send 10 messages
+        for i in 0..10u64 {
+            let msg = json!({"jsonrpc": "2.0", "id": i, "method": "ping"});
+            send_raw_json_via_channel(&tx, &msg).await.unwrap();
+        }
+
+        // Receive all 10 via channel
+        let mut count = 0;
+        for _ in 0..10 {
+            if rx.recv().await.is_some() {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        assert_eq!(count, 10, "should receive all 10 messages via channel");
+
+        drop(tx);
+        Transport::<RoleClient>::close(&mut client).await.ok();
+        drop(rx);
+        Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_reader_has_reader_flag() {
+        let (mut client, mut server) = setup_pair().await;
+
+        assert!(!server.has_reader());
+        let rx = server.spawn_reader().await;
+        assert!(server.has_reader());
+
+        drop(rx);
         Transport::<RoleClient>::close(&mut client).await.ok();
         Transport::<rmcp::RoleServer>::close(&mut server).await.ok();
     }
