@@ -52,7 +52,160 @@ impl DiscoveryRpcHandler {
     pub fn with_new_dht() -> Self {
         Self::new(Arc::new(Mutex::new(CapabilityDht::new())))
     }
+}
 
+/// Sharded server-side handler for discovery RPC requests (Track H4).
+///
+/// Wraps a `ShardedCapabilityDht` (256-way sharded) and handles incoming
+/// RPC requests with rate limiting and record validation.
+///
+/// Unlike `DiscoveryRpcHandler`, this uses per-shard RwLocks, so concurrent
+/// lookups proceed in parallel and announces only block operations on one
+/// shard.
+pub struct ShardedDiscoveryRpcHandler {
+    dht: Arc<ShardedCapabilityDht>,
+    /// Rate limiter: agent_id → list of announce timestamps in current window
+    announce_limits: Mutex<HashMap<AgentId, Vec<Instant>>>,
+    /// Rate limiter: agent_id → list of lookup timestamps in current window
+    lookup_limits: Mutex<HashMap<AgentId, Vec<Instant>>>,
+}
+
+impl ShardedDiscoveryRpcHandler {
+    /// Create a new sharded handler wrapping the given DHT.
+    pub fn new(dht: Arc<ShardedCapabilityDht>) -> Self {
+        Self {
+            dht,
+            announce_limits: Mutex::new(HashMap::new()),
+            lookup_limits: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Create a new sharded handler with a fresh DHT.
+    pub fn with_new_dht() -> Self {
+        Self::new(Arc::new(ShardedCapabilityDht::new()))
+    }
+
+    /// Handle an incoming RPC request.
+    ///
+    /// Returns the CBOR-encoded RPC response result value.
+    pub async fn handle_request(
+        &self,
+        method: &str,
+        params: &Value,
+        caller_id: &AgentId,
+    ) -> Result<Value, DiscoveryError> {
+        match method {
+            METHOD_ANNOUNCE => self.handle_announce(params, caller_id).await,
+            METHOD_LOOKUP => self.handle_lookup(params, caller_id).await,
+            _ => Err(DiscoveryError::InvalidField {
+                field: "method",
+                message: format!("unknown method: {method}"),
+            }),
+        }
+    }
+
+    /// Handle `aafp.discovery.announce` (RFC-0004 §3.3).
+    async fn handle_announce(
+        &self,
+        params: &Value,
+        caller_id: &AgentId,
+    ) -> Result<Value, DiscoveryError> {
+        // 1. Rate limit check
+        if !self.check_rate_limit(&self.announce_limits, caller_id, MAX_ANNOUNCES_PER_WINDOW) {
+            return Err(DiscoveryError::RateLimitExceeded);
+        }
+
+        // 2. Decode AgentRecord from params
+        let announce_params = AnnounceParams::from_cbor(params)?;
+
+        // 3. Verify the record's AgentId matches caller_id
+        if &announce_params.record.agent_id != caller_id {
+            return Err(DiscoveryError::InvalidField {
+                field: "record.agent_id",
+                message: "record agent_id does not match caller".to_string(),
+            });
+        }
+
+        // 4. Insert into DHT (only locks one shard)
+        self.dht.put(announce_params.record.clone()).await;
+
+        // 5. Return known peers (up to limit) — scans all shards with read locks
+        let peers = self
+            .dht
+            .get_all(
+                &announce_params
+                    .record
+                    .capabilities
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await
+            .into_iter()
+            .filter(|r| &r.agent_id != caller_id)
+            .take(MAX_PEERS_IN_RESPONSE)
+            .collect::<Vec<_>>();
+
+        let result = AnnounceResult::new(peers);
+        Ok(result.to_cbor())
+    }
+
+    /// Handle `aafp.discovery.lookup` (RFC-0004 §3.3).
+    async fn handle_lookup(
+        &self,
+        params: &Value,
+        caller_id: &AgentId,
+    ) -> Result<Value, DiscoveryError> {
+        // 1. Rate limit check
+        if !self.check_rate_limit(&self.lookup_limits, caller_id, MAX_LOOKUPS_PER_WINDOW) {
+            return Err(DiscoveryError::RateLimitExceeded);
+        }
+
+        // 2. Decode capability name from params
+        let lookup_params = LookupParams::from_cbor(params)?;
+
+        // 3. Query DHT for matching records (scans all shards with read locks)
+        let limit = lookup_params.limit.unwrap_or(DEFAULT_LIMIT_AUTH) as usize;
+        let peers = self
+            .dht
+            .get(&lookup_params.capability)
+            .await
+            .into_iter()
+            .filter(|r| &r.agent_id != caller_id)
+            .take(limit)
+            .collect::<Vec<_>>();
+
+        // 4. Return matching records
+        let result = LookupResult::new(peers);
+        Ok(result.to_cbor())
+    }
+
+    /// Check and update rate limit for a peer.
+    fn check_rate_limit(
+        &self,
+        limits: &Mutex<HashMap<AgentId, Vec<Instant>>>,
+        caller_id: &AgentId,
+        max_per_window: u32,
+    ) -> bool {
+        let now = Instant::now();
+        let window_start = now - RATE_LIMIT_WINDOW;
+        let mut limits = limits.lock().unwrap();
+        let timestamps = limits.entry(caller_id.clone()).or_default();
+        timestamps.retain(|&t| t > window_start);
+        if timestamps.len() >= max_per_window as usize {
+            return false;
+        }
+        timestamps.push(now);
+        true
+    }
+
+    /// Get a reference to the underlying sharded DHT.
+    pub fn dht(&self) -> &Arc<ShardedCapabilityDht> {
+        &self.dht
+    }
+}
+
+impl DiscoveryRpcHandler {
     /// Handle an incoming RPC request.
     ///
     /// Returns the CBOR-encoded RPC response result value.
