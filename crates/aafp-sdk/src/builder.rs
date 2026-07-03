@@ -5,7 +5,7 @@ use aafp_discovery::capability_dht::CapabilityDht;
 use aafp_discovery::{BootstrapConfig, BootstrapDiscovery, RegionalDiscovery};
 use aafp_identity::agent_record::AgentRecord;
 use aafp_identity::{derive_agent_id, AgentKeypair};
-use aafp_messaging::PubSub;
+use aafp_messaging::{KeepAliveConfig, PubSub};
 use aafp_nat::{AutoNat, RelayConfig, RelayService};
 use aafp_transport_quic::QuicConfig;
 use std::net::SocketAddr;
@@ -18,6 +18,7 @@ pub struct AgentBuilder {
     seed_nodes: Vec<String>,
     is_relay: bool,
     enable_pq: bool,
+    keepalive_config: KeepAliveConfig,
 }
 
 impl AgentBuilder {
@@ -30,6 +31,7 @@ impl AgentBuilder {
             seed_nodes: vec![],
             is_relay: false,
             enable_pq: true,
+            keepalive_config: KeepAliveConfig::default(),
         }
     }
 
@@ -67,6 +69,20 @@ impl AgentBuilder {
     pub fn with_pq(mut self, enable: bool) -> Self {
         self.enable_pq = enable;
         self
+    }
+
+    /// Set the keep-alive configuration (RFC-0002 §4.7-4.8).
+    ///
+    /// Controls PING/PONG behavior for connection liveness checks.
+    /// Default: interval 30s, timeout 10s, max_missed 3.
+    pub fn with_keepalive(mut self, config: KeepAliveConfig) -> Self {
+        self.keepalive_config = config;
+        self
+    }
+
+    /// Disable keep-alive entirely.
+    pub fn disable_keepalive(self) -> Self {
+        self.with_keepalive(KeepAliveConfig::disabled())
     }
 
     /// Build the agent.
@@ -124,6 +140,7 @@ impl AgentBuilder {
             auto_nat,
             relay,
             pubsub,
+            keepalive_config: self.keepalive_config,
             running: false,
         })
     }
@@ -138,6 +155,7 @@ impl Default for AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn build_agent() {
@@ -193,5 +211,39 @@ mod tests {
 
         let translation = agent.find_by_capability("translation");
         assert_eq!(translation.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn build_with_keepalive() {
+        let config = KeepAliveConfig {
+            interval: Duration::from_secs(5),
+            timeout: Duration::from_secs(2),
+            max_missed: 5,
+        };
+        let agent = AgentBuilder::new()
+            .with_keepalive(config.clone())
+            .build()
+            .await
+            .unwrap();
+        assert_eq!(agent.keepalive_config.interval, Duration::from_secs(5));
+        assert_eq!(agent.keepalive_config.timeout, Duration::from_secs(2));
+        assert_eq!(agent.keepalive_config.max_missed, 5);
+    }
+
+    #[tokio::test]
+    async fn build_with_keepalive_disabled() {
+        let agent = AgentBuilder::new()
+            .disable_keepalive()
+            .build()
+            .await
+            .unwrap();
+        assert!(!agent.keepalive_config.is_enabled());
+    }
+
+    #[tokio::test]
+    async fn build_default_keepalive() {
+        let agent = AgentBuilder::new().build().await.unwrap();
+        assert!(agent.keepalive_config.is_enabled());
+        assert_eq!(agent.keepalive_config.interval, Duration::from_secs(30));
     }
 }

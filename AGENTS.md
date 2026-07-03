@@ -6,7 +6,7 @@
 cargo fmt --all -- --check   # formatting check (0 diffs expected)
 cargo build --workspace       # build (0 warnings expected)
 cargo clippy --workspace      # lints (0 warnings expected)
-cargo test --workspace        # 1058 tests, 0 failures expected (3 ignored)
+cargo test --workspace        # 1080 tests, 0 failures expected (3 ignored)
 ```
 
 ## Project layout

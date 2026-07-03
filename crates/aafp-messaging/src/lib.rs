@@ -9,6 +9,7 @@
 pub mod close_manager;
 pub mod extensions;
 pub mod framing;
+pub mod keepalive;
 pub mod pipeline;
 pub mod pubsub;
 /// Legacy MVP RPC module. Uses serde with string keys — NOT RFC-compliant.
@@ -28,6 +29,7 @@ pub use framing::{
     decode_frame, encode_frame, Frame, FrameCodec, FrameError, FrameType, AAFP_VERSION,
     FRAME_HEADER_SIZE, MAX_EXTENSION_SIZE, MAX_PAYLOAD_SIZE,
 };
+pub use keepalive::{KeepAliveConfig, PingTracker};
 pub use pipeline::{
     ExtensionCallback, FrameProcessingPipeline, PipelineContext, PipelineError, PipelinePhase,
     ProcessedFrame, TestingContext,

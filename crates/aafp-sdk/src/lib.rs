@@ -93,6 +93,8 @@ pub struct Agent {
     pub relay: aafp_nat::RelayService,
     /// PubSub.
     pub pubsub: aafp_messaging::PubSub,
+    /// Keep-alive configuration (RFC-0002 §4.7-4.8).
+    pub keepalive_config: aafp_messaging::KeepAliveConfig,
     /// Whether the agent is running.
     pub running: bool,
 }
