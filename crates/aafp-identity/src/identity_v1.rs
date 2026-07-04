@@ -33,7 +33,7 @@ pub const MAX_RECORD_EXPIRY: u64 = 30 * 24 * 60 * 60; // 2,592,000
 pub const RECOMMENDED_RENEWAL: u64 = 7 * 24 * 60 * 60; // 604,800
 
 /// An AgentId: 32-byte SHA-256 hash of an agent's public key.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct AgentId(pub [u8; AGENT_ID_SIZE]);
 
 impl AgentId {

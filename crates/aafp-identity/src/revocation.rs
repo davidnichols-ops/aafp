@@ -242,7 +242,7 @@ impl RevocationList {
 
     /// Get all revoked AgentIds.
     pub fn revoked_ids(&self) -> Vec<AgentId> {
-        self.entries.iter().map(|e| e.agent_id.clone()).collect()
+        self.entries.iter().map(|e| e.agent_id).collect()
     }
 
     /// Encode to CBOR.
@@ -323,7 +323,7 @@ impl RevocationStore {
     /// All AgentIds from the CRL are added to the revoked set.
     pub fn add_crl(&mut self, crl: RevocationList) {
         for entry in &crl.entries {
-            self.revoked.insert(entry.agent_id.clone());
+            self.revoked.insert(entry.agent_id);
         }
         self.crls.push(crl);
     }
@@ -339,7 +339,7 @@ impl RevocationStore {
         self.revoked = self
             .crls
             .iter()
-            .flat_map(|crl| crl.entries.iter().map(|e| e.agent_id.clone()))
+            .flat_map(|crl| crl.entries.iter().map(|e| e.agent_id))
             .collect();
     }
 
