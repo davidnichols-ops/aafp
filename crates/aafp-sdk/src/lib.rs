@@ -27,6 +27,7 @@
 
 pub mod builder;
 pub mod client;
+pub mod connection_pool;
 pub mod handshake_driver;
 pub mod protocol_frames;
 pub mod server;
@@ -34,6 +35,9 @@ pub mod transport_binding;
 
 pub use builder::AgentBuilder;
 pub use client::AgentClient;
+pub use connection_pool::{
+    ConnectionPool, PoolConfig, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_POOL_SIZE,
+};
 pub use handshake_driver::{drive_client_handshake, drive_server_handshake, PeerInfo};
 pub use protocol_frames::{parse_control_frame, send_close_frame, send_error_frame, ControlFrame};
 pub use server::AgentServer;
