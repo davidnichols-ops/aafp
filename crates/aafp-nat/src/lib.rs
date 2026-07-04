@@ -12,6 +12,8 @@
 //! protocol and DCuTR hole-punching over QUIC.
 
 pub mod auto_nat;
+/// AutoNAT v1: dial-back based NAT detection (RFC 0010 §6).
+pub mod auto_nat_v1;
 pub mod dcutr;
 pub mod relay;
 /// Relay data forwarding: bidirectional QUIC stream forwarding (RFC 0010 §4.2).
@@ -20,6 +22,10 @@ pub mod relay_forwarding;
 pub mod relay_v1;
 
 pub use auto_nat::{AutoNat, NatStatus};
+pub use auto_nat_v1::{
+    AutoNatClient, AutoNatV1DialBack, DialBackResult, DEFAULT_CONFIRMATION_THRESHOLD,
+    DEFAULT_DIALBACK_TIMEOUT_SECS, METHOD_DIALBACK_REQUEST, METHOD_OBSERVE,
+};
 pub use dcutr::Dcutr;
 pub use relay::{RelayConfig, RelayNode, RelayService};
 pub use relay_forwarding::{
