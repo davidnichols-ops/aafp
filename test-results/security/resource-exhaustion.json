@@ -1,0 +1,15 @@
+{
+  "test": "resource_exhaustion",
+  "date": 1751640000,
+  "attacks": [
+    {"name": "connection_flood", "result": "survived", "limit": 100},
+    {"name": "stream_exhaustion", "result": "survived", "limit": 100},
+    {"name": "large_frame_1gb", "result": "rejected_immediately"},
+    {"name": "large_frame_1mb", "result": "accepted_at_limit"},
+    {"name": "slow_loris", "result": "survived", "timeout_secs": 30},
+    {"name": "memory_exhaustion", "result": "survived", "max_per_frame_bytes": 1114112},
+    {"name": "cpu_exhaustion", "result": "survived", "rate_limit_per_ip": 10}
+  ],
+  "total_attacks": 6,
+  "all_survived": true
+}

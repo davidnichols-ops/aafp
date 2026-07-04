@@ -48,6 +48,10 @@ name = "adversarial_handshake"
 path = "tests/adversarial_handshake.rs"
 
 [[test]]
+name = "resource_exhaustion"
+path = "tests/resource_exhaustion.rs"
+
+[[test]]
 name = "wan_simulation"
 path = "tests/wan_simulation.rs"
 

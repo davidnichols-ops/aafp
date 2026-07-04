@@ -3,14 +3,106 @@
 //! All incoming connections require a completed AAFP v1 handshake before
 //! application messages can be processed. There is no code path where an
 //! unauthenticated peer can send application messages.
+//!
+//! ## Resource Limits (Track Q4)
+//!
+//! The server enforces:
+//! - `max_connections`: Maximum simultaneous authenticated connections (default 100).
+//! - `handshake_rate_limit`: Maximum handshake attempts per second per source IP (default 10).
+//!
+//! These prevent connection flooding and CPU exhaustion via ML-DSA-65 verify.
 
 use crate::{establish_session, Agent, SdkError};
 use aafp_core::{AuthorizationProvider, Session, SessionState};
 use aafp_identity::AgentId;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::info;
+
+/// Default maximum simultaneous connections (Track Q4).
+pub const DEFAULT_MAX_CONNECTIONS: usize = 100;
+
+/// Default handshake rate limit per second per source IP (Track Q4).
+pub const DEFAULT_HANDSHAKE_RATE_LIMIT: u32 = 10;
+
+/// Server configuration for resource limits (Track Q4).
+#[derive(Clone, Debug)]
+pub struct ServerConfig {
+    /// Maximum simultaneous authenticated connections.
+    pub max_connections: usize,
+    /// Maximum handshake attempts per second per source IP.
+    pub handshake_rate_limit: u32,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: DEFAULT_MAX_CONNECTIONS,
+            handshake_rate_limit: DEFAULT_HANDSHAKE_RATE_LIMIT,
+        }
+    }
+}
+
+/// Per-IP rate limiter for handshake attempts (Track Q4).
+///
+/// Uses a sliding window counter. Thread-safe via internal Mutex.
+pub struct HandshakeRateLimiter {
+    /// Map from IP address to (count, window_start).
+    windows: Mutex<HashMap<String, (u32, Instant)>>,
+    /// Maximum attempts per window.
+    max_attempts: u32,
+    /// Window duration.
+    window: Duration,
+}
+
+impl HandshakeRateLimiter {
+    /// Create a new rate limiter with the given max attempts per second.
+    pub fn new(max_attempts_per_sec: u32) -> Self {
+        Self {
+            windows: Mutex::new(HashMap::new()),
+            max_attempts: max_attempts_per_sec,
+            window: Duration::from_secs(1),
+        }
+    }
+
+    /// Check if an attempt from the given IP is allowed.
+    /// Returns true if allowed, false if rate-limited.
+    pub async fn check(&self, ip: &str) -> bool {
+        let mut windows = self.windows.lock().await;
+        let now = Instant::now();
+        match windows.get_mut(ip) {
+            Some((count, start)) => {
+                if now.duration_since(*start) >= self.window {
+                    // Reset window
+                    *count = 1;
+                    *start = now;
+                    true
+                } else if *count < self.max_attempts {
+                    *count += 1;
+                    true
+                } else {
+                    false
+                }
+            }
+            None => {
+                windows.insert(ip.to_string(), (1, now));
+                true
+            }
+        }
+    }
+
+    /// Get the current count for an IP (for testing).
+    pub async fn count_for(&self, ip: &str) -> u32 {
+        self.windows
+            .lock()
+            .await
+            .get(ip)
+            .map(|(c, _)| *c)
+            .unwrap_or(0)
+    }
+}
 
 /// A server-side authenticated peer connection.
 pub struct ServerPeerConnection {
@@ -52,22 +144,52 @@ pub struct AgentServer {
     connections: Arc<Mutex<HashMap<AgentId, ServerPeerConnection>>>,
     /// Authorization provider (pluggable: UCAN, OIDC, custom, testing).
     auth_provider: Arc<dyn AuthorizationProvider>,
+    /// Server configuration (resource limits).
+    config: ServerConfig,
+    /// Handshake rate limiter (per-IP).
+    rate_limiter: Arc<HandshakeRateLimiter>,
 }
 
 impl AgentServer {
-    /// Create a new server with the given authorization provider.
+    /// Create a new server with the given authorization provider and default config.
     pub fn with_auth_provider(auth_provider: Arc<dyn AuthorizationProvider>) -> Self {
+        Self::with_auth_provider_and_config(auth_provider, ServerConfig::default())
+    }
+
+    /// Create a new server with the given authorization provider and config.
+    pub fn with_auth_provider_and_config(
+        auth_provider: Arc<dyn AuthorizationProvider>,
+        config: ServerConfig,
+    ) -> Self {
+        let rate_limit = config.handshake_rate_limit;
         Self {
             running: Arc::new(Mutex::new(false)),
             accepted_count: Arc::new(Mutex::new(0)),
             connections: Arc::new(Mutex::new(HashMap::new())),
             auth_provider,
+            rate_limiter: Arc::new(HandshakeRateLimiter::new(rate_limit)),
+            config,
         }
     }
 
     /// Create a new server with a testing auth provider (allows all).
     pub fn new() -> Self {
         Self::with_auth_provider(Arc::new(aafp_core::TestingAuthProvider))
+    }
+
+    /// Create a new server with a testing auth provider and custom config.
+    pub fn with_config(config: ServerConfig) -> Self {
+        Self::with_auth_provider_and_config(Arc::new(aafp_core::TestingAuthProvider), config)
+    }
+
+    /// Get the server configuration.
+    pub fn config(&self) -> &ServerConfig {
+        &self.config
+    }
+
+    /// Get the rate limiter (for testing).
+    pub fn rate_limiter(&self) -> &Arc<HandshakeRateLimiter> {
+        &self.rate_limiter
     }
 
     /// Start accepting connections (runs in background).
@@ -106,7 +228,27 @@ impl AgentServer {
     ///
     /// Returns the verified peer AgentId on success.
     pub async fn accept_one(&self, agent: &Agent) -> Result<AgentId, SdkError> {
+        // Check connection limit before accepting
+        {
+            let connections = self.connections.lock().await;
+            if connections.len() >= self.config.max_connections {
+                return Err(SdkError::Handshake("connection limit exceeded".to_string()));
+            }
+        }
+
         let conn = agent.transport.accept().await?;
+
+        // Rate limit handshake attempts per source IP
+        let remote_addr = conn.remote_address();
+        let ip = remote_addr.ip().to_string();
+        if !self.rate_limiter.check(&ip).await {
+            // Rate limited — close connection immediately
+            conn.close(0x0100, b"rate limited");
+            return Err(SdkError::Handshake(format!(
+                "handshake rate limit exceeded for IP: {ip}"
+            )));
+        }
+
         *self.accepted_count.lock().await += 1;
 
         // Drive AAFP v1 handshake + authorization + session transitions

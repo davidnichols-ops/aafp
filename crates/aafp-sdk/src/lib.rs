@@ -46,7 +46,10 @@ pub use handshake_driver::{drive_client_handshake, drive_server_handshake, PeerI
 pub use metrics::{AgentMetrics, HealthStatus, MetricsRpcResponse, MetricsSnapshot};
 pub use protocol_frames::{parse_control_frame, send_close_frame, send_error_frame, ControlFrame};
 pub use runtime_config::{RuntimeConfig, RuntimeFlavor};
-pub use server::AgentServer;
+pub use server::{
+    AgentServer, HandshakeRateLimiter, ServerConfig, DEFAULT_HANDSHAKE_RATE_LIMIT,
+    DEFAULT_MAX_CONNECTIONS,
+};
 pub use transport_binding::establish_session;
 
 use aafp_identity::agent_record::AgentRecord;
