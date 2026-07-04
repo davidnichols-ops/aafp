@@ -18,6 +18,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 aafp-cbor = { workspace = true }
@@ -39,6 +40,10 @@ path = "tests/wan_test.rs"
 [[test]]
 name = "trust_scenarios"
 path = "tests/trust_scenarios.rs"
+
+[[test]]
+name = "wan_simulation"
+path = "tests/wan_simulation.rs"
 
 [[example]]
 name = "wan_test_server"
