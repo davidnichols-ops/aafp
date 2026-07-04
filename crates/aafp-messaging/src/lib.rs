@@ -32,7 +32,9 @@ pub use framing::{
     encode_header_into, DecodedFrame, Frame, FrameCodec, FrameError, FrameType, AAFP_VERSION,
     FRAME_HEADER_SIZE, MAX_EXTENSION_SIZE, MAX_PAYLOAD_SIZE,
 };
-pub use keepalive::{KeepAliveConfig, PingTracker};
+pub use keepalive::{
+    AdaptiveKeepAliveConfig, AdaptivePingTracker, KeepAliveConfig, KeepAliveState, PingTracker,
+};
 pub use pipeline::{
     ExtensionCallback, FrameProcessingPipeline, PipelineContext, PipelineError, PipelinePhase,
     ProcessedFrame, TestingContext,
