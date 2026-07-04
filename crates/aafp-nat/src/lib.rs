@@ -15,6 +15,8 @@ pub mod auto_nat;
 /// AutoNAT v1: dial-back based NAT detection (RFC 0010 §6).
 pub mod auto_nat_v1;
 pub mod dcutr;
+/// DCuTR v1: Direct Connection Upgrade through Relay (RFC 0010 §7).
+pub mod dcutr_v1;
 pub mod relay;
 /// Relay data forwarding: bidirectional QUIC stream forwarding (RFC 0010 §4.2).
 pub mod relay_forwarding;
@@ -27,6 +29,10 @@ pub use auto_nat_v1::{
     DEFAULT_DIALBACK_TIMEOUT_SECS, METHOD_DIALBACK_REQUEST, METHOD_OBSERVE,
 };
 pub use dcutr::Dcutr;
+pub use dcutr_v1::{
+    CoordinateMessage, DcutrCoordinator, DcutrV1, DcutrV1Error, HolePunchResult, NatType,
+    DEFAULT_HOLE_PUNCH_TIMEOUT_SECS, DEFAULT_SYNC_DELAY_MS,
+};
 pub use relay::{RelayConfig, RelayNode, RelayService};
 pub use relay_forwarding::{
     RelayV1CallerHelper, RelayV1Server, RelayV1TargetHandler, DATA_STREAM_HEADER_LEN,
