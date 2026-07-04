@@ -57,6 +57,10 @@ name = "timing_analysis"
 path = "tests/timing_analysis.rs"
 
 [[test]]
+name = "malformed_input"
+path = "tests/malformed_input.rs"
+
+[[test]]
 name = "wan_simulation"
 path = "tests/wan_simulation.rs"
 

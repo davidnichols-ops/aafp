@@ -1,0 +1,29 @@
+{
+  "test": "malformed_input",
+  "date": 1751640000,
+  "categories": [
+    {
+      "name": "cbor_edge_cases",
+      "tests": ["empty_input", "deep_nesting_99_levels", "deep_nesting_100_levels_rejected", "u64_max", "invalid_utf8", "indefinite_length_array", "indefinite_length_map", "duplicate_map_keys", "tagged_value", "truncated_input", "non_canonical_encoding"],
+      "result": "all_rejected_without_panic"
+    },
+    {
+      "name": "frame_edge_cases",
+      "tests": ["zero_byte_payload", "payload_len_zero_ext_len_1000", "version_255", "frame_type_255", "truncated_header_27_bytes", "truncated_header_0_bytes", "payload_exceeds_max"],
+      "result": "all_rejected_without_panic"
+    },
+    {
+      "name": "handshake_edge_cases",
+      "tests": ["empty_public_key", "wrong_size_public_key", "empty_signature", "null_capabilities", "missing_required_field", "wrong_type_for_field"],
+      "result": "all_rejected_without_panic"
+    },
+    {
+      "name": "rpc_edge_cases",
+      "tests": ["empty_method", "evil_method", "null_params", "empty_params_map", "large_params_1mb", "missing_method_field", "missing_id_field"],
+      "result": "all_rejected_without_panic"
+    }
+  ],
+  "total_tests": 32,
+  "all_passed": true,
+  "no_panics": true
+}
