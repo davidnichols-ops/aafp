@@ -12,6 +12,7 @@
 //! verification. The PQ KEX (X25519MLKEM768) still protects the transport
 //! against harvest-now-decrypt-later attacks.
 
+use crate::session_cache::SessionCache;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{ClientConfig, ServerConfig, TransportConfig, VarInt};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -113,6 +114,11 @@ impl QuicConfig {
         // Require ALPN aafp/1 (RFC-0002 §2.2).
         server_crypto.alpn_protocols = vec![AAFP_ALPN.to_vec()];
 
+        // Send TLS 1.3 session tickets for resumption (Track I1).
+        // Default is 2; we send 4 to allow more resumptions per connection.
+        // Each ticket is single-use, so more tickets = more resumptions.
+        server_crypto.send_tls13_tickets = 4;
+
         let quic_server_config = QuicServerConfig::try_from(server_crypto)
             .map_err(|e| ConfigError::Quinn(e.to_string()))?;
 
@@ -157,6 +163,66 @@ impl QuicConfig {
 
         // Advertise ALPN aafp/1 (RFC-0002 §2.2).
         client_crypto.alpn_protocols = vec![AAFP_ALPN.to_vec()];
+
+        let quic_client_config = QuicClientConfig::try_from(client_crypto)
+            .map_err(|e| ConfigError::Quinn(e.to_string()))?;
+
+        let mut transport_config = TransportConfig::default();
+        transport_config.keep_alive_interval(Some(self.keep_alive_interval));
+
+        let mut client_config = ClientConfig::new(Arc::new(quic_client_config));
+        client_config.transport_config(Arc::new(transport_config));
+
+        Ok(client_config)
+    }
+
+    /// Build a quinn client config with TLS session resumption enabled (Track I1).
+    ///
+    /// This is like `build_client_config()` but uses the provided `SessionCache`
+    /// to store and retrieve TLS 1.3 session tickets. When the client connects
+    /// to a server it has connected to before, the cached ticket is presented,
+    /// allowing the server to resume the TLS session without a full key exchange.
+    ///
+    /// The `SessionCache` should be shared across all `dial()` calls on the
+    /// same `QuicTransport` to maximize ticket reuse.
+    ///
+    /// **Note:** The AAFP application-layer handshake (ML-DSA-65 identity
+    /// verification) still runs after TLS resumption. Only the TLS KEX is
+    /// skipped — agent identity authentication is not affected.
+    ///
+    /// **Security:** 0-RTT early data is NOT enabled (replay attack risk).
+    /// The client waits for the server's response before sending application
+    /// data, same as a full handshake.
+    pub fn build_client_config_with_resumption(
+        &self,
+        session_cache: &SessionCache,
+    ) -> Result<ClientConfig, ConfigError> {
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+
+        let root_store = rustls::RootCertStore::empty();
+
+        let mut client_crypto = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|e| ConfigError::Rustls(e.to_string()))?
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+
+        // Disable certificate verification (TOFU model).
+        client_crypto
+            .dangerous()
+            .set_certificate_verifier(Arc::new(NoVerifier));
+
+        // Advertise ALPN aafp/1 (RFC-0002 §2.2).
+        client_crypto.alpn_protocols = vec![AAFP_ALPN.to_vec()];
+
+        // Enable TLS 1.3 session resumption with the shared session cache.
+        // This allows the client to reuse session tickets from previous
+        // connections to the same server, skipping the full TLS KEX.
+        client_crypto.resumption = rustls::client::Resumption::store(session_cache.store());
+
+        // 0-RTT early data is NOT enabled (replay attack risk).
+        // The client waits for the server's response before sending app data.
+        // (This is the default — explicit for documentation.)
 
         let quic_client_config = QuicClientConfig::try_from(client_crypto)
             .map_err(|e| ConfigError::Quinn(e.to_string()))?;

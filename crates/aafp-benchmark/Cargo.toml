@@ -54,6 +54,11 @@ name = "lock_contention"
 path = "benches/lock_contention.rs"
 harness = false
 
+[[bench]]
+name = "connection_lifecycle"
+path = "benches/connection_lifecycle.rs"
+harness = false
+
 [dependencies]
 aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }

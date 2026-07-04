@@ -4,20 +4,35 @@
 //! post-quantum key exchange (X25519MLKEM768) via rustls + aws-lc-rs.
 
 use crate::config::{generate_self_signed_cert, QuicConfig, TlsIdentity};
+use crate::session_cache::SessionCache;
 use aafp_core::{Error, Multiaddr};
-use quinn::{Connection, Endpoint, RecvStream, SendStream};
+use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream};
 use std::net::SocketAddr;
 use tracing::info;
 
 /// A QUIC endpoint (server + client combined).
+///
+/// When created with [`QuicTransport::new_with_resumption()`], the transport
+/// caches a `ClientConfig` with a shared TLS session ticket store. This
+/// enables TLS 1.3 session resumption: the first `dial()` to a server
+/// performs a full TLS handshake, and subsequent `dial()`s to the same
+/// server reuse the cached session ticket (Track I1).
 pub struct QuicTransport {
     endpoint: Endpoint,
     config: QuicConfig,
     identity: TlsIdentity,
+    /// Cached client config with session resumption (Track I1).
+    /// `None` if created with `new()` (no resumption — backward compat).
+    client_config: Option<ClientConfig>,
+    /// Shared session cache (Track I1). `None` if resumption is not enabled.
+    session_cache: Option<SessionCache>,
 }
 
 impl QuicTransport {
     /// Create a new QUIC transport with a self-signed certificate.
+    ///
+    /// This does NOT enable TLS session resumption. Use
+    /// [`QuicTransport::new_with_resumption()`] to enable resumption.
     pub fn new(config: QuicConfig) -> Result<Self, Error> {
         let identity = generate_self_signed_cert().map_err(|e| Error::Transport(e.to_string()))?;
         let server_config = config
@@ -38,7 +53,80 @@ impl QuicTransport {
             endpoint,
             config,
             identity,
+            client_config: None,
+            session_cache: None,
         })
+    }
+
+    /// Create a new QUIC transport with TLS session resumption enabled (Track I1).
+    ///
+    /// The transport caches a `ClientConfig` with a shared `SessionCache`.
+    /// All `dial()` calls reuse this config, allowing TLS 1.3 session tickets
+    /// to be stored and reused across connections to the same server.
+    ///
+    /// The server side is also configured to send TLS 1.3 session tickets
+    /// (4 tickets per connection) so that clients can resume sessions.
+    ///
+    /// **When to use this:** When the agent will connect to the same peer
+    /// multiple times. The first connection pays the full TLS handshake cost;
+    /// subsequent connections can resume the session (skipping the KEX).
+    ///
+    /// **When NOT to use this:** For one-shot connections where resumption
+    /// won't be used. The session cache adds ~200KB memory overhead.
+    pub fn new_with_resumption(config: QuicConfig) -> Result<Self, Error> {
+        Self::new_with_resumption_cache(config, SessionCache::new())
+    }
+
+    /// Create a new QUIC transport with a custom session cache (Track I1).
+    ///
+    /// Like [`QuicTransport::new_with_resumption()`] but allows specifying
+    /// a custom `SessionCache` size.
+    pub fn new_with_resumption_cache(
+        config: QuicConfig,
+        session_cache: SessionCache,
+    ) -> Result<Self, Error> {
+        let identity = generate_self_signed_cert().map_err(|e| Error::Transport(e.to_string()))?;
+        let server_config = config
+            .build_server_config(&identity)
+            .map_err(|e| Error::Transport(e.to_string()))?;
+
+        let endpoint = Endpoint::server(server_config, config.bind_addr)
+            .map_err(|e| Error::Transport(e.to_string()))?;
+
+        // Build and cache the client config with session resumption.
+        let client_config = config
+            .build_client_config_with_resumption(&session_cache)
+            .map_err(|e| Error::Transport(e.to_string()))?;
+
+        info!(
+            "QUIC endpoint listening on {} (TLS resumption enabled, cache size {})",
+            endpoint
+                .local_addr()
+                .map_err(|e| Error::Transport(e.to_string()))?,
+            session_cache.size()
+        );
+
+        Ok(Self {
+            endpoint,
+            config,
+            identity,
+            client_config: Some(client_config),
+            session_cache: Some(session_cache),
+        })
+    }
+
+    /// Get the shared session cache, if resumption is enabled.
+    ///
+    /// Returns `None` if the transport was created with `new()` (no resumption).
+    /// The returned `SessionCache` can be inspected or shared with other
+    /// transports to share session tickets across endpoints.
+    pub fn session_cache(&self) -> Option<&SessionCache> {
+        self.session_cache.as_ref()
+    }
+
+    /// Check whether TLS session resumption is enabled.
+    pub fn has_resumption(&self) -> bool {
+        self.client_config.is_some()
     }
 
     /// Get the local bound address.
@@ -55,12 +143,26 @@ impl QuicTransport {
     }
 
     /// Dial a remote peer by address.
+    ///
+    /// If the transport was created with `new_with_resumption()`, the cached
+    /// `ClientConfig` (with session resumption) is reused. This allows TLS 1.3
+    /// session tickets to be stored and reused across `dial()` calls to the
+    /// same server (Track I1).
+    ///
+    /// If the transport was created with `new()` (no resumption), a fresh
+    /// `ClientConfig` is built for each call (backward compatible).
     pub async fn dial(&self, addr: &str) -> Result<QuicConnection, Error> {
         let socket_addr = parse_multiaddr(addr)?;
-        let client_config = self
-            .config
-            .build_client_config()
-            .map_err(|e| Error::Dial(e.to_string()))?;
+
+        // Use cached client config (with resumption) if available, otherwise
+        // build a fresh one (backward compatible with new()).
+        let client_config = if let Some(cc) = &self.client_config {
+            cc.clone()
+        } else {
+            self.config
+                .build_client_config()
+                .map_err(|e| Error::Dial(e.to_string()))?
+        };
 
         let conn = self
             .endpoint
@@ -380,6 +482,174 @@ mod tests {
         server_handle.await.unwrap();
         client.close();
         // Keep server alive until after client closes.
+        drop(server);
+    }
+
+    // ----- Track I1: TLS session resumption tests -----
+
+    #[tokio::test]
+    async fn create_transport_with_resumption() {
+        let config = QuicConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
+        };
+        let transport = QuicTransport::new_with_resumption(config).unwrap();
+        assert!(transport.has_resumption());
+        assert!(transport.session_cache().is_some());
+        assert_eq!(
+            transport.session_cache().unwrap().size(),
+            crate::session_cache::DEFAULT_SESSION_CACHE_SIZE
+        );
+        transport.close();
+    }
+
+    #[tokio::test]
+    async fn create_transport_without_resumption() {
+        let config = QuicConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
+        };
+        let transport = QuicTransport::new(config).unwrap();
+        assert!(!transport.has_resumption());
+        assert!(transport.session_cache().is_none());
+        transport.close();
+    }
+
+    #[tokio::test]
+    async fn create_transport_with_custom_cache_size() {
+        let config = QuicConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
+        };
+        let cache = SessionCache::with_size(256);
+        let transport = QuicTransport::new_with_resumption_cache(config, cache).unwrap();
+        assert_eq!(transport.session_cache().unwrap().size(), 256);
+        transport.close();
+    }
+
+    /// Verify that two consecutive connections to the same server work
+    /// with session resumption enabled. The first connection performs a
+    /// full TLS handshake and receives session tickets. The second
+    /// connection should be able to resume the session.
+    #[tokio::test]
+    async fn resumption_two_connections_to_same_server() {
+        let server_config = QuicConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
+        };
+        let server = Arc::new(QuicTransport::new_with_resumption(server_config).unwrap());
+        let server_addr = server.local_multiaddr().unwrap();
+
+        let client_config = QuicConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
+        };
+        let client = QuicTransport::new_with_resumption(client_config).unwrap();
+
+        // First connection (full handshake)
+        let server_clone = server.clone();
+        let handle1 = tokio::spawn(async move {
+            let conn = server_clone.accept().await.unwrap();
+            // Keep alive briefly
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            conn.close(0u32, b"done");
+        });
+
+        let conn1 = client.dial(&server_addr).await.unwrap();
+        handle1.await.unwrap();
+
+        // Wait for the first connection to fully close so the server can
+        // process the session ticket and be ready for the next accept.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Second connection (should reuse session ticket if resumption works)
+        let server_clone2 = server.clone();
+        let handle2 = tokio::spawn(async move {
+            let conn = server_clone2.accept().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            conn.close(0u32, b"done");
+        });
+
+        let conn2 = client.dial(&server_addr).await.unwrap();
+        handle2.await.unwrap();
+
+        // Both connections succeeded — resumption didn't break anything.
+        // (We can't easily verify the ticket was actually reused without
+        // inspecting rustls internals, but the connection succeeding with
+        // resumption enabled is the key test.)
+        drop(conn1);
+        drop(conn2);
+        client.close();
+        drop(server);
+    }
+
+    /// Verify that resumption works with bidirectional streams (full
+    /// application-level functionality is preserved after resumption).
+    #[tokio::test]
+    async fn resumption_stream_works_after_reconnect() {
+        let server_config = QuicConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
+        };
+        let server = Arc::new(QuicTransport::new_with_resumption(server_config).unwrap());
+        let server_addr = server.local_multiaddr().unwrap();
+
+        let client_config = QuicConfig {
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
+        };
+        let client = QuicTransport::new_with_resumption(client_config).unwrap();
+
+        // First connection: exchange data
+        let server_clone = server.clone();
+        let handle1 = tokio::spawn(async move {
+            let conn = server_clone.accept().await.unwrap();
+            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let mut buf = [0u8; 5];
+            recv.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"hello");
+            send.write_all(b"world").await.unwrap();
+            send.finish();
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        });
+
+        let conn1 = client.dial(&server_addr).await.unwrap();
+        let (mut send, mut recv) = conn1.open_bi().await.unwrap();
+        send.write_all(b"hello").await.unwrap();
+        send.finish();
+        let mut buf = [0u8; 5];
+        recv.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"world");
+        handle1.await.unwrap();
+
+        // Wait for first connection to settle
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Second connection: exchange data again (with resumption)
+        let server_clone2 = server.clone();
+        let handle2 = tokio::spawn(async move {
+            let conn = server_clone2.accept().await.unwrap();
+            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let mut buf = [0u8; 7];
+            recv.read_exact(&mut buf).await.unwrap();
+            assert_eq!(&buf, b"hello2!");
+            send.write_all(b"world2!").await.unwrap();
+            send.finish();
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        });
+
+        let conn2 = client.dial(&server_addr).await.unwrap();
+        let (mut send, mut recv) = conn2.open_bi().await.unwrap();
+        send.write_all(b"hello2!").await.unwrap();
+        send.finish();
+        let mut buf = [0u8; 7];
+        recv.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"world2!");
+        handle2.await.unwrap();
+
+        drop(conn1);
+        drop(conn2);
+        client.close();
         drop(server);
     }
 }
