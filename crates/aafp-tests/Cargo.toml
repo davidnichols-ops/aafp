@@ -12,6 +12,7 @@ aafp-messaging = { workspace = true }
 aafp-nat = { workspace = true }
 aafp-sdk = { workspace = true }
 aafp-transport-quic = { workspace = true }
+aafp-transport-a2a = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -19,6 +20,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 aafp-cbor = { workspace = true }
