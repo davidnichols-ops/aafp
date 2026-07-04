@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }
 aafp-identity = { workspace = true }
 aafp-discovery = { workspace = true }
@@ -54,6 +55,10 @@ path = "tests/resource_exhaustion.rs"
 [[test]]
 name = "wan_simulation"
 path = "tests/wan_simulation.rs"
+
+[[test]]
+name = "stress_tests"
+path = "tests/stress_tests.rs"
 
 [[example]]
 name = "wan_test_server"
