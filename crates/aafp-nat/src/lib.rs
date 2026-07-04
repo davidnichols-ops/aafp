@@ -18,6 +18,8 @@ pub mod dcutr;
 /// DCuTR v1: Direct Connection Upgrade through Relay (RFC 0010 §7).
 pub mod dcutr_v1;
 pub mod relay;
+/// Relay discovery: find relay nodes via DHT and bootstrap (RFC 0010 §9).
+pub mod relay_discovery;
 /// Relay data forwarding: bidirectional QUIC stream forwarding (RFC 0010 §4.2).
 pub mod relay_forwarding;
 /// Circuit relay protocol v1 (RFC 0010).
@@ -34,6 +36,11 @@ pub use dcutr_v1::{
     DEFAULT_HOLE_PUNCH_TIMEOUT_SECS, DEFAULT_SYNC_DELAY_MS,
 };
 pub use relay::{RelayConfig, RelayNode, RelayService};
+pub use relay_discovery::{
+    RelayDiscovery, RelayDiscoveryService, RelayHealthChecker, RelayNodeInfo,
+    DEFAULT_HEALTH_CHECK_TIMEOUT_SECS, DEFAULT_MAX_RELAYS, DEFAULT_REFRESH_INTERVAL_SECS,
+    RELAY_CAPABILITY,
+};
 pub use relay_forwarding::{
     RelayV1CallerHelper, RelayV1Server, RelayV1TargetHandler, DATA_STREAM_HEADER_LEN,
     DATA_STREAM_MAGIC, INCOMING_STREAM_MAGIC,
