@@ -1,0 +1,20 @@
+# Cargo configuration for AAFP performance optimizations.
+#
+# Track L3: Enable ARMv8 Crypto Extensions for hardware-accelerated AES.
+#
+# On Apple Silicon (M1-M4), ARMv8 AES and SHA-256 instructions are always
+# available. The `aes` crate (used by `aes-gcm`) checks for the `aes_armv8`
+# cfg flag to use inline assembly for hardware AES. Without this flag, it
+# falls back to a constant-time software implementation (3-5x slower).
+#
+# This cfg flag is only set for aarch64-apple-darwin (Apple Silicon).
+# Other targets (x86_64, Linux ARM64) are unaffected — they use runtime
+# CPU detection via the `cpufeatures` crate.
+#
+# Benchmark results on Apple M4 (1KB AEAD):
+#   ChaCha20-Poly1305:  1.62µs (always uses SIMD)
+#   AES-256-GCM (sw):   5.08µs (without aes_armv8)
+#   AES-256-GCM (hw):   1.09µs (with aes_armv8 — 4.7x faster than software)
+
+[target.aarch64-apple-darwin]
+rustflags = ["--cfg", "aes_armv8"]

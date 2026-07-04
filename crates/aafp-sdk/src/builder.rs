@@ -1,6 +1,6 @@
 //! Agent builder: fluent API for constructing an AAFP agent.
 
-use crate::{Agent, SdkError};
+use crate::{Agent, RuntimeConfig, SdkError};
 use aafp_discovery::capability_dht::CapabilityDht;
 use aafp_discovery::{BootstrapConfig, BootstrapDiscovery, RegionalDiscovery};
 use aafp_identity::agent_record::AgentRecord;
@@ -19,6 +19,7 @@ pub struct AgentBuilder {
     is_relay: bool,
     enable_pq: bool,
     keepalive_config: KeepAliveConfig,
+    runtime_config: RuntimeConfig,
 }
 
 impl AgentBuilder {
@@ -32,6 +33,7 @@ impl AgentBuilder {
             is_relay: false,
             enable_pq: true,
             keepalive_config: KeepAliveConfig::default(),
+            runtime_config: RuntimeConfig::default(),
         }
     }
 
@@ -83,6 +85,27 @@ impl AgentBuilder {
     /// Disable keep-alive entirely.
     pub fn disable_keepalive(self) -> Self {
         self.with_keepalive(KeepAliveConfig::disabled())
+    }
+
+    /// Set the Tokio runtime configuration (Track L5).
+    ///
+    /// Controls whether the agent uses a `current_thread` or `multi_thread`
+    /// runtime. For localhost RPC, `current_thread` eliminates cross-core
+    /// scheduling overhead (84% of time per L1 profiling).
+    ///
+    /// Default: `RuntimeConfig::default()` (multi_thread, auto worker count).
+    /// Low-latency: `RuntimeConfig::low_latency()` (current_thread, 2MB stack).
+    pub fn with_runtime_config(mut self, config: RuntimeConfig) -> Self {
+        self.runtime_config = config;
+        self
+    }
+
+    /// Use the low-latency runtime preset (Track L5).
+    ///
+    /// Equivalent to `.with_runtime_config(RuntimeConfig::low_latency())`.
+    /// Uses `current_thread` runtime with 2MB stack — best for localhost RPC.
+    pub fn with_low_latency_runtime(self) -> Self {
+        self.with_runtime_config(RuntimeConfig::low_latency())
     }
 
     /// Build the agent.
@@ -245,5 +268,23 @@ mod tests {
         let agent = AgentBuilder::new().build().await.unwrap();
         assert!(agent.keepalive_config.is_enabled());
         assert_eq!(agent.keepalive_config.interval, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn builder_with_runtime_config() {
+        let builder = AgentBuilder::new().with_low_latency_runtime();
+        assert_eq!(
+            builder.runtime_config.flavor,
+            crate::RuntimeFlavor::CurrentThread
+        );
+    }
+
+    #[test]
+    fn builder_default_runtime_is_multi_thread() {
+        let builder = AgentBuilder::new();
+        assert_eq!(
+            builder.runtime_config.flavor,
+            crate::RuntimeFlavor::MultiThread
+        );
     }
 }

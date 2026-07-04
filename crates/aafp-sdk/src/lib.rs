@@ -28,8 +28,10 @@
 pub mod builder;
 pub mod client;
 pub mod connection_pool;
+pub mod cpu_affinity;
 pub mod handshake_driver;
 pub mod protocol_frames;
+pub mod runtime_config;
 pub mod server;
 pub mod transport_binding;
 
@@ -38,8 +40,10 @@ pub use client::AgentClient;
 pub use connection_pool::{
     ConnectionPool, PoolConfig, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_POOL_SIZE, HEALTH_CHECK_THRESHOLD,
 };
+pub use cpu_affinity::{num_cores, pin_current_thread_to_core, set_high_priority};
 pub use handshake_driver::{drive_client_handshake, drive_server_handshake, PeerInfo};
 pub use protocol_frames::{parse_control_frame, send_close_frame, send_error_frame, ControlFrame};
+pub use runtime_config::{RuntimeConfig, RuntimeFlavor};
 pub use server::AgentServer;
 pub use transport_binding::establish_session;
 

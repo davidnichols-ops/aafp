@@ -69,6 +69,11 @@ name = "serialization"
 path = "benches/serialization.rs"
 harness = false
 
+[[bench]]
+name = "runtime_tuning"
+path = "benches/runtime_tuning.rs"
+harness = false
+
 [dependencies]
 aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }

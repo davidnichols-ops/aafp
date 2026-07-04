@@ -21,6 +21,14 @@ serde_json = { workspace = true }
 bytes = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
+core_affinity = { version = "0.8", optional = true }
+libc = { version = "0.2", optional = true }
+
+[features]
+default = []
+# Track L6: CPU core pinning for reduced p99 latency variance.
+# Enable with: aafp-sdk = { features = ["cpu-affinity"] }
+cpu-affinity = ["dep:core_affinity", "dep:libc"]
 
 [dev-dependencies]
 tokio = { workspace = true }
