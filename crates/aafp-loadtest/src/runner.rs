@@ -87,7 +87,7 @@ pub async fn run_load_test(config: &LoadTestConfig) -> LoadTestMetrics {
     }
 
     // Give servers time to start listening.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // 4. Start client tasks for each edge.
     let start = Instant::now();
@@ -206,13 +206,14 @@ fn count_incoming_edges(edges: &[Edge], n: usize) -> Vec<usize> {
 /// Server-side echo loop: accept connections, handshake, echo DATA frames.
 ///
 /// Accepts up to `num_accepts` connections. For each connection, reads DATA
-/// frames and echoes them back. Each connection handles up to `msgs_per_conn`
-/// messages before closing.
+/// frames and echoes them back. The server keeps accepting streams until the
+/// client closes the connection (the client is the one that decides when to
+/// stop). This avoids premature connection closure that causes message loss.
 async fn server_echo_loop(
     agent: Arc<aafp_sdk::Agent>,
     auth: Arc<dyn AuthorizationProvider>,
     num_accepts: usize,
-    msgs_per_conn: usize,
+    _msgs_per_conn: usize,
 ) {
     for _ in 0..num_accepts {
         // Accept a QUIC connection.
@@ -244,16 +245,18 @@ async fn server_echo_loop(
             let _session = Mutex::new(session);
 
             // Echo loop: accept bidirectional streams and echo DATA frames.
-            for _ in 0..msgs_per_conn {
+            // Loop until the client closes the connection (accept_bi returns
+            // an error when the connection is closed).
+            loop {
                 let (mut send, mut recv) = match conn.accept_bi().await {
                     Ok(pair) => pair,
-                    Err(_) => break, // connection closed
+                    Err(_) => break, // connection closed by client
                 };
 
                 // Read frame header.
                 let mut header = [0u8; FRAME_HEADER_SIZE];
                 if recv.read_exact(&mut header).await.is_err() {
-                    break;
+                    continue;
                 }
 
                 // Parse payload + extension lengths.
@@ -263,7 +266,7 @@ async fn server_echo_loop(
 
                 let mut body = vec![0u8; body_len];
                 if body_len > 0 && recv.read_exact(&mut body).await.is_err() {
-                    break;
+                    continue;
                 }
 
                 // Reconstruct and decode frame.
@@ -271,22 +274,23 @@ async fn server_echo_loop(
                 full.extend_from_slice(&body);
                 let (frame, _) = match decode_frame(&full) {
                     Ok(f) => f,
-                    Err(_) => break,
+                    Err(_) => continue,
                 };
 
                 // Echo back the same payload.
                 let resp = Frame::data(frame.stream_id, frame.payload.clone());
                 let resp_bytes = match encode_frame(&resp) {
                     Ok(b) => b,
-                    Err(_) => break,
+                    Err(_) => continue,
                 };
                 if send.write_all(&resp_bytes).await.is_err() {
-                    break;
+                    continue;
                 }
                 send.finish();
             }
 
-            conn.close(0, b"echo done");
+            // Don't close the connection — the client already closed it.
+            // Just let the connection handle drop naturally.
         });
     }
 }
