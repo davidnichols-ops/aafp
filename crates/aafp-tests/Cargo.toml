@@ -53,6 +53,10 @@ name = "resource_exhaustion"
 path = "tests/resource_exhaustion.rs"
 
 [[test]]
+name = "timing_analysis"
+path = "tests/timing_analysis.rs"
+
+[[test]]
 name = "wan_simulation"
 path = "tests/wan_simulation.rs"
 

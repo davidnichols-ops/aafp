@@ -74,6 +74,11 @@ name = "runtime_tuning"
 path = "benches/runtime_tuning.rs"
 harness = false
 
+[[bench]]
+name = "timing_analysis"
+path = "benches/timing_analysis.rs"
+harness = false
+
 [dependencies]
 aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }
@@ -92,6 +97,7 @@ rmcp = { version = "1.7", features = ["client", "server"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 simd-json = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
