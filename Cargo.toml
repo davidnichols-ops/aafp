@@ -47,6 +47,7 @@ aws-lc-rs = "1"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+simd-json = "0.14"
 ciborium = "0.2"
 sha2 = "0.10"
 hkdf = "0.12"

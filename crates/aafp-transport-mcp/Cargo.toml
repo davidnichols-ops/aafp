@@ -17,6 +17,7 @@ rmcp = { version = "1.7", features = ["client", "server"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+simd-json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }

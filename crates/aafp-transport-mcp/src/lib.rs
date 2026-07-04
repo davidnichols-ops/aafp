@@ -647,21 +647,30 @@ impl AafpMcpTransport {
         let recv = self.recv.as_mut()?;
         loop {
             match read_data_frame(recv).await {
-                Ok(Some(payload)) => match serde_json::from_slice::<serde_json::Value>(&payload) {
-                    Ok(msg) => return Some(msg),
-                    Err(e) => {
-                        match e.classify() {
-                            serde_json::error::Category::Syntax
-                            | serde_json::error::Category::Eof => {
-                                tracing::debug!("Ignoring unparsable message: {e}");
-                            }
-                            serde_json::error::Category::Data | serde_json::error::Category::Io => {
-                                tracing::warn!("Protocol error in message: {e}");
+                Ok(Some(mut payload)) => {
+                    // Use simd-json for faster decode (Track K2), fallback to serde_json
+                    match simd_json::from_slice::<serde_json::Value>(&mut payload) {
+                        Ok(msg) => return Some(msg),
+                        Err(_simd_err) => {
+                            match serde_json::from_slice::<serde_json::Value>(&payload) {
+                                Ok(msg) => return Some(msg),
+                                Err(e) => {
+                                    match e.classify() {
+                                        serde_json::error::Category::Syntax
+                                        | serde_json::error::Category::Eof => {
+                                            tracing::debug!("Ignoring unparsable message: {e}");
+                                        }
+                                        serde_json::error::Category::Data
+                                        | serde_json::error::Category::Io => {
+                                            tracing::warn!("Protocol error in message: {e}");
+                                        }
+                                    }
+                                    continue;
+                                }
                             }
                         }
-                        continue;
                     }
-                },
+                }
                 Ok(None) => return None,
                 Err(AafpMcpError::Closed) => return None,
                 Err(e) => {
@@ -1226,27 +1235,31 @@ where
         let recv = self.recv.as_mut()?;
         loop {
             match read_data_frame(recv).await {
-                Ok(Some(payload)) => {
-                    // Deserialize JSON-RPC from payload
-                    match serde_json::from_slice::<RxJsonRpcMessage<R>>(&payload) {
+                Ok(Some(mut payload)) => {
+                    // Deserialize JSON-RPC from payload using simd-json (Track K2)
+                    // simd-json requires &mut [u8] and is 1.45x faster than serde_json for decode.
+                    // Fallback to serde_json if simd-json fails (e.g., very small payloads).
+                    match simd_json::from_slice::<RxJsonRpcMessage<R>>(&mut payload) {
                         Ok(msg) => return Some(msg),
-                        Err(e) => {
-                            // Log and skip invalid JSON-RPC messages.
-                            // This matches rmcp's AsyncRwTransport behavior:
-                            // syntax/EOF errors are ignored, data errors are
-                            // surfaced as invalid request responses (but we
-                            // don't have a send channel here, so just log).
-                            match e.classify() {
-                                serde_json::error::Category::Syntax
-                                | serde_json::error::Category::Eof => {
-                                    tracing::debug!("Ignoring unparsable MCP message: {e}");
-                                }
-                                serde_json::error::Category::Data
-                                | serde_json::error::Category::Io => {
-                                    tracing::warn!("Protocol error in MCP message: {e}");
+                        Err(_simd_err) => {
+                            // Fallback to serde_json for compatibility
+                            match serde_json::from_slice::<RxJsonRpcMessage<R>>(&payload) {
+                                Ok(msg) => return Some(msg),
+                                Err(e) => {
+                                    // Log and skip invalid JSON-RPC messages.
+                                    match e.classify() {
+                                        serde_json::error::Category::Syntax
+                                        | serde_json::error::Category::Eof => {
+                                            tracing::debug!("Ignoring unparsable MCP message: {e}");
+                                        }
+                                        serde_json::error::Category::Data
+                                        | serde_json::error::Category::Io => {
+                                            tracing::warn!("Protocol error in MCP message: {e}");
+                                        }
+                                    }
+                                    continue;
                                 }
                             }
-                            continue;
                         }
                     }
                 }

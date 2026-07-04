@@ -64,6 +64,11 @@ name = "quic_tuning"
 path = "benches/quic_tuning.rs"
 harness = false
 
+[[bench]]
+name = "serialization"
+path = "benches/serialization.rs"
+harness = false
+
 [dependencies]
 aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }
@@ -73,12 +78,15 @@ aafp-messaging = { workspace = true }
 aafp-sdk = { workspace = true }
 aafp-transport-quic = { workspace = true }
 aafp-transport-mcp = { workspace = true }
+aafp-cbor = { workspace = true }
 criterion = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
 tokio-util = { workspace = true }
 rmcp = { version = "1.7", features = ["client", "server"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
+simd-json = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
