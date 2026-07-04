@@ -44,6 +44,10 @@ name = "trust_scenarios"
 path = "tests/trust_scenarios.rs"
 
 [[test]]
+name = "adversarial_handshake"
+path = "tests/adversarial_handshake.rs"
+
+[[test]]
 name = "wan_simulation"
 path = "tests/wan_simulation.rs"
 
