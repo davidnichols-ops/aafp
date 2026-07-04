@@ -82,6 +82,22 @@ pub struct QuicConfig {
     pub keep_alive_interval: Duration,
     /// Enable post-quantum KEX (X25519MLKEM768).
     pub enable_pq: bool,
+    /// Congestion controller (Track J1).
+    pub congestion: crate::congestion::CongestionController,
+    /// Initial RTT estimate (Track J2). Default: 10ms (quinn default: 333ms).
+    /// Lower values reduce retransmission timer for LAN/localhost.
+    pub initial_rtt: Duration,
+    /// Maximum idle timeout (Track J2). Default: 30s.
+    pub max_idle_timeout: Duration,
+    /// Maximum ACK delay (Track J4). Default: 5ms (quinn default: 25ms).
+    /// Lower values make ACKs more frequent, reducing retransmission latency.
+    pub max_ack_delay: Duration,
+    /// Stream initial max data (Track J3). Default: 1MB (quinn default: 100KB).
+    /// Larger window allows the first message to be sent without waiting.
+    pub stream_initial_max_data: u64,
+    /// Crypto buffer size (Track J2). Default: 8192 bytes.
+    /// Tuned for small RPC messages.
+    pub crypto_buffer_size: u64,
 }
 
 impl Default for QuicConfig {
@@ -91,11 +107,101 @@ impl Default for QuicConfig {
             max_concurrent_streams: 100,
             keep_alive_interval: Duration::from_secs(30),
             enable_pq: true,
+            congestion: crate::congestion::CongestionController::Cubic,
+            initial_rtt: Duration::from_millis(10),
+            max_idle_timeout: Duration::from_secs(30),
+            max_ack_delay: Duration::from_millis(5),
+            stream_initial_max_data: 1024 * 1024, // 1MB
+            crypto_buffer_size: 8192,
         }
     }
 }
 
 impl QuicConfig {
+    /// Low-latency preset for agent-to-agent RPC (Track J1-J4).
+    ///
+    /// Uses BBR congestion control, 10ms initial RTT, 5ms ACK delay,
+    /// 1MB stream window, and 8KB crypto buffer. Optimized for
+    /// small-message, low-latency RPC over LAN/localhost.
+    pub fn low_latency() -> Self {
+        Self {
+            congestion: crate::congestion::CongestionController::Bbr,
+            initial_rtt: Duration::from_millis(10),
+            max_idle_timeout: Duration::from_secs(30),
+            max_ack_delay: Duration::from_millis(5),
+            stream_initial_max_data: 1024 * 1024, // 1MB
+            crypto_buffer_size: 8192,
+            ..Default::default()
+        }
+    }
+
+    /// Bulk transfer preset for file transfer / large payloads (Track J1-J4).
+    ///
+    /// Uses Cubic congestion control (TCP-friendly), 100ms initial RTT,
+    /// 25ms ACK delay, 10MB stream window, and 64KB crypto buffer.
+    /// Optimized for high-throughput bulk transfer.
+    pub fn bulk_transfer() -> Self {
+        Self {
+            congestion: crate::congestion::CongestionController::Cubic,
+            initial_rtt: Duration::from_millis(100),
+            max_idle_timeout: Duration::from_secs(300),
+            max_ack_delay: Duration::from_millis(25),
+            stream_initial_max_data: 10 * 1024 * 1024, // 10MB
+            crypto_buffer_size: 64 * 1024,             // 64KB
+            ..Default::default()
+        }
+    }
+
+    /// Build a tuned `TransportConfig` from this `QuicConfig` (Track J1-J4).
+    ///
+    /// Applies:
+    /// - Congestion controller (J1)
+    /// - Initial RTT (J2)
+    /// - Max idle timeout (J2)
+    /// - Keep-alive interval (J2)
+    /// - Stream initial max data (J3)
+    /// - Max ACK delay (J4)
+    /// - Crypto buffer size (J2)
+    /// - Max concurrent streams
+    fn build_transport_config(&self) -> TransportConfig {
+        let mut transport = TransportConfig::default();
+
+        // J1: Congestion controller
+        self.congestion.apply_to_transport_config(&mut transport);
+
+        // J2: Initial RTT (default 333ms → 10ms for LAN/localhost)
+        transport.initial_rtt(self.initial_rtt);
+
+        // J2: Max idle timeout
+        let idle_timeout = quinn::IdleTimeout::try_from(self.max_idle_timeout)
+            .unwrap_or_else(|_| quinn::IdleTimeout::from(VarInt::from_u32(30_000)));
+        transport.max_idle_timeout(Some(idle_timeout));
+
+        // J2: Keep-alive interval
+        transport.keep_alive_interval(Some(self.keep_alive_interval));
+
+        // J3: Stream receive window (larger window for first message)
+        let stream_window = VarInt::from_u64(self.stream_initial_max_data).unwrap_or(VarInt::MAX);
+        transport.stream_receive_window(stream_window);
+
+        // J4: Max ACK delay (default 25ms → 5ms for faster feedback)
+        // This is set via AckFrequencyConfig, not directly on TransportConfig.
+        let mut ack_freq = quinn::AckFrequencyConfig::default();
+        ack_freq.max_ack_delay(Some(self.max_ack_delay));
+        transport.ack_frequency_config(Some(ack_freq));
+
+        // J2: Crypto buffer size (tuned for small RPC messages)
+        transport.crypto_buffer_size(self.crypto_buffer_size as usize);
+
+        // Max concurrent streams
+        let max_streams = VarInt::from_u64(self.max_concurrent_streams).unwrap_or(VarInt::MAX);
+        transport
+            .max_concurrent_uni_streams(max_streams)
+            .max_concurrent_bidi_streams(max_streams);
+
+        transport
+    }
+
     /// Build a quinn server config with PQ KEX, self-signed cert, and ALPN.
     ///
     /// The server requires the `aafp/1` ALPN. Connections that do not offer
@@ -122,12 +228,7 @@ impl QuicConfig {
         let quic_server_config = QuicServerConfig::try_from(server_crypto)
             .map_err(|e| ConfigError::Quinn(e.to_string()))?;
 
-        let mut transport_config = TransportConfig::default();
-        let max_streams = VarInt::from_u64(self.max_concurrent_streams).unwrap_or(VarInt::MAX);
-        transport_config
-            .max_concurrent_uni_streams(max_streams)
-            .max_concurrent_bidi_streams(max_streams)
-            .keep_alive_interval(Some(self.keep_alive_interval));
+        let transport_config = self.build_transport_config();
 
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(transport_config));
@@ -167,8 +268,7 @@ impl QuicConfig {
         let quic_client_config = QuicClientConfig::try_from(client_crypto)
             .map_err(|e| ConfigError::Quinn(e.to_string()))?;
 
-        let mut transport_config = TransportConfig::default();
-        transport_config.keep_alive_interval(Some(self.keep_alive_interval));
+        let transport_config = self.build_transport_config();
 
         let mut client_config = ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(Arc::new(transport_config));
@@ -227,8 +327,7 @@ impl QuicConfig {
         let quic_client_config = QuicClientConfig::try_from(client_crypto)
             .map_err(|e| ConfigError::Quinn(e.to_string()))?;
 
-        let mut transport_config = TransportConfig::default();
-        transport_config.keep_alive_interval(Some(self.keep_alive_interval));
+        let transport_config = self.build_transport_config();
 
         let mut client_config = ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(Arc::new(transport_config));
@@ -297,6 +396,53 @@ mod tests {
     fn build_configs() {
         let identity = generate_self_signed_cert().unwrap();
         let config = QuicConfig::default();
+        let server = config.build_server_config(&identity).unwrap();
+        let client = config.build_client_config().unwrap();
+        let _ = (server, client);
+    }
+
+    #[test]
+    fn low_latency_preset_uses_bbr() {
+        let config = QuicConfig::low_latency();
+        assert_eq!(
+            config.congestion,
+            crate::congestion::CongestionController::Bbr
+        );
+        assert_eq!(config.initial_rtt, Duration::from_millis(10));
+        assert_eq!(config.max_ack_delay, Duration::from_millis(5));
+        assert_eq!(config.stream_initial_max_data, 1024 * 1024);
+        assert_eq!(config.crypto_buffer_size, 8192);
+    }
+
+    #[test]
+    fn bulk_transfer_preset_uses_cubic() {
+        let config = QuicConfig::bulk_transfer();
+        assert_eq!(
+            config.congestion,
+            crate::congestion::CongestionController::Cubic
+        );
+        assert_eq!(config.initial_rtt, Duration::from_millis(100));
+        assert_eq!(config.max_ack_delay, Duration::from_millis(25));
+        assert_eq!(config.stream_initial_max_data, 10 * 1024 * 1024);
+        assert_eq!(config.crypto_buffer_size, 64 * 1024);
+    }
+
+    #[test]
+    fn default_config_has_tuned_parameters() {
+        let config = QuicConfig::default();
+        // J2: Initial RTT should be 10ms (not quinn's 333ms default)
+        assert_eq!(config.initial_rtt, Duration::from_millis(10));
+        // J4: Max ACK delay should be 5ms (not quinn's 25ms default)
+        assert_eq!(config.max_ack_delay, Duration::from_millis(5));
+        // J3: Stream window should be 1MB (not quinn's 100KB default)
+        assert_eq!(config.stream_initial_max_data, 1024 * 1024);
+    }
+
+    #[test]
+    fn build_transport_config_with_bbr() {
+        let config = QuicConfig::low_latency();
+        // Should not panic — builds with BBR congestion controller
+        let identity = generate_self_signed_cert().unwrap();
         let server = config.build_server_config(&identity).unwrap();
         let client = config.build_client_config().unwrap();
         let _ = (server, client);

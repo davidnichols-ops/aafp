@@ -15,6 +15,7 @@
 /// Thread-local buffer pool for zero-copy message handling.
 pub mod buffer_pool;
 pub mod config;
+pub mod congestion;
 pub mod session_cache;
 pub mod transport;
 
@@ -22,5 +23,6 @@ pub use buffer_pool::{
     acquire, acquire_guard, release, BufferGuard, BufferPoolConfig, BytesMutWriter, PoolStats,
 };
 pub use config::{generate_self_signed_cert, ConfigError, QuicConfig, TlsIdentity, AAFP_ALPN};
+pub use congestion::CongestionController;
 pub use session_cache::{SessionCache, DEFAULT_SESSION_CACHE_SIZE};
 pub use transport::{QuicConnection, QuicRecvStream, QuicSendStream, QuicTransport};
