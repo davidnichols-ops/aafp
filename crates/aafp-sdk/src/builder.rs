@@ -200,6 +200,9 @@ impl AgentBuilder {
         // Create pubsub.
         let pubsub = PubSub::new();
 
+        // Create metrics (Track S4).
+        let metrics = crate::AgentMetrics::new();
+
         Ok(Agent {
             keypair,
             agent_id,
@@ -216,6 +219,7 @@ impl AgentBuilder {
             auto_nat_v1,
             relay_discovery,
             dcutr_v1,
+            metrics,
         })
     }
 }
@@ -386,5 +390,47 @@ mod tests {
         let agent = AgentBuilder::new().build().await.unwrap();
         // No relays discovered yet
         assert!(agent.select_best_relay().is_none());
+    }
+
+    #[tokio::test]
+    async fn build_agent_has_metrics() {
+        let agent = AgentBuilder::new().build().await.unwrap();
+        let metrics = agent.metrics();
+        assert_eq!(metrics.connections_active, 0);
+        assert_eq!(metrics.connections_total, 0);
+        assert_eq!(metrics.messages_sent, 0);
+        assert_eq!(metrics.messages_received, 0);
+        assert_eq!(metrics.uptime_seconds, 0); // just created
+    }
+
+    #[tokio::test]
+    async fn build_agent_health_check_warmup() {
+        let agent = AgentBuilder::new().build().await.unwrap();
+        // During warmup (uptime < 60s), health should be Healthy
+        let health = agent.health_check();
+        assert_eq!(health, crate::HealthStatus::Healthy);
+    }
+
+    #[tokio::test]
+    async fn build_agent_metrics_record_and_check() {
+        let agent = AgentBuilder::new().build().await.unwrap();
+        // Record some activity
+        agent.metrics.record_connection();
+        agent.metrics.record_sent(1024);
+        agent.metrics.record_received(512);
+        agent.metrics.record_handshake();
+
+        let metrics = agent.metrics();
+        assert_eq!(metrics.connections_active, 1);
+        assert_eq!(metrics.connections_total, 1);
+        assert_eq!(metrics.messages_sent, 1);
+        assert_eq!(metrics.messages_received, 1);
+        assert_eq!(metrics.bytes_sent, 1024);
+        assert_eq!(metrics.bytes_received, 512);
+        assert_eq!(metrics.handshakes_completed, 1);
+
+        // Health should be healthy (low error rate, has connections)
+        let health = agent.health_check();
+        assert_eq!(health, crate::HealthStatus::Healthy);
     }
 }

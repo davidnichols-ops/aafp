@@ -30,6 +30,7 @@ pub mod client;
 pub mod connection_pool;
 pub mod cpu_affinity;
 pub mod handshake_driver;
+pub mod metrics;
 pub mod protocol_frames;
 pub mod runtime_config;
 pub mod server;
@@ -42,6 +43,7 @@ pub use connection_pool::{
 };
 pub use cpu_affinity::{num_cores, pin_current_thread_to_core, set_high_priority};
 pub use handshake_driver::{drive_client_handshake, drive_server_handshake, PeerInfo};
+pub use metrics::{AgentMetrics, HealthStatus, MetricsRpcResponse, MetricsSnapshot};
 pub use protocol_frames::{parse_control_frame, send_close_frame, send_error_frame, ControlFrame};
 pub use runtime_config::{RuntimeConfig, RuntimeFlavor};
 pub use server::AgentServer;
@@ -124,6 +126,8 @@ pub struct Agent {
     pub relay_discovery: aafp_nat::RelayDiscovery,
     /// DCuTR v1 (RFC 0010 §7) — hole punching driver.
     pub dcutr_v1: aafp_nat::DcutrV1,
+    /// Agent metrics (lock-free atomic counters, Track S4).
+    pub metrics: std::sync::Arc<AgentMetrics>,
 }
 
 impl Agent {
@@ -195,5 +199,20 @@ impl Agent {
     /// Get active pubsub topics.
     pub fn pubsub_topics(&self) -> Vec<&str> {
         self.pubsub.topics()
+    }
+
+    /// Get a metrics snapshot (Track S4).
+    ///
+    /// Returns a point-in-time view of all agent metrics counters.
+    pub fn metrics(&self) -> MetricsSnapshot {
+        self.metrics.snapshot()
+    }
+
+    /// Check the agent's health status (Track S4).
+    ///
+    /// Returns `Healthy`, `Degraded`, or `Unhealthy` based on connection
+    /// count, error rate, and handshake failure rate.
+    pub fn health_check(&self) -> HealthStatus {
+        HealthStatus::from_metrics(&self.metrics.snapshot())
     }
 }

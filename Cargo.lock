@@ -208,6 +208,7 @@ dependencies = [
  "aafp-transport-quic",
  "anyhow",
  "bytes",
+ "ciborium",
  "core_affinity",
  "hex",
  "libc",
