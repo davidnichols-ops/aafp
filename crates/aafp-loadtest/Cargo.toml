@@ -30,6 +30,11 @@ name = "loadtest"
 path = "src/bin/loadtest.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "stability"
+path = "src/bin/stability.rs"
+required-features = ["cli"]
+
 [[test]]
 name = "load_test"
 path = "tests/load_test.rs"
