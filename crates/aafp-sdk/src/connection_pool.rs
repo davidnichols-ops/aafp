@@ -47,6 +47,11 @@ pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Default maximum number of connections in the pool.
 pub const DEFAULT_MAX_POOL_SIZE: usize = 100;
 
+/// Duration after which a pooled connection requires a health check
+/// before reuse (5 seconds). Connections reused within this window are
+/// assumed to be healthy (the peer hasn't had time to close them).
+pub const HEALTH_CHECK_THRESHOLD: Duration = Duration::from_secs(5);
+
 /// A pooled connection with metadata.
 struct PooledConnection {
     /// The underlying QUIC connection (handshake completed).
@@ -187,14 +192,27 @@ impl ConnectionPool {
 
         if let Some(peer_id) = existing_peer_id {
             if let Some(pc) = conns.get_mut(&peer_id) {
-                // Health check: try to open a stream (no data sent)
-                if Self::is_healthy(&pc.conn).await {
+                // Only health-check if the connection has been idle for a while.
+                // Recently-used connections are assumed healthy (the peer hasn't
+                // had time to close them). This avoids the overhead of opening
+                // a test stream on every get_or_connect() call.
+                let needs_health_check =
+                    Instant::now().duration_since(pc.last_used) > HEALTH_CHECK_THRESHOLD;
+
+                if needs_health_check {
+                    if Self::is_healthy(&pc.conn).await {
+                        pc.last_used = Instant::now();
+                        let conn = pc.conn.clone();
+                        return Ok((peer_id, conn));
+                    } else {
+                        // Stale connection — discard
+                        conns.remove(&peer_id);
+                    }
+                } else {
+                    // Recently used — skip health check, return immediately
                     pc.last_used = Instant::now();
                     let conn = pc.conn.clone();
                     return Ok((peer_id, conn));
-                } else {
-                    // Stale connection — discard
-                    conns.remove(&peer_id);
                 }
             }
         }
