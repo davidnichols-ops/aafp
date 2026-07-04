@@ -24,6 +24,7 @@ use crate::traits::SignatureScheme;
 use aafp_cbor::{int_map, Value};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 /// Domain separator for handshake signatures (RFC-0003 §3.5).
 pub const DOMAIN_SEPARATOR: &[u8] = b"aafp-v1-handshake";
@@ -508,7 +509,10 @@ fn verify_agent_id_binding(
         });
     }
     let computed = Sha256::digest(public_key);
-    if computed.as_slice() != agent_id {
+    // Constant-time comparison (defense-in-depth, Track Q7).
+    // Both values are attacker-provided so no secret leaks, but CT comparison
+    // prevents any timing oracle on the agent_id binding check.
+    if computed.as_slice().ct_eq(agent_id).unwrap_u8() == 0 {
         return Err(HandshakeError::InvalidAgentId);
     }
     let mut id = [0u8; AGENT_ID_SIZE];

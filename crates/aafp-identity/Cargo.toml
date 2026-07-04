@@ -13,6 +13,8 @@ serde_json = { workspace = true }
 ciborium = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
+rusqlite = { version = "0.31", features = ["bundled"] }
+subtle = "2"
 
 [dev-dependencies]
 criterion = { workspace = true }

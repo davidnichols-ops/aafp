@@ -48,6 +48,8 @@ impl Default for ServerConfig {
 /// Per-IP rate limiter for handshake attempts (Track Q4).
 ///
 /// Uses a sliding window counter. Thread-safe via internal Mutex.
+/// Includes periodic eviction of expired entries to prevent unbounded
+/// memory growth from unique source IPs (Track Q7 hardening).
 pub struct HandshakeRateLimiter {
     /// Map from IP address to (count, window_start).
     windows: Mutex<HashMap<String, (u32, Instant)>>,
@@ -55,6 +57,10 @@ pub struct HandshakeRateLimiter {
     max_attempts: u32,
     /// Window duration.
     window: Duration,
+    /// Maximum number of tracked IPs before forced eviction (Track Q7).
+    max_entries: usize,
+    /// Counter to trigger periodic eviction (every N checks).
+    check_counter: Mutex<u64>,
 }
 
 impl HandshakeRateLimiter {
@@ -64,14 +70,29 @@ impl HandshakeRateLimiter {
             windows: Mutex::new(HashMap::new()),
             max_attempts: max_attempts_per_sec,
             window: Duration::from_secs(1),
+            max_entries: 10_000,
+            check_counter: Mutex::new(0),
         }
     }
 
     /// Check if an attempt from the given IP is allowed.
     /// Returns true if allowed, false if rate-limited.
+    ///
+    /// Periodically evicts expired entries to prevent unbounded memory growth
+    /// (Track Q7: defense against memory exhaustion from unique source IPs).
     pub async fn check(&self, ip: &str) -> bool {
         let mut windows = self.windows.lock().await;
         let now = Instant::now();
+
+        // Periodic eviction: every 100 checks, remove expired entries
+        {
+            let mut counter = self.check_counter.lock().await;
+            *counter += 1;
+            if *counter % 100 == 0 || windows.len() > self.max_entries {
+                windows.retain(|_, (_, start)| now.duration_since(*start) < self.window);
+            }
+        }
+
         match windows.get_mut(ip) {
             Some((count, start)) => {
                 if now.duration_since(*start) >= self.window {

@@ -33,8 +33,19 @@ pub const MAX_RECORD_EXPIRY: u64 = 30 * 24 * 60 * 60; // 2,592,000
 pub const RECOMMENDED_RENEWAL: u64 = 7 * 24 * 60 * 60; // 604,800
 
 /// An AgentId: 32-byte SHA-256 hash of an agent's public key.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+///
+/// `PartialEq` is implemented using constant-time comparison (`subtle::ConstantTimeEq`)
+/// to prevent timing side-channels in security-critical comparison paths (Track Q7).
+#[allow(clippy::derived_hash_with_manual_eq)]
+#[derive(Clone, Copy, Debug, Eq, Hash)]
 pub struct AgentId(pub [u8; AGENT_ID_SIZE]);
+
+impl PartialEq for AgentId {
+    fn eq(&self, other: &Self) -> bool {
+        use subtle::ConstantTimeEq;
+        self.0.ct_eq(&other.0).unwrap_u8() == 1
+    }
+}
 
 impl AgentId {
     /// Derive AgentId from a public key: SHA-256(public_key).
