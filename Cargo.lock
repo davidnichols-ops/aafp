@@ -116,6 +116,7 @@ dependencies = [
  "aafp-identity",
  "aafp-messaging",
  "arc-swap",
+ "async-trait",
  "rusqlite",
  "serde",
  "sha2",
@@ -133,10 +134,30 @@ dependencies = [
  "ciborium",
  "criterion",
  "hex",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "aafp-loadtest"
+version = "0.1.0"
+dependencies = [
+ "aafp-core",
+ "aafp-crypto",
+ "aafp-identity",
+ "aafp-messaging",
+ "aafp-sdk",
+ "aafp-transport-quic",
+ "clap",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -165,6 +186,7 @@ dependencies = [
  "aafp-core",
  "aafp-identity",
  "aafp-messaging",
+ "aafp-transport-quic",
  "hex",
  "serde",
  "thiserror 1.0.69",
@@ -209,9 +231,15 @@ dependencies = [
  "aafp-nat",
  "aafp-sdk",
  "aafp-transport-quic",
+ "anyhow",
  "hex",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
  "sha2",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

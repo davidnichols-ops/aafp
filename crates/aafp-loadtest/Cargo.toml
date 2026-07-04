@@ -1,0 +1,35 @@
+[package]
+name = "aafp-loadtest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Load testing harness for AAFP — N agents, topologies, metrics (Track S)"
+
+[dependencies]
+aafp-core = { workspace = true }
+aafp-crypto = { workspace = true }
+aafp-identity = { workspace = true }
+aafp-messaging = { workspace = true }
+aafp-sdk = { workspace = true }
+aafp-transport-quic = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true, optional = true }
+libc = "0.2"
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+default = []
+# Enable the `loadtest` CLI binary.
+cli = ["dep:clap", "dep:tracing-subscriber"]
+
+[[bin]]
+name = "loadtest"
+path = "src/bin/loadtest.rs"
+required-features = ["cli"]
+
+[[test]]
+name = "load_test"
+path = "tests/load_test.rs"

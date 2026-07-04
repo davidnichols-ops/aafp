@@ -15,6 +15,7 @@ members = [
     "crates/aafp-conformance",
     "crates/aafp-cli",
     "crates/aafp-benchmark",
+    "crates/aafp-loadtest",
     "crates/aafp-tests",
 ]
 
@@ -39,6 +40,7 @@ aafp-transport-mcp = { path = "crates/aafp-transport-mcp" }
 aafp-transport-a2a = { path = "crates/aafp-transport-a2a" }
 aafp-conformance = { path = "crates/aafp-conformance" }
 aafp-benchmark = { path = "crates/aafp-benchmark" }
+aafp-loadtest = { path = "crates/aafp-loadtest" }
 
 # External dependencies
 quinn = "0.11"
