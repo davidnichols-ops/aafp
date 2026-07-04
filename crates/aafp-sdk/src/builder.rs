@@ -20,6 +20,12 @@ pub struct AgentBuilder {
     enable_pq: bool,
     keepalive_config: KeepAliveConfig,
     runtime_config: RuntimeConfig,
+    /// Bootstrap relay addresses for NAT traversal (Track N5).
+    bootstrap_relays: Vec<String>,
+    /// Whether to enable DCuTR hole punching (Track N5).
+    enable_dcutr: bool,
+    /// Whether to enable AutoNAT dial-back (Track N5).
+    enable_autonat: bool,
 }
 
 impl AgentBuilder {
@@ -34,6 +40,9 @@ impl AgentBuilder {
             enable_pq: true,
             keepalive_config: KeepAliveConfig::default(),
             runtime_config: RuntimeConfig::default(),
+            bootstrap_relays: vec![],
+            enable_dcutr: true,
+            enable_autonat: true,
         }
     }
 
@@ -108,6 +117,34 @@ impl AgentBuilder {
         self.with_runtime_config(RuntimeConfig::low_latency())
     }
 
+    /// Add bootstrap relay addresses for NAT traversal (Track N5).
+    ///
+    /// These relays are used when the agent detects it is behind NAT.
+    /// The agent will health-check these relays and use the best one
+    /// for relayed connections.
+    pub fn with_bootstrap_relays(mut self, relays: Vec<String>) -> Self {
+        self.bootstrap_relays = relays;
+        self
+    }
+
+    /// Enable or disable DCuTR hole punching (Track N5).
+    ///
+    /// When enabled (default), the agent will attempt to upgrade relayed
+    /// connections to direct connections via simultaneous open.
+    pub fn with_dcutr(mut self, enable: bool) -> Self {
+        self.enable_dcutr = enable;
+        self
+    }
+
+    /// Enable or disable AutoNAT dial-back (Track N5).
+    ///
+    /// When enabled (default), the agent will attempt to detect if it is
+    /// behind NAT by requesting dial-back checks from peers.
+    pub fn with_autonat(mut self, enable: bool) -> Self {
+        self.enable_autonat = enable;
+        self
+    }
+
     /// Build the agent.
     pub async fn build(self) -> Result<Agent, SdkError> {
         let keypair = self.keypair.unwrap_or_else(AgentKeypair::generate);
@@ -141,13 +178,24 @@ impl AgentBuilder {
         dht.put(record.clone())
             .map_err(|e| SdkError::Discovery(e.to_string()))?;
 
-        // Create NAT components.
+        // Create NAT components (legacy stubs).
         let auto_nat = AutoNat::new();
         let relay_config = RelayConfig {
             is_relay: self.is_relay,
             ..Default::default()
         };
         let relay = RelayService::new(relay_config);
+
+        // Create NAT v1 components (Track N5).
+        let auto_nat_v1 = aafp_nat::AutoNatV1DialBack::new();
+        let mut relay_discovery = aafp_nat::RelayDiscovery::new();
+        for relay_addr in &self.bootstrap_relays {
+            relay_discovery.add_bootstrap_relay(relay_addr.clone());
+        }
+        let mut dcutr_v1 = aafp_nat::DcutrV1::new();
+        if !self.enable_dcutr {
+            dcutr_v1.set_enabled(false);
+        }
 
         // Create pubsub.
         let pubsub = PubSub::new();
@@ -165,6 +213,9 @@ impl AgentBuilder {
             pubsub,
             keepalive_config: self.keepalive_config,
             running: false,
+            auto_nat_v1,
+            relay_discovery,
+            dcutr_v1,
         })
     }
 }
@@ -286,5 +337,54 @@ mod tests {
             builder.runtime_config.flavor,
             crate::RuntimeFlavor::MultiThread
         );
+    }
+
+    #[tokio::test]
+    async fn build_with_bootstrap_relays() {
+        let agent = AgentBuilder::new()
+            .with_bootstrap_relays(vec![
+                "quic://relay1:4433".into(),
+                "quic://relay2:4433".into(),
+            ])
+            .build()
+            .await
+            .unwrap();
+        assert_eq!(agent.relay_discovery().bootstrap_relays().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn build_with_dcutr_disabled() {
+        let agent = AgentBuilder::new().with_dcutr(false).build().await.unwrap();
+        assert!(!agent.dcutr_v1().is_enabled());
+    }
+
+    #[tokio::test]
+    async fn build_with_dcutr_enabled() {
+        let agent = AgentBuilder::new().with_dcutr(true).build().await.unwrap();
+        assert!(agent.dcutr_v1().is_enabled());
+    }
+
+    #[tokio::test]
+    async fn build_default_dcutr_enabled() {
+        let agent = AgentBuilder::new().build().await.unwrap();
+        assert!(agent.dcutr_v1().is_enabled());
+    }
+
+    #[tokio::test]
+    async fn build_nat_v1_status_unknown() {
+        let agent = AgentBuilder::new().build().await.unwrap();
+        assert_eq!(
+            *agent.nat_status_v1(),
+            aafp_nat::auto_nat_v1::NatStatus::Unknown
+        );
+        assert!(!agent.is_behind_nat());
+        assert!(!agent.is_publicly_reachable());
+    }
+
+    #[tokio::test]
+    async fn build_select_best_relay_none() {
+        let agent = AgentBuilder::new().build().await.unwrap();
+        // No relays discovered yet
+        assert!(agent.select_best_relay().is_none());
     }
 }

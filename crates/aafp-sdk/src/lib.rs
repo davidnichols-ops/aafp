@@ -108,9 +108,9 @@ pub struct Agent {
     pub regional: aafp_discovery::RegionalDiscovery,
     /// Bootstrap discovery.
     pub bootstrap: aafp_discovery::BootstrapDiscovery,
-    /// AutoNAT.
+    /// AutoNAT (legacy stub).
     pub auto_nat: aafp_nat::AutoNat,
-    /// Relay service.
+    /// Relay service (legacy stub).
     pub relay: aafp_nat::RelayService,
     /// PubSub.
     pub pubsub: aafp_messaging::PubSub,
@@ -118,6 +118,12 @@ pub struct Agent {
     pub keepalive_config: aafp_messaging::KeepAliveConfig,
     /// Whether the agent is running.
     pub running: bool,
+    /// AutoNAT v1 dial-back (RFC 0010 §6) — real NAT detection.
+    pub auto_nat_v1: aafp_nat::AutoNatV1DialBack,
+    /// Relay discovery (RFC 0010 §9) — find relay nodes.
+    pub relay_discovery: aafp_nat::RelayDiscovery,
+    /// DCuTR v1 (RFC 0010 §7) — hole punching driver.
+    pub dcutr_v1: aafp_nat::DcutrV1,
 }
 
 impl Agent {
@@ -141,9 +147,39 @@ impl Agent {
         self.running
     }
 
-    /// Get the NAT status.
+    /// Get the NAT status (legacy).
     pub fn nat_status(&self) -> aafp_nat::NatStatus {
         self.auto_nat.status()
+    }
+
+    /// Get the v1 NAT status (RFC 0010 §6) — real NAT detection.
+    pub fn nat_status_v1(&self) -> &aafp_nat::auto_nat_v1::NatStatus {
+        self.auto_nat_v1.status()
+    }
+
+    /// Check if behind NAT (v1).
+    pub fn is_behind_nat(&self) -> bool {
+        self.auto_nat_v1.is_behind_nat()
+    }
+
+    /// Check if publicly reachable (v1).
+    pub fn is_publicly_reachable(&self) -> bool {
+        self.auto_nat_v1.is_public()
+    }
+
+    /// Get the relay discovery service.
+    pub fn relay_discovery(&self) -> &aafp_nat::RelayDiscovery {
+        &self.relay_discovery
+    }
+
+    /// Get the DCuTR v1 driver.
+    pub fn dcutr_v1(&self) -> &aafp_nat::DcutrV1 {
+        &self.dcutr_v1
+    }
+
+    /// Select the best relay for a new connection.
+    pub fn select_best_relay(&self) -> Option<&aafp_nat::RelayNodeInfo> {
+        self.relay_discovery.select_best_relay()
     }
 
     /// Get all discovered agents.
