@@ -115,6 +115,15 @@ pub enum CborError {
     #[error("integer key out of range: {0}")]
     /// An integer map key is outside the representable range.
     KeyOutOfRange(i64),
+    #[error("CBOR nesting depth exceeded limit {limit} at offset {offset}")]
+    /// The CBOR nesting depth exceeded the maximum allowed limit.
+    /// This prevents stack overflow and OOM from deeply nested structures.
+    DepthExceeded {
+        /// Byte offset where the depth limit was hit.
+        offset: usize,
+        /// The maximum allowed depth.
+        limit: usize,
+    },
 }
 
 /// Encode a CBOR value using canonical (deterministic) encoding.
@@ -124,10 +133,17 @@ pub fn encode(value: &Value) -> Result<Vec<u8>, CborError> {
     Ok(buf)
 }
 
+/// Maximum CBOR nesting depth for decoding (security limit).
+///
+/// This prevents stack overflow and OOM from deeply nested CBOR structures.
+/// AAFP messages are shallow (handshake maps, RPC maps, arrays of
+/// capabilities) — 100 levels is far more than any legitimate use.
+pub const MAX_DECODE_DEPTH: usize = 100;
+
 /// Decode a CBOR value from bytes. Returns (value, bytes_consumed).
 pub fn decode(data: &[u8]) -> Result<(Value, usize), CborError> {
     let mut pos = 0;
-    let value = decode_value(data, &mut pos)?;
+    let value = decode_value(data, &mut pos, 0)?;
     Ok((value, pos))
 }
 
@@ -295,9 +311,18 @@ fn text_key_encoding(s: &str) -> Vec<u8> {
     buf
 }
 
-fn decode_value(data: &[u8], pos: &mut usize) -> Result<Value, CborError> {
+fn decode_value(data: &[u8], pos: &mut usize, depth: usize) -> Result<Value, CborError> {
     if *pos >= data.len() {
         return Err(CborError::UnexpectedEof(*pos));
+    }
+
+    // Enforce maximum nesting depth to prevent stack overflow and OOM
+    // from adversarial deeply-nested CBOR structures.
+    if depth >= MAX_DECODE_DEPTH {
+        return Err(CborError::DepthExceeded {
+            offset: *pos,
+            limit: MAX_DECODE_DEPTH,
+        });
     }
 
     let initial_byte = data[*pos];
@@ -359,7 +384,7 @@ fn decode_value(data: &[u8], pos: &mut usize) -> Result<Value, CborError> {
             }
             let mut arr = Vec::with_capacity(len);
             for _ in 0..len {
-                arr.push(decode_value(data, pos)?);
+                arr.push(decode_value(data, pos, depth + 1)?);
             }
             Ok(Value::Array(arr))
         }
@@ -371,8 +396,8 @@ fn decode_value(data: &[u8], pos: &mut usize) -> Result<Value, CborError> {
             }
             let mut entries: Vec<(Value, Value)> = Vec::with_capacity(len);
             for _ in 0..len {
-                let key = decode_value(data, pos)?;
-                let val = decode_value(data, pos)?;
+                let key = decode_value(data, pos, depth + 1)?;
+                let val = decode_value(data, pos, depth + 1)?;
                 // Check for duplicate keys (canonical CBOR requires unique keys)
                 if entries.iter().any(|(k, _)| k == &key) {
                     return Err(CborError::Invalid {
@@ -772,5 +797,45 @@ mod tests {
         assert_eq!(encoded, vec![0x80]);
         let (decoded, _) = decode(&encoded).unwrap();
         assert_eq!(decoded, val);
+    }
+
+    /// Regression test: deeply nested CBOR arrays must be rejected with
+    /// DepthExceeded, not cause stack overflow or OOM.
+    ///
+    /// This was found by fuzz_cbor_decode (OOM bug). The fuzzer generated
+    /// a deeply nested CBOR structure that caused unbounded recursion and
+    /// memory allocation.
+    #[test]
+    fn test_deep_nesting_rejected() {
+        // Build a CBOR byte sequence with 200 nested 1-element arrays:
+        // [0x81, 0x81, 0x81, ..., 0x81, 0x00]
+        // 0x81 = array(1), 0x00 = unsigned(0)
+        let depth = 200; // exceeds MAX_DECODE_DEPTH (100)
+        let mut data = vec![0x81u8; depth];
+        data.push(0x00); // innermost value
+
+        let result = decode(&data);
+        assert!(
+            matches!(result, Err(CborError::DepthExceeded { limit, .. }) if limit == MAX_DECODE_DEPTH),
+            "expected DepthExceeded error, got {result:?}"
+        );
+    }
+
+    /// Verify that nesting just under the limit succeeds.
+    #[test]
+    fn test_nesting_at_limit_succeeds() {
+        // Build a CBOR byte sequence with 99 nested 1-element arrays
+        // (depth 0 is the outermost, so 99 nested = depth 99, which is < 100).
+        let depth = 99;
+        let mut data = vec![0x81u8; depth];
+        data.push(0x00); // innermost value
+
+        let result = decode(&data);
+        assert!(
+            result.is_ok(),
+            "depth {} should succeed: {:?}",
+            depth,
+            result
+        );
     }
 }

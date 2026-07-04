@@ -15,6 +15,7 @@ aafp-messaging = { path = "../crates/aafp-messaging" }
 aafp-crypto = { path = "../crates/aafp-crypto" }
 aafp-identity = { path = "../crates/aafp-identity" }
 aafp-discovery = { path = "../crates/aafp-discovery" }
+aafp-nat = { path = "../crates/aafp-nat" }
 aafp-core = { path = "../crates/aafp-core" }
 libfuzzer-sys = "0.4"
 
@@ -45,5 +46,23 @@ doc = false
 [[bin]]
 name = "fuzz_rpc_decode"
 path = "fuzz_targets/fuzz_rpc_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_relay_request"
+path = "fuzz_targets/fuzz_relay_request.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_discovery_request"
+path = "fuzz_targets/fuzz_discovery_request.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_dht_router"
+path = "fuzz_targets/fuzz_dht_router.rs"
 test = false
 doc = false
