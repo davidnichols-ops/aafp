@@ -59,6 +59,11 @@ name = "connection_lifecycle"
 path = "benches/connection_lifecycle.rs"
 harness = false
 
+[[bench]]
+name = "quic_tuning"
+path = "benches/quic_tuning.rs"
+harness = false
+
 [dependencies]
 aafp-core = { workspace = true }
 aafp-crypto = { workspace = true }
