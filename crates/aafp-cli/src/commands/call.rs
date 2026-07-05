@@ -48,10 +48,10 @@ pub async fn run(
         }
         Err(e) => {
             if !json {
-                if addr.is_some() {
+                if let Some(addr_val) = &addr {
                     crate::commands::util::print_error(&format!(
                         "Failed to call agent at {}",
-                        addr.unwrap().yellow()
+                        addr_val.yellow()
                     ));
                     eprintln!("  {} {}", "detail:".dimmed(), e.to_string().dimmed());
                 } else {
