@@ -27,6 +27,12 @@ pub mod regional;
 pub mod rpc_handler;
 
 pub use bootstrap::{BootstrapConfig, BootstrapDiscovery};
+pub use dht_router::{
+    Bootstrap as DhtBootstrap, BootstrapConfig as DhtBootstrapConfig,
+    BootstrapError as DhtBootstrapError, DhtRouter, DhtRouterConfig, DhtTransport,
+    DhtTransportError, Distance, InMemoryDhtNetwork, KBucket, PeerEntry, RoutingTable, ALPHA,
+    K_BUCKET_SIZE, REPLICATION_FACTOR,
+};
 pub use discovery_v1::{
     shared_arc_swap_dht, shared_dht, shared_sharded_dht, AnnounceParams, AnnounceResult,
     ArcSwapDht, CapabilityDht as CapabilityDhtV1, DiscoveryError, LookupParams, LookupResult,

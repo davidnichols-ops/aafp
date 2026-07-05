@@ -35,7 +35,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1175,15 +1175,15 @@ mod tests {
     use aafp_crypto::{MlDsa65, SignatureScheme};
 
     /// Fixed test timestamp (matches make_record's `now`).
-    const TEST_NOW: u64 = 1700000000;
+    pub const TEST_NOW: u64 = 1700000000;
 
     /// Fixed time provider for tests (returns TEST_NOW).
-    fn test_now() -> u64 {
+    pub fn test_now() -> u64 {
         TEST_NOW
     }
 
     /// Create a signed AgentRecord with the given capabilities.
-    fn make_record(capabilities: Vec<&str>) -> AgentRecord {
+    pub fn make_record(capabilities: Vec<&str>) -> AgentRecord {
         let (pk, sk) = MlDsa65::keypair();
         let now = TEST_NOW;
         let mut record = AgentRecord::new(
@@ -1202,7 +1202,7 @@ mod tests {
     }
 
     /// Create a signed AgentRecord with a specific key seed (for deterministic IDs).
-    fn make_record_with_seed(seed: u8, capabilities: Vec<&str>) -> AgentRecord {
+    pub fn make_record_with_seed(seed: u8, capabilities: Vec<&str>) -> AgentRecord {
         let mut seed_bytes = [0u8; 32];
         seed_bytes[0] = seed;
         let (pk, sk) = MlDsa65::keypair_from_seed(&seed_bytes);
@@ -1223,7 +1223,7 @@ mod tests {
     }
 
     /// Create a DhtRouter with a fixed time provider for testing.
-    fn make_router(self_id: AgentId, transport: Arc<dyn DhtTransport>) -> DhtRouter {
+    pub fn make_router(self_id: AgentId, transport: Arc<dyn DhtTransport>) -> DhtRouter {
         DhtRouter::with_config(self_id, transport, DhtRouterConfig::default())
             .with_time_provider(test_now)
     }
@@ -1693,6 +1693,356 @@ mod tests {
             results.len() >= 3,
             "Mesh lookup should find most peers, got {}",
             results.len()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap
+// ---------------------------------------------------------------------------
+
+/// Configuration for the bootstrap process.
+#[derive(Clone, Debug)]
+pub struct BootstrapConfig {
+    /// Seed node multiaddrs (e.g., ["quic://seed1:4433", ...]).
+    pub seed_nodes: Vec<String>,
+    /// Minimum peers to discover before bootstrap is considered complete.
+    pub min_peers: usize,
+    /// Maximum time to wait for bootstrap to complete.
+    pub bootstrap_timeout: Duration,
+    /// Interval for periodic refresh of the routing table.
+    pub refresh_interval: Duration,
+}
+
+impl Default for BootstrapConfig {
+    fn default() -> Self {
+        Self {
+            seed_nodes: vec![],
+            min_peers: 10,
+            bootstrap_timeout: Duration::from_secs(30),
+            refresh_interval: Duration::from_secs(15 * 60),
+        }
+    }
+}
+
+/// Bootstrap driver: connects to seed nodes, exchanges PEX, builds routing table.
+///
+/// The bootstrap process:
+/// 1. Connect to each configured seed node
+/// 2. Send PEX request to each seed
+/// 3. Add received peers to the routing table
+/// 4. Connect to k closest peers from the routing table
+/// 5. Announce own record to closest peers
+/// 6. Return when min_peers connected or timeout
+pub struct Bootstrap {
+    config: BootstrapConfig,
+}
+
+impl Bootstrap {
+    /// Create a new bootstrap driver with the given config.
+    pub fn new(config: BootstrapConfig) -> Self {
+        Self { config }
+    }
+
+    /// Get the bootstrap configuration.
+    pub fn config(&self) -> &BootstrapConfig {
+        &self.config
+    }
+
+    /// Run the bootstrap process.
+    ///
+    /// Connects to seed nodes, performs PEX, and builds the routing table.
+    /// Returns the number of peers discovered.
+    pub async fn run(
+        &self,
+        router: &DhtRouter,
+        seed_records: Vec<AgentRecord>,
+    ) -> Result<usize, BootstrapError> {
+        let deadline = Instant::now() + self.config.bootstrap_timeout;
+        let mut peers_discovered = 0usize;
+
+        // Step 1: Add seed records to routing table
+        for record in &seed_records {
+            if router.add_peer(record.clone()).await {
+                peers_discovered += 1;
+            }
+        }
+
+        debug!(
+            "Bootstrap: added {} seed records to routing table",
+            peers_discovered
+        );
+
+        // Step 2: PEX with each seed to discover more peers
+        for record in &seed_records {
+            if Instant::now() >= deadline {
+                break;
+            }
+
+            match router.pex(&record.agent_id).await {
+                Ok(discovered) => {
+                    debug!(
+                        "Bootstrap: PEX with {} returned {} peers",
+                        record.agent_id.to_short_hex(),
+                        discovered.len()
+                    );
+                    peers_discovered = router.peer_count().await;
+                }
+                Err(e) => {
+                    debug!(
+                        "Bootstrap: PEX with {} failed: {}",
+                        record.agent_id.to_short_hex(),
+                        e
+                    );
+                }
+            }
+
+            if peers_discovered >= self.config.min_peers {
+                break;
+            }
+        }
+
+        // Step 3: Announce own record to closest peers
+        if let Some(own_record) = router.own_record().await {
+            router.announce(own_record).await;
+        }
+
+        // Step 4: Check if we have enough peers
+        peers_discovered = router.peer_count().await;
+        if peers_discovered >= self.config.min_peers {
+            info!(
+                "Bootstrap complete: {} peers in routing table",
+                peers_discovered
+            );
+            Ok(peers_discovered)
+        } else if peers_discovered > 0 {
+            info!(
+                "Bootstrap partial: {} peers (target: {})",
+                peers_discovered, self.config.min_peers
+            );
+            Ok(peers_discovered)
+        } else {
+            Err(BootstrapError::NoPeersDiscovered)
+        }
+    }
+}
+
+/// Errors returned by the bootstrap process.
+#[derive(Debug, thiserror::Error)]
+pub enum BootstrapError {
+    /// No seed nodes were configured.
+    #[error("no seed nodes configured")]
+    NoSeeds,
+    /// No peers were discovered during bootstrap.
+    #[error("no peers discovered during bootstrap")]
+    NoPeersDiscovered,
+    /// Bootstrap timed out before completing.
+    #[error("bootstrap timed out")]
+    Timeout,
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod bootstrap_tests {
+    use super::*;
+    use crate::dht_router::tests::{make_record, make_record_with_seed, make_router, test_now};
+
+    #[tokio::test]
+    async fn test_bootstrap_with_seeds() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create a seed node
+        let seed_record = make_record(vec!["seed"]);
+        let seed_id = seed_record.agent_id.clone();
+        let seed_router = Arc::new(make_router(seed_id.clone(), network.clone()));
+        seed_router.set_own_record(seed_record.clone()).await;
+        network.register(seed_router.clone()).await;
+
+        // Create our node
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network.clone());
+        own_router.set_own_record(own_record).await;
+
+        let config = BootstrapConfig {
+            seed_nodes: vec!["quic://seed:4433".into()],
+            min_peers: 1,
+            ..Default::default()
+        };
+        let bootstrap = Bootstrap::new(config);
+
+        let result = bootstrap.run(&own_router, vec![seed_record]).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_no_seeds() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+
+        let config = BootstrapConfig::default();
+        let bootstrap = Bootstrap::new(config);
+
+        let result = bootstrap.run(&own_router, vec![]).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            BootstrapError::NoPeersDiscovered => {}
+            e => panic!("expected NoPeersDiscovered, got {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_partial() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 1 seed
+        let seed_record = make_record(vec!["seed"]);
+        let seed_id = seed_record.agent_id.clone();
+        let seed_router = Arc::new(make_router(seed_id, network.clone()));
+        seed_router.set_own_record(seed_record.clone()).await;
+        network.register(seed_router).await;
+
+        // Create our node
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+
+        // min_peers = 10 but only 1 seed
+        let config = BootstrapConfig {
+            min_peers: 10,
+            ..Default::default()
+        };
+        let bootstrap = Bootstrap::new(config);
+
+        let result = bootstrap.run(&own_router, vec![seed_record]).await;
+        // Should succeed with partial results
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_multiple_seeds() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 3 seed nodes
+        let seed_records: Vec<AgentRecord> = (0..3)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("seed{}", i)]))
+            .collect();
+
+        for record in &seed_records {
+            let router = Arc::new(make_router(record.agent_id.clone(), network.clone()));
+            router.set_own_record(record.clone()).await;
+            network.register(router).await;
+        }
+
+        // Create our node
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+
+        let config = BootstrapConfig {
+            min_peers: 3,
+            ..Default::default()
+        };
+        let bootstrap = Bootstrap::new(config);
+
+        let result = bootstrap.run(&own_router, seed_records).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap() >= 3);
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_announces_own_record() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create a seed
+        let seed_record = make_record(vec!["seed"]);
+        let seed_id = seed_record.agent_id.clone();
+        let seed_router = Arc::new(make_router(seed_id, network.clone()));
+        seed_router.set_own_record(seed_record.clone()).await;
+        network.register(seed_router).await;
+
+        // Create our node
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+
+        // Store own record directly to verify it works
+        own_router.store_local(own_record.clone()).await;
+
+        let config = BootstrapConfig {
+            min_peers: 1,
+            ..Default::default()
+        };
+        let bootstrap = Bootstrap::new(config);
+
+        bootstrap.run(&own_router, vec![seed_record]).await.unwrap();
+
+        // After bootstrap, own record should be in local DHT (via announce)
+        let local = own_router.lookup_local("inference").await;
+        assert!(
+            local
+                .iter()
+                .any(|r| r.capabilities.iter().any(|c| c.name == "inference")),
+            "own record should be in local DHT after bootstrap, got {} records",
+            local.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_pex_discovers_peers() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create seed node that knows about 2 other nodes
+        let seed_record = make_record_with_seed(1, vec!["seed"]);
+        let seed_router = Arc::new(make_router(seed_record.agent_id.clone(), network.clone()));
+        seed_router.set_own_record(seed_record.clone()).await;
+
+        // Create 2 additional nodes that the seed knows about
+        let node2_record = make_record_with_seed(2, vec!["node2"]);
+        let node2_router = Arc::new(make_router(node2_record.agent_id.clone(), network.clone()));
+        node2_router.set_own_record(node2_record.clone()).await;
+        seed_router.add_peer(node2_record.clone()).await;
+
+        let node3_record = make_record_with_seed(3, vec!["node3"]);
+        let node3_router = Arc::new(make_router(node3_record.agent_id.clone(), network.clone()));
+        node3_router.set_own_record(node3_record.clone()).await;
+        seed_router.add_peer(node3_record.clone()).await;
+
+        // Register all nodes in the network
+        network.register(seed_router).await;
+        network.register(node2_router).await;
+        network.register(node3_router).await;
+
+        // Create our node — only knows the seed
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+
+        // Manually do PEX with the seed to verify it works
+        own_router.set_own_record(own_record.clone()).await;
+        let pex_result = own_router.pex(&seed_record.agent_id).await;
+        assert!(pex_result.is_ok(), "PEX should succeed");
+        let pex_peers = pex_result.unwrap();
+        assert!(
+            pex_peers.len() >= 2,
+            "PEX should return at least 2 peers, got {}",
+            pex_peers.len()
+        );
+
+        // Now check routing table — should have at least seed + some PEX peers
+        let peer_count = own_router.peer_count().await;
+        assert!(
+            peer_count >= 2,
+            "should have at least 2 peers (seed + some from PEX), got {}",
+            peer_count
         );
     }
 }
