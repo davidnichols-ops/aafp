@@ -31,6 +31,7 @@ pub mod connection_pool;
 pub mod cpu_affinity;
 pub mod handshake_driver;
 pub mod metrics;
+pub mod prometheus;
 pub mod protocol_frames;
 pub mod runtime_config;
 pub mod server;
@@ -45,6 +46,7 @@ pub use connection_pool::{
 pub use cpu_affinity::{num_cores, pin_current_thread_to_core, set_high_priority};
 pub use handshake_driver::{drive_client_handshake, drive_server_handshake, PeerInfo};
 pub use metrics::{AgentMetrics, HealthStatus, MetricsRpcResponse, MetricsSnapshot};
+pub use prometheus::PrometheusExporter;
 pub use protocol_frames::{parse_control_frame, send_close_frame, send_error_frame, ControlFrame};
 pub use runtime_config::{RuntimeConfig, RuntimeFlavor};
 pub use server::{

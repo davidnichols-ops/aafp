@@ -129,6 +129,7 @@ pub struct ServeBuilder {
     handler: Option<HandlerFn>,
     bind_addr: Option<SocketAddr>,
     keypair: Option<AgentKeypair>,
+    metrics_addr: Option<SocketAddr>,
 }
 
 impl ServeBuilder {
@@ -157,6 +158,15 @@ impl ServeBuilder {
     /// Set the agent's keypair (default: auto-generated).
     pub fn with_keypair(mut self, kp: AgentKeypair) -> Self {
         self.keypair = Some(kp);
+        self
+    }
+
+    /// Enable Prometheus metrics endpoint.
+    ///
+    /// When set, the serving agent starts a Prometheus exporter on
+    /// the given HTTP address. Endpoint: `GET /metrics`
+    pub fn with_metrics(mut self, addr: SocketAddr) -> Self {
+        self.metrics_addr = Some(addr);
         self
     }
 
@@ -289,6 +299,19 @@ impl ServeBuilder {
                 });
             }
         });
+
+        // Start Prometheus exporter if metrics_addr is set
+        if let Some(metrics_addr) = self.metrics_addr {
+            let exporter = crate::prometheus::PrometheusExporter::new(
+                agent.metrics.clone(),
+                hex::encode(agent_id),
+            );
+            tokio::spawn(async move {
+                if let Err(e) = exporter.serve(metrics_addr).await {
+                    tracing::warn!("Prometheus exporter stopped: {e}");
+                }
+            });
+        }
 
         Ok(ServingAgent {
             agent,
@@ -510,6 +533,7 @@ impl Agent {
             handler: None,
             bind_addr: None,
             keypair: None,
+            metrics_addr: None,
         }
     }
 

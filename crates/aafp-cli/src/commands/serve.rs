@@ -15,6 +15,14 @@ pub async fn run(capabilities: &[String], bind: &str, identity: &str) -> anyhow:
     // Build and start the serving agent with an echo handler
     let mut builder = Agent::serve().with_keypair(keypair).bind(bind_addr);
 
+    // Enable Prometheus metrics if AAFP_METRICS env var is set
+    if let Ok(metrics_addr) = std::env::var("AAFP_METRICS") {
+        let addr: SocketAddr = metrics_addr.parse().map_err(|e| {
+            anyhow::anyhow!("invalid AAFP_METRICS address '{}': {}", metrics_addr, e)
+        })?;
+        builder = builder.with_metrics(addr);
+    }
+
     for cap in capabilities {
         builder = builder.capability(cap.clone());
     }
@@ -43,6 +51,13 @@ pub async fn run(capabilities: &[String], bind: &str, identity: &str) -> anyhow:
             .collect::<Vec<_>>()
             .join(", ")
     );
+    if let Ok(metrics_addr) = std::env::var("AAFP_METRICS") {
+        println!(
+            "  {} http://{}/metrics",
+            "Metrics:".dimmed(),
+            metrics_addr.green()
+        );
+    }
     println!();
     println!("  {}", "Press Ctrl+C to stop.".dimmed());
     println!();
