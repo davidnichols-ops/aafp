@@ -190,7 +190,7 @@ impl ShardedDiscoveryRpcHandler {
         let now = Instant::now();
         let window_start = now - RATE_LIMIT_WINDOW;
         let mut limits = limits.lock().unwrap();
-        let timestamps = limits.entry(caller_id.clone()).or_default();
+        let timestamps = limits.entry(*caller_id).or_default();
         timestamps.retain(|&t| t > window_start);
         if timestamps.len() >= max_per_window as usize {
             return false;
@@ -321,7 +321,7 @@ impl DiscoveryRpcHandler {
         let now = Instant::now();
         let window_start = now - RATE_LIMIT_WINDOW;
 
-        let timestamps = limits.entry(agent_id.clone()).or_default();
+        let timestamps = limits.entry(*agent_id).or_default();
 
         // Evict timestamps outside the current window
         timestamps.retain(|t| *t > window_start);

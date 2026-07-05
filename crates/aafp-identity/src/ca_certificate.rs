@@ -114,6 +114,7 @@ impl CaCertificate {
     ///
     /// The CA signs the agent's key with the given validity period and
     /// capabilities. The `ca_secret_key` is used to sign.
+    #[allow(clippy::too_many_arguments)]
     pub fn issue(
         agent_id: AgentId,
         agent_public_key: &[u8],

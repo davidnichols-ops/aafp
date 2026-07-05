@@ -193,7 +193,7 @@ impl KBucket {
     /// Returns `true` if the peer was inserted or updated.
     /// Returns `false` if the bucket is full and the peer is not already present.
     pub fn insert(&mut self, entry: PeerEntry) -> bool {
-        let agent_id = entry.agent_id().clone();
+        let agent_id = *entry.agent_id();
 
         // Check if already present — update in place
         if let Some(existing) = self.get_mut(&agent_id) {
@@ -646,7 +646,7 @@ impl DhtRouter {
         config: DhtRouterConfig,
     ) -> Self {
         Self {
-            routing_table: RwLock::new(RoutingTable::with_k(self_id.clone(), config.k)),
+            routing_table: RwLock::new(RoutingTable::with_k(self_id, config.k)),
             self_id,
             own_record: RwLock::new(None),
             local_dht: RwLock::new(CapabilityDht::new()),
@@ -962,7 +962,7 @@ impl DhtRouter {
     pub async fn depart(&self) -> usize {
         let own = self.own_record().await;
         let own_id = match own {
-            Some(r) => r.agent_id.clone(),
+            Some(r) => r.agent_id,
             None => return 0,
         };
 
@@ -1016,11 +1016,8 @@ impl DhtRouter {
             }
 
             // PEX with this peer to discover new peers
-            match self.pex(&peer.agent_id).await {
-                Ok(discovered) => {
-                    new_peers += discovered.len();
-                }
-                Err(_) => {}
+            if let Ok(discovered) = self.pex(&peer.agent_id).await {
+                new_peers += discovered.len();
             }
         }
 
@@ -1276,13 +1273,11 @@ impl DhtRouter {
             .await
         {
             Ok(peer_results) => {
-                let mut results: HashMap<AgentId, AgentRecord> = local_results
-                    .into_iter()
-                    .map(|r| (r.agent_id.clone(), r))
-                    .collect();
+                let mut results: HashMap<AgentId, AgentRecord> =
+                    local_results.into_iter().map(|r| (r.agent_id, r)).collect();
                 for record in &peer_results {
                     if record.verify((self.now)()).is_ok() {
-                        results.insert(record.agent_id.clone(), record.clone());
+                        results.insert(record.agent_id, record.clone());
                     }
                 }
                 let results: Vec<AgentRecord> = results.into_values().take(k).collect();
@@ -1307,7 +1302,7 @@ impl DhtRouter {
             .lookup_local(capability)
             .await
             .into_iter()
-            .map(|r| (r.agent_id.clone(), r))
+            .map(|r| (r.agent_id, r))
             .collect();
 
         trace!(
@@ -1375,7 +1370,7 @@ impl DhtRouter {
             let mut new_peers = Vec::new();
 
             for peer in &batch {
-                queried.insert(peer.agent_id.clone());
+                queried.insert(peer.agent_id);
 
                 match self
                     .transport
@@ -1387,7 +1382,7 @@ impl DhtRouter {
                         for record in &peer_results {
                             // Verify the record
                             if record.verify((self.now)()).is_ok() {
-                                results.insert(record.agent_id.clone(), record.clone());
+                                results.insert(record.agent_id, record.clone());
                             }
                         }
                     }
@@ -1468,7 +1463,7 @@ pub struct RoutingTableStats {
 fn record_placeholder(self_id: &AgentId) -> AgentRecord {
     AgentRecord {
         record_type: aafp_identity::RECORD_TYPE_V1.to_string(),
-        agent_id: self_id.clone(),
+        agent_id: *self_id,
         public_key: vec![],
         capabilities: vec![],
         endpoints: vec![],
@@ -1515,7 +1510,7 @@ impl InMemoryDhtNetwork {
 
     /// Register a node in the network.
     pub async fn register(&self, router: Arc<DhtRouter>) {
-        let agent_id = router.self_id().clone();
+        let agent_id = *router.self_id();
         self.nodes.write().await.insert(agent_id, router);
     }
 
