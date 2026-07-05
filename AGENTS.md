@@ -6,7 +6,7 @@
 cargo fmt --all -- --check   # formatting check (0 diffs expected)
 cargo build --workspace       # build (0 warnings expected)
 cargo clippy --workspace      # lints (0 warnings expected)
-cargo test --workspace        # 1126 tests, 0 failures expected (3 ignored)
+cargo test --workspace        # 1597 tests, 0 failures expected (7 ignored)
 ```
 
 ## Project layout
@@ -22,8 +22,8 @@ cargo test --workspace        # 1126 tests, 0 failures expected (3 ignored)
 | `aafp-core` | Core traits, Session state machine, AuthorizationProvider |
 | `aafp-transport-quic` | QUIC transport via quinn + rustls (PQ TLS) |
 | `aafp-messaging` | Frame encoding/decoding, RPC, stream multiplexing |
-| `aafp-discovery` | Capability-based DHT (in-memory) |
-| `aafp-nat` | NAT traversal stubs (AutoNAT, DCuTR, relay) |
+| `aafp-discovery` | Capability-based DHT (Kademlia routing, bootstrap, replication, churn) |
+| `aafp-nat` | NAT traversal (relay forwarding, AutoNAT dial-back, DCuTR hole punching) |
 | `aafp-sdk` | High-level Agent SDK (client + server + handshake driver) |
 | `aafp-transport-mcp` | AAFP secure transport binding for MCP Rust SDK (rmcp) |
 | `aafp-transport-a2a` | AAFP secure transport binding for A2A protocol (RFC 0008) |
@@ -31,7 +31,8 @@ cargo test --workspace        # 1126 tests, 0 failures expected (3 ignored)
 | `aafp-cli` | Command-line tool for agent management |
 | `aafp-conformance` | RFC conformance test suite + golden trace generation |
 | `aafp-benchmark` | Criterion benchmarks for crypto/discovery/messaging/MCP transport |
-| `aafp-tests` | Cross-crate integration tests |
+| `aafp-tests` | Cross-crate integration tests (WAN, adversarial, malformed, stress, multi-node DHT) |
+| `aafp-loadtest` | Load test harness (N agents, topologies, metrics, stability) |
 
 ## Key conventions
 
@@ -71,3 +72,22 @@ cargo test --workspace        # 1126 tests, 0 failures expected (3 ignored)
   Cross-verification: 19/19 Rust vectors verify in Go, 15/15 Go vectors
   verify in Rust, 100/100 diff traces cross-verify. Test vectors in
   `test-vectors/mldsa65/`.
+- **TrustManager** (`aafp-identity::trust_manager`): RFC 0011 hybrid trust
+  model. Supports Web of Trust (TOFU), CA-signed certificates, and key
+  rotation. Manages trust anchors, revocation lists, and key directories.
+- **DhtRouter** (`aafp-discovery::dht_router`): Kademlia-style routing
+  for the capability DHT. 256 k-buckets keyed by XOR distance, iterative
+  lookup with α=3 concurrency, PEX peer exchange, record replication (k=5).
+  Scales to 500 nodes with 100% lookup success.
+- **KeyDirectory** (`aafp-identity::key_directory`): AgentId → AgentRecord
+  mapping with in-memory and SQLite backends. Rate-limited publishing
+  (1/AgentId/hour), signature verification, monotonic version enforcement.
+- **AgentMetrics** (`aafp-sdk::metrics`): Lock-free metrics using
+  AtomicU64 counters. Tracks connections, messages, bytes, handshakes,
+  DHT records, uptime. HealthStatus: Healthy/Degraded/Unhealthy.
+- **Rate limiting** (`aafp-sdk::server`): Per-IP handshake rate limiting
+  (10/sec default) with periodic eviction and 10K cap to prevent memory
+  exhaustion. Constant-time AgentId comparison via `subtle::ConstantTimeEq`.
+- **Fuzz targets**: 8 fuzz targets in `fuzz/fuzz_targets/` covering CBOR
+  decode, frame decode, handshake CBOR, RPC decode, agent record, relay
+  request, discovery request. Run with `cargo +nightly fuzz run <target>`.

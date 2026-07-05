@@ -1,0 +1,32 @@
+{
+  "date": 1783277172,
+  "measurements": [
+    {
+      "finding": "No significant timing difference. ML-DSA-65 verify is constant-time.",
+      "name": "signature_verification",
+      "status": "pass",
+      "valid_vs_invalid": "constant_time (aws-lc-rs ML-DSA-65)"
+    },
+    {
+      "finding": "Minor timing difference between first-byte and last-byte mismatch. Low risk: AgentId is SHA-256(public_key), attacker cannot control which byte differs.",
+      "method": "derived PartialEq (short-circuit)",
+      "name": "agent_id_comparison",
+      "recommendation": "Use subtle::ConstantTimeEq for security-critical comparisons.",
+      "status": "documented_minor_risk"
+    },
+    {
+      "finding": "No significant timing difference between hit and miss.",
+      "method": "HashMap lookup",
+      "name": "replay_cache_lookup",
+      "status": "pass"
+    },
+    {
+      "finding": "Invalid input rejected faster (early exit). Not a security concern: CBOR is inside encrypted QUIC streams.",
+      "method": "Recursive decoder",
+      "name": "cbor_decode",
+      "status": "pass"
+    }
+  ],
+  "overall_status": "no_significant_side_channels",
+  "test": "timing_analysis"
+}

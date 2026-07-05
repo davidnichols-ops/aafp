@@ -1,0 +1,40 @@
+{
+  "all_rejected": true,
+  "attacks": [
+    {
+      "name": "signature_forgery",
+      "result": "rejected"
+    },
+    {
+      "name": "agent_id_forgery",
+      "result": "rejected"
+    },
+    {
+      "name": "replay_attack",
+      "result": "rejected"
+    },
+    {
+      "name": "expired_handshake",
+      "result": "rejected"
+    },
+    {
+      "name": "version_downgrade",
+      "result": "rejected"
+    },
+    {
+      "name": "mitm_modification",
+      "result": "rejected"
+    },
+    {
+      "name": "tls_downgrade",
+      "result": "rejected"
+    },
+    {
+      "name": "pq_kex_downgrade",
+      "result": "rejected"
+    }
+  ],
+  "date": 1783277119,
+  "test": "adversarial_handshake",
+  "total_attacks": 8
+}

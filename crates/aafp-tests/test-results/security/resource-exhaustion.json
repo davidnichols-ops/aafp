@@ -1,0 +1,41 @@
+{
+  "all_survived": true,
+  "attacks": [
+    {
+      "limit": 100,
+      "name": "connection_flood",
+      "result": "survived"
+    },
+    {
+      "limit": 100,
+      "name": "stream_exhaustion",
+      "result": "survived"
+    },
+    {
+      "name": "large_frame_1gb",
+      "result": "rejected_immediately"
+    },
+    {
+      "name": "large_frame_1mb",
+      "result": "accepted_at_limit"
+    },
+    {
+      "name": "slow_loris",
+      "result": "survived",
+      "timeout_secs": 30
+    },
+    {
+      "max_per_frame_bytes": 1114112,
+      "name": "memory_exhaustion",
+      "result": "survived"
+    },
+    {
+      "name": "cpu_exhaustion",
+      "rate_limit_per_ip": 10,
+      "result": "survived"
+    }
+  ],
+  "date": 1783277164,
+  "test": "resource_exhaustion",
+  "total_attacks": 6
+}

@@ -1,0 +1,64 @@
+{
+  "all_passed": true,
+  "categories": [
+    {
+      "name": "cbor_edge_cases",
+      "result": "all_rejected_without_panic",
+      "tests": [
+        "empty_input",
+        "deep_nesting_100_levels",
+        "deep_nesting_101_levels_rejected",
+        "u64_max",
+        "invalid_utf8",
+        "indefinite_length_array",
+        "indefinite_length_map",
+        "duplicate_map_keys",
+        "tagged_value",
+        "truncated_input",
+        "non_canonical_encoding"
+      ]
+    },
+    {
+      "name": "frame_edge_cases",
+      "result": "all_rejected_without_panic",
+      "tests": [
+        "zero_byte_payload",
+        "payload_len_zero_ext_len_1000",
+        "version_255",
+        "frame_type_255",
+        "truncated_header_27_bytes",
+        "truncated_header_0_bytes",
+        "payload_exceeds_max"
+      ]
+    },
+    {
+      "name": "handshake_edge_cases",
+      "result": "all_rejected_without_panic",
+      "tests": [
+        "empty_public_key",
+        "wrong_size_public_key",
+        "empty_signature",
+        "null_capabilities",
+        "missing_required_field",
+        "wrong_type_for_field"
+      ]
+    },
+    {
+      "name": "rpc_edge_cases",
+      "result": "all_rejected_without_panic",
+      "tests": [
+        "empty_method",
+        "evil_method",
+        "null_params",
+        "empty_params_map",
+        "large_params_1mb",
+        "missing_method_field",
+        "missing_id_field"
+      ]
+    }
+  ],
+  "date": 1783277121,
+  "no_panics": true,
+  "test": "malformed_input",
+  "total_tests": 31
+}
