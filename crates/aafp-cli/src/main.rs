@@ -66,6 +66,41 @@ enum Commands {
         #[arg(long, default_value = "127.0.0.1:4434")]
         bind: String,
     },
+    /// Serve an agent with a capability (one-command startup)
+    Serve {
+        #[arg(long)]
+        capability: Vec<String>,
+        #[arg(long, default_value = "0.0.0.0:0")]
+        bind: String,
+        #[arg(long, default_value = "aafp-identity.bin")]
+        identity: String,
+    },
+    /// Call an agent by capability
+    Call {
+        capability: String,
+        message: String,
+        #[arg(long, default_value = "aafp-identity.bin")]
+        identity: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List discovered peers
+    Peers {
+        #[arg(long, default_value = "aafp-identity.bin")]
+        identity: String,
+    },
+    /// Show agent metrics
+    Metrics {
+        #[arg(long, default_value = "aafp-identity.bin")]
+        identity: String,
+    },
+    /// Show health status
+    Health {
+        #[arg(long, default_value = "aafp-identity.bin")]
+        identity: String,
+    },
+    /// Interactive quickstart wizard
+    Quickstart,
 }
 
 #[tokio::main]
@@ -109,6 +144,33 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Relay { bind } => {
             commands::relay::run(&bind).await?;
+        }
+        Commands::Serve {
+            capability,
+            bind,
+            identity,
+        } => {
+            commands::serve::run(&capability, &bind, &identity).await?;
+        }
+        Commands::Call {
+            capability,
+            message,
+            identity,
+            json,
+        } => {
+            commands::call::run(&capability, &message, &identity, json).await?;
+        }
+        Commands::Peers { identity } => {
+            commands::peers::run(&identity).await?;
+        }
+        Commands::Metrics { identity } => {
+            commands::metrics::run(&identity).await?;
+        }
+        Commands::Health { identity } => {
+            commands::health::run(&identity).await?;
+        }
+        Commands::Quickstart => {
+            commands::quickstart::run().await?;
         }
     }
 

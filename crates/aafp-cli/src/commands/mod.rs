@@ -1,7 +1,14 @@
+pub mod call;
 pub mod connect;
 pub mod discover;
+pub mod health;
 pub mod init;
+pub mod metrics;
+pub mod peers;
+pub mod quickstart;
 pub mod relay;
 pub mod send;
+pub mod serve;
 pub mod start;
 pub mod status;
+pub mod util;
