@@ -1528,6 +1528,11 @@ impl InMemoryDhtNetwork {
     pub async fn node_count(&self) -> usize {
         self.nodes.read().await.len()
     }
+
+    /// Remove a node from the network (simulates node going offline).
+    pub async fn remove_node(&self, agent_id: &AgentId) {
+        self.nodes.write().await.remove(agent_id);
+    }
 }
 
 impl Default for InMemoryDhtNetwork {
@@ -2716,7 +2721,7 @@ mod replication_tests {
         );
 
         // "Kill" node 1 by removing it from the network
-        network.nodes.write().await.remove(&records[1].agent_id);
+        network.remove_node(&records[1].agent_id).await;
 
         // Node 2 should still be able to look up node 0's record
         let results = routers[2].lookup("cap0", 10).await;
@@ -2796,7 +2801,7 @@ mod churn_tests {
         routers[0].add_peer(records[2].clone()).await;
 
         // "Kill" node 2 by removing from network
-        network.nodes.write().await.remove(&records[2].agent_id);
+        network.remove_node(&records[2].agent_id).await;
 
         // Check liveness — should remove node 2
         let (alive, removed) = routers[0].check_peer_liveness(0).await;
@@ -3173,8 +3178,8 @@ mod partition_tests {
         assert!(!partitioned);
 
         // "Kill" nodes 3 and 4 — 50% unreachable
-        network.nodes.write().await.remove(&records[3].agent_id);
-        network.nodes.write().await.remove(&records[4].agent_id);
+        network.remove_node(&records[3].agent_id).await;
+        network.remove_node(&records[4].agent_id).await;
 
         let (total, reachable, partitioned) = routers[0].detect_partition(0.4).await;
         assert_eq!(total, 4);
@@ -3207,8 +3212,8 @@ mod partition_tests {
         }
 
         // Kill 2 nodes
-        network.nodes.write().await.remove(&records[2].agent_id);
-        network.nodes.write().await.remove(&records[3].agent_id);
+        network.remove_node(&records[2].agent_id).await;
+        network.remove_node(&records[3].agent_id).await;
 
         // Not healed
         assert!(!routers[0].is_partition_healed(0.8).await);
@@ -3255,8 +3260,8 @@ mod partition_tests {
         }
 
         // Partition: remove nodes 3 and 4
-        network.nodes.write().await.remove(&records[3].agent_id);
-        network.nodes.write().await.remove(&records[4].agent_id);
+        network.remove_node(&records[3].agent_id).await;
+        network.remove_node(&records[4].agent_id).await;
 
         // Nodes 0-2 continue operating
         // Node 2 announces a new record during partition
@@ -3313,8 +3318,8 @@ mod partition_tests {
         }
 
         // Partition: remove nodes 2 and 3 from network
-        network.nodes.write().await.remove(&records[2].agent_id);
-        network.nodes.write().await.remove(&records[3].agent_id);
+        network.remove_node(&records[2].agent_id).await;
+        network.remove_node(&records[3].agent_id).await;
 
         // Both sides accept announces independently
         // Side A (nodes 0,1): announce a new record

@@ -68,6 +68,10 @@ path = "tests/wan_simulation.rs"
 name = "stress_tests"
 path = "tests/stress_tests.rs"
 
+[[test]]
+name = "multi_node_dht"
+path = "tests/multi_node_dht.rs"
+
 [[example]]
 name = "wan_test_server"
 path = "examples/wan_test_server.rs"
