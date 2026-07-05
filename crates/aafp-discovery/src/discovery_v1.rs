@@ -334,6 +334,23 @@ impl CapabilityDht {
         self.records.get(&agent_id.0)
     }
 
+    /// Remove a record by AgentId (for graceful departure).
+    pub fn remove_by_id(&mut self, agent_id: &AgentId) -> bool {
+        if let Some(record) = self.records.remove(&agent_id.0) {
+            for cap in &record.capabilities {
+                if let Some(set) = self.index.get_mut(&cap.name) {
+                    set.remove(&agent_id.0);
+                    if set.is_empty() {
+                        self.index.remove(&cap.name);
+                    }
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     /// Remove expired records (RFC-0004 §3.4).
     pub fn evict_expired(&mut self, now: u64) -> usize {
         let expired_ids: Vec<[u8; 32]> = self

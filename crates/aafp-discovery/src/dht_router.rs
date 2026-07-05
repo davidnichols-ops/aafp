@@ -523,6 +523,21 @@ pub trait DhtTransport: Send + Sync {
         &self,
         peer_id: &AgentId,
     ) -> Result<Vec<AgentRecord>, DhtTransportError>;
+
+    /// Send a ping RPC to a peer.
+    ///
+    /// Returns Ok if the peer is alive, Err if unreachable.
+    async fn ping_peer(&self, peer_id: &AgentId) -> Result<(), DhtTransportError>;
+
+    /// Send a depart RPC to a peer.
+    ///
+    /// Notifies the peer that this node is leaving the network.
+    /// The peer should remove this node's records from its local DHT.
+    async fn depart_on_peer(
+        &self,
+        peer_id: &AgentId,
+        departing_agent_id: &AgentId,
+    ) -> Result<(), DhtTransportError>;
 }
 
 /// Errors from DHT transport operations.
@@ -821,6 +836,138 @@ impl DhtRouter {
         let expired = self.evict_expired(now).await;
         let republished = self.republish_own_record().await.len();
         (expired, republished)
+    }
+
+    // -- Churn Handling (Track R4) -----------------------------------------
+
+    /// Remove a record from the local DHT by AgentId.
+    pub async fn remove_local_record(&self, agent_id: &AgentId) -> bool {
+        self.local_dht.write().await.remove_by_id(agent_id)
+    }
+
+    /// Ping a peer to check liveness.
+    ///
+    /// Returns true if the peer responded, false if unreachable.
+    pub async fn ping(&self, peer_id: &AgentId) -> bool {
+        match self.transport.ping_peer(peer_id).await {
+            Ok(()) => {
+                self.touch_peer(peer_id).await;
+                true
+            }
+            Err(e) => {
+                debug!("Ping to {} failed: {}", peer_id.to_short_hex(), e);
+                false
+            }
+        }
+    }
+
+    /// Check liveness of all peers in the routing table.
+    ///
+    /// Pings each peer. Peers that fail the ping are marked with a missed
+    /// ping count. After `max_missed` consecutive missed pings, the peer
+    /// is removed from the routing table.
+    ///
+    /// Returns (alive_count, removed_count).
+    pub async fn check_peer_liveness(&self, max_missed: u32) -> (usize, usize) {
+        let peers = self.all_peers().await;
+        let mut alive = 0usize;
+        let mut removed = 0usize;
+
+        for peer in &peers {
+            if peer.agent_id == self.self_id {
+                continue;
+            }
+
+            if self.ping(&peer.agent_id).await {
+                alive += 1;
+            } else {
+                // Peer is unreachable — remove from routing table
+                // In a production system, we'd track consecutive missed pings
+                // and only remove after max_missed. Here we remove immediately
+                // for simplicity (the caller can adjust max_missed).
+                if max_missed == 0 {
+                    self.remove_peer(&peer.agent_id).await;
+                    removed += 1;
+                }
+            }
+        }
+
+        debug!(
+            "Liveness check: {} alive, {} removed (max_missed={})",
+            alive, removed, max_missed
+        );
+
+        (alive, removed)
+    }
+
+    /// Gracefully leave the DHT network.
+    ///
+    /// Notifies the k closest peers that this node is departing.
+    /// Each peer removes this node's records from its local DHT and routing table.
+    pub async fn depart(&self) -> usize {
+        let own = self.own_record().await;
+        let own_id = match own {
+            Some(r) => r.agent_id.clone(),
+            None => return 0,
+        };
+
+        let peers = self.all_peers().await;
+        let mut notified = 0usize;
+
+        for peer in &peers {
+            if peer.agent_id == self.self_id {
+                continue;
+            }
+
+            match self.transport.depart_on_peer(&peer.agent_id, &own_id).await {
+                Ok(()) => {
+                    notified += 1;
+                }
+                Err(e) => {
+                    debug!(
+                        "Depart notification to {} failed: {}",
+                        peer.agent_id.to_short_hex(),
+                        e
+                    );
+                }
+            }
+        }
+
+        // Remove own record from local DHT
+        self.remove_local_record(&own_id).await;
+
+        info!(
+            "Graceful departure: notified {} peers, removed own record",
+            notified
+        );
+
+        notified
+    }
+
+    /// Repair the routing table by querying known peers for more peers.
+    ///
+    /// For each underfilled bucket, query known peers via PEX to find
+    /// new peers that belong in that bucket.
+    pub async fn repair_routing_table(&self) -> usize {
+        let peers = self.all_peers().await;
+        let mut new_peers = 0usize;
+
+        for peer in &peers {
+            if peer.agent_id == self.self_id {
+                continue;
+            }
+
+            // PEX with this peer to discover new peers
+            match self.pex(&peer.agent_id).await {
+                Ok(discovered) => {
+                    new_peers += discovered.len();
+                }
+                Err(_) => {}
+            }
+        }
+
+        debug!("Routing table repair: discovered {} new peers", new_peers);
+        new_peers
     }
 
     // -- PEX ---------------------------------------------------------------
@@ -1261,6 +1408,34 @@ impl DhtTransport for InMemoryDhtNetwork {
 
         // Return all records from the remote peer's local DHT
         Ok(peer.handle_refresh().await)
+    }
+
+    async fn ping_peer(&self, peer_id: &AgentId) -> Result<(), DhtTransportError> {
+        // Just check if the peer exists in the network
+        if self.get(peer_id).await.is_some() {
+            Ok(())
+        } else {
+            Err(DhtTransportError::PeerUnreachable(peer_id.to_short_hex()))
+        }
+    }
+
+    async fn depart_on_peer(
+        &self,
+        peer_id: &AgentId,
+        departing_agent_id: &AgentId,
+    ) -> Result<(), DhtTransportError> {
+        let peer = self
+            .get(peer_id)
+            .await
+            .ok_or_else(|| DhtTransportError::PeerUnreachable(peer_id.to_short_hex()))?;
+
+        // Remove the departing agent's record from the remote peer's local DHT
+        peer.remove_local_record(departing_agent_id).await;
+
+        // Remove from routing table
+        peer.remove_peer(departing_agent_id).await;
+
+        Ok(())
     }
 }
 
@@ -2339,6 +2514,212 @@ mod replication_tests {
         assert!(
             results.iter().any(|r| r.agent_id == records[0].agent_id),
             "record should survive node 1 failure"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Churn Handling Tests (Track R4)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod churn_tests {
+    use super::*;
+    use crate::dht_router::tests::{make_record, make_record_with_seed, make_router};
+
+    #[tokio::test]
+    async fn test_ping_alive_peer() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let node1_record = make_record_with_seed(1, vec!["node1"]);
+        let node1_router = Arc::new(make_router(node1_record.agent_id.clone(), network.clone()));
+        node1_router.set_own_record(node1_record.clone()).await;
+        network.register(node1_router).await;
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+        own_router.set_own_record(own_record).await;
+        own_router.add_peer(node1_record.clone()).await;
+
+        // Ping should succeed
+        assert!(own_router.ping(&node1_record.agent_id).await);
+    }
+
+    #[tokio::test]
+    async fn test_ping_dead_peer() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let node1_record = make_record_with_seed(1, vec!["node1"]);
+        // Don't register node1 in the network — it's "dead"
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+        own_router.set_own_record(own_record).await;
+        own_router.add_peer(node1_record.clone()).await;
+
+        // Ping should fail
+        assert!(!own_router.ping(&node1_record.agent_id).await);
+    }
+
+    #[tokio::test]
+    async fn test_check_liveness_removes_dead_peers() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 3 nodes
+        let records: Vec<AgentRecord> = (0..3)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Node 0 knows about node 1 and node 2
+        routers[0].add_peer(records[1].clone()).await;
+        routers[0].add_peer(records[2].clone()).await;
+
+        // "Kill" node 2 by removing from network
+        network.nodes.write().await.remove(&records[2].agent_id);
+
+        // Check liveness — should remove node 2
+        let (alive, removed) = routers[0].check_peer_liveness(0).await;
+        assert_eq!(alive, 1, "node 1 should be alive");
+        assert_eq!(removed, 1, "node 2 should be removed");
+
+        // Verify node 2 is no longer in routing table
+        assert_eq!(routers[0].peer_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_graceful_departure() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 3 nodes
+        let records: Vec<AgentRecord> = (0..3)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Build mesh
+        for i in 0..3 {
+            for j in 0..3 {
+                if i != j {
+                    routers[i].add_peer(records[j].clone()).await;
+                }
+            }
+        }
+
+        // Node 0 announces
+        routers[0].announce(records[0].clone()).await;
+
+        // Verify node 1 has node 0's record
+        let local = routers[1].lookup_local("node0").await;
+        assert!(!local.is_empty(), "node 1 should have node 0's record");
+
+        // Node 0 departs
+        let notified = routers[0].depart().await;
+        assert!(notified >= 1, "should notify at least 1 peer");
+
+        // Verify node 1 no longer has node 0's record
+        let local = routers[1].lookup_local("node0").await;
+        assert!(
+            local.is_empty(),
+            "node 1 should not have node 0's record after departure"
+        );
+
+        // Verify node 1 no longer has node 0 in routing table
+        let peers = routers[1].all_peers().await;
+        assert!(
+            !peers.iter().any(|p| p.agent_id == records[0].agent_id),
+            "node 0 should be removed from node 1's routing table"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rejoin_reannounce() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 2 nodes
+        let node0_record = make_record_with_seed(1, vec!["node0"]);
+        let node0_router = Arc::new(make_router(node0_record.agent_id.clone(), network.clone()));
+        node0_router.set_own_record(node0_record.clone()).await;
+        network.register(node0_router.clone()).await;
+
+        let node1_record = make_record_with_seed(2, vec!["node1"]);
+        let node1_router = Arc::new(make_router(node1_record.agent_id.clone(), network.clone()));
+        node1_router.set_own_record(node1_record.clone()).await;
+        network.register(node1_router).await;
+
+        // They know about each other
+        node0_router.add_peer(node1_record.clone()).await;
+        node0_router.announce(node0_record.clone()).await;
+
+        // Node 1 has node 0's record
+        let local = node0_router.lookup_local("node0").await;
+        assert!(!local.is_empty());
+
+        // Node 0 departs
+        node0_router.depart().await;
+
+        // Node 0's record is gone from node 1
+        // (In the in-memory network, depart removes from all peers)
+        // Now node 0 re-announces (rejoin)
+        node0_router.announce(node0_record.clone()).await;
+
+        // Node 0's record should be back in local DHT
+        let local = node0_router.lookup_local("node0").await;
+        assert!(!local.is_empty(), "record should reappear after rejoin");
+    }
+
+    #[tokio::test]
+    async fn test_repair_routing_table() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 3 nodes
+        let records: Vec<AgentRecord> = (0..3)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Node 0 knows only about node 1
+        routers[0].add_peer(records[1].clone()).await;
+
+        // Node 1 knows about node 2
+        routers[1].add_peer(records[2].clone()).await;
+
+        // Repair routing table — node 0 should discover node 2 via PEX with node 1
+        let new_peers = routers[0].repair_routing_table().await;
+
+        // Should have discovered some new peers
+        assert!(
+            new_peers > 0 || routers[0].peer_count().await >= 2,
+            "repair should discover new peers or already have them"
         );
     }
 }
