@@ -79,3 +79,7 @@ path = "examples/wan_test_server.rs"
 [[example]]
 name = "wan_test_client"
 path = "examples/wan_test_client.rs"
+
+[[example]]
+name = "dht_scale_test"
+path = "examples/dht_scale_test.rs"
