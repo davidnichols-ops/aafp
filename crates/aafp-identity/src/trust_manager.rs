@@ -74,8 +74,7 @@ pub enum TrustResult {
 }
 
 /// Trust policy (RFC 0011 §8.6).
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum TrustPolicy {
     /// Reject Unknown and Untrusted. Only accept Trusted.
     Strict,
@@ -85,7 +84,6 @@ pub enum TrustPolicy {
     /// Accept Trusted and Unknown (TOFU), reject Revoked.
     Permissive,
 }
-
 
 /// TrustManager: combines all trust sources (RFC 0011 §8).
 pub struct TrustManager {
@@ -301,9 +299,9 @@ impl TrustManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity_v1::AgentRecord;
     use crate::keypair::AgentKeypair;
     use crate::web_of_trust::{TrustSignature, TRUST_LEVEL_ULTIMATE};
-    use crate::identity_v1::AgentRecord;
 
     fn make_keypair() -> AgentKeypair {
         AgentKeypair::generate()

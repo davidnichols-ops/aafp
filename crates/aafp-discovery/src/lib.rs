@@ -18,6 +18,8 @@ pub mod bootstrap;
 #[deprecated = "Use discovery_v1 instead. Legacy capability_dht is in-memory only, not RFC-compliant."]
 #[allow(deprecated)]
 pub mod capability_dht;
+/// Multi-node DHT routing (Track R1).
+pub mod dht_router;
 pub mod discovery_v1;
 /// Persistent DHT backend using SQLite.
 pub mod persistent_dht;
