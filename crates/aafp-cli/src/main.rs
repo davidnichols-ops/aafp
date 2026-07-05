@@ -83,6 +83,8 @@ enum Commands {
         identity: String,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        addr: Option<String>,
     },
     /// List discovered peers
     Peers {
@@ -157,8 +159,9 @@ async fn main() -> anyhow::Result<()> {
             message,
             identity,
             json,
+            addr,
         } => {
-            commands::call::run(&capability, &message, &identity, json).await?;
+            commands::call::run(&capability, &message, &identity, json, addr.as_deref()).await?;
         }
         Commands::Peers { identity } => {
             commands::peers::run(&identity).await?;

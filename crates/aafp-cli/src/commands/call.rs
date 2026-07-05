@@ -6,24 +6,31 @@ pub async fn run(
     message: &str,
     identity: &str,
     json: bool,
+    addr: Option<&str>,
 ) -> anyhow::Result<()> {
     let keypair = crate::commands::util::load_or_generate_keypair(identity)?;
 
     let agent = Agent::connect().with_keypair(keypair).connect().await?;
 
-    if !json {
-        eprintln!(
-            "{} discovering agents with capability '{}'...",
-            "→".dimmed(),
-            capability.cyan()
-        );
-    }
-
-    // Try to discover and call
-    let result = agent
-        .discover(capability)
-        .call(Request::text(message))
-        .await;
+    // If --addr is provided, call directly without discovery
+    let result = if let Some(addr) = addr {
+        if !json {
+            eprintln!("{} calling agent at {}...", "→".dimmed(), addr.yellow());
+        }
+        agent.call_at(addr, Request::text(message)).await
+    } else {
+        if !json {
+            eprintln!(
+                "{} discovering agents with capability '{}'...",
+                "→".dimmed(),
+                capability.cyan()
+            );
+        }
+        agent
+            .discover(capability)
+            .call(Request::text(message))
+            .await
+    };
 
     match result {
         Ok(response) => {
@@ -41,13 +48,22 @@ pub async fn run(
         }
         Err(e) => {
             if !json {
-                crate::commands::util::print_error(&format!(
-                    "No agents with capability '{}' found. Is an agent serving on this network?\n  \
-                     Run `aafp serve --capability {}` in another terminal.",
-                    capability.cyan(),
-                    capability
-                ));
-                eprintln!("  {} {}", "detail:".dimmed(), e.to_string().dimmed());
+                if addr.is_some() {
+                    crate::commands::util::print_error(&format!(
+                        "Failed to call agent at {}",
+                        addr.unwrap().yellow()
+                    ));
+                    eprintln!("  {} {}", "detail:".dimmed(), e.to_string().dimmed());
+                } else {
+                    crate::commands::util::print_error(&format!(
+                        "No agents with capability '{}' found.\n  \
+                         Run `aafp serve --capability {}` in another terminal,\n  \
+                         or use --addr to call a specific address.",
+                        capability.cyan(),
+                        capability
+                    ));
+                    eprintln!("  {} {}", "detail:".dimmed(), e.to_string().dimmed());
+                }
             } else {
                 let output = serde_json::json!({
                     "error": e.to_string(),

@@ -379,6 +379,15 @@ impl ConnectedAgent {
         }
     }
 
+    /// Call an agent at a specific address, bypassing discovery.
+    ///
+    /// This is useful when you know the agent's address directly
+    /// (e.g., from `aafp serve` output) and don't want to use
+    /// the discovery system.
+    pub async fn call_at(&self, addr: &str, request: Request) -> Result<Response, SdkError> {
+        call_agent(&self.agent, addr, request).await
+    }
+
     /// Register a server's record in the local DHT (for discovery).
     pub fn register(&mut self, record: &AgentRecord) -> Result<(), SdkError> {
         self.agent
@@ -419,67 +428,73 @@ impl<'a> DiscoveryBuilder<'a> {
             .ok_or_else(|| SdkError::Discovery("agent has no endpoints".into()))?
             .clone();
 
-        // 3. Dial and handshake
-        let conn = self.agent.transport.dial(&addr).await?;
-        let auth = Arc::new(TestingAuthProvider);
-        let (_session, conn, _peer_info) =
-            establish_session(conn, &self.agent.keypair, auth, true, None).await?;
-
-        // 4. Encode request as RPC
-        let params = if !request.body().is_empty() {
-            Value::TextString(request.body().to_string())
-        } else if let Some(data) = request.payload() {
-            Value::ByteString(data.to_vec())
-        } else {
-            Value::TextString(String::new())
-        };
-        let rpc_req = RpcRequest::new(1, "call").with_params(params);
-        let rpc_bytes = rpc_req
-            .encode()
-            .map_err(|e| SdkError::Messaging(e.to_string()))?;
-
-        // 5. Send request frame
-        let (mut send, mut recv) = conn.open_bi().await?;
-        let frame = Frame::data(0, rpc_bytes);
-        let frame_bytes = encode_frame(&frame)?;
-        send.write_all(&frame_bytes).await?;
-        send.finish();
-
-        // 6. Read response frame
-        let mut header = [0u8; FRAME_HEADER_SIZE];
-        recv.read_exact(&mut header).await?;
-        let payload_len = u64::from_be_bytes(header[12..20].try_into().unwrap()) as usize;
-        let ext_len = u64::from_be_bytes(header[20..28].try_into().unwrap()) as usize;
-        let body_len = payload_len + ext_len;
-        let mut body = vec![0u8; body_len];
-        if body_len > 0 {
-            recv.read_exact(&mut body).await?;
-        }
-        let mut full_frame = header.to_vec();
-        full_frame.extend_from_slice(&body);
-        let (resp_frame, _) = decode_frame(&full_frame)?;
-
-        // 7. Decode RPC response
-        let rpc_resp = RpcResponse::decode(&resp_frame.payload)
-            .map_err(|e| SdkError::Messaging(e.to_string()))?;
-
-        if !rpc_resp.is_success() {
-            let msg = rpc_resp
-                .error
-                .map(|e| e.message)
-                .unwrap_or_else(|| "unknown error".to_string());
-            return Err(SdkError::Messaging(msg));
-        }
-
-        // 8. Convert to simple Response
-        let response = match &rpc_resp.result {
-            Some(Value::TextString(s)) => Response::text(s.clone()),
-            Some(Value::ByteString(b)) => Response::data(b.clone()),
-            _ => Response::text(String::new()),
-        };
-
-        Ok(response)
+        // 3. Dial, handshake, and call
+        call_agent(self.agent, &addr, request).await
     }
+}
+
+/// Internal helper: dial an agent at the given address, send a request, and read the response.
+async fn call_agent(agent: &SdkAgent, addr: &str, request: Request) -> Result<Response, SdkError> {
+    // Dial and handshake
+    let conn = agent.transport.dial(addr).await?;
+    let auth = Arc::new(TestingAuthProvider);
+    let (_session, conn, _peer_info) =
+        establish_session(conn, &agent.keypair, auth, true, None).await?;
+
+    // Encode request as RPC
+    let params = if !request.body().is_empty() {
+        Value::TextString(request.body().to_string())
+    } else if let Some(data) = request.payload() {
+        Value::ByteString(data.to_vec())
+    } else {
+        Value::TextString(String::new())
+    };
+    let rpc_req = RpcRequest::new(1, "call").with_params(params);
+    let rpc_bytes = rpc_req
+        .encode()
+        .map_err(|e| SdkError::Messaging(e.to_string()))?;
+
+    // Send request frame
+    let (mut send, mut recv) = conn.open_bi().await?;
+    let frame = Frame::data(0, rpc_bytes);
+    let frame_bytes = encode_frame(&frame)?;
+    send.write_all(&frame_bytes).await?;
+    send.finish();
+
+    // Read response frame
+    let mut header = [0u8; FRAME_HEADER_SIZE];
+    recv.read_exact(&mut header).await?;
+    let payload_len = u64::from_be_bytes(header[12..20].try_into().unwrap()) as usize;
+    let ext_len = u64::from_be_bytes(header[20..28].try_into().unwrap()) as usize;
+    let body_len = payload_len + ext_len;
+    let mut body = vec![0u8; body_len];
+    if body_len > 0 {
+        recv.read_exact(&mut body).await?;
+    }
+    let mut full_frame = header.to_vec();
+    full_frame.extend_from_slice(&body);
+    let (resp_frame, _) = decode_frame(&full_frame)?;
+
+    // Decode RPC response
+    let rpc_resp =
+        RpcResponse::decode(&resp_frame.payload).map_err(|e| SdkError::Messaging(e.to_string()))?;
+
+    if !rpc_resp.is_success() {
+        let msg = rpc_resp
+            .error
+            .map(|e| e.message)
+            .unwrap_or_else(|| "unknown error".to_string());
+        return Err(SdkError::Messaging(msg));
+    }
+
+    // Convert to simple Response
+    let response = match &rpc_resp.result {
+        Some(Value::TextString(s)) => Response::text(s.clone()),
+        Some(Value::ByteString(b)) => Response::data(b.clone()),
+        _ => Response::text(String::new()),
+    };
+
+    Ok(response)
 }
 
 // ─── Top-level Agent (entry point) ────────────────────────────

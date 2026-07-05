@@ -120,3 +120,27 @@ async fn test_binary_data_roundtrip() {
 
     serving.stop();
 }
+
+#[tokio::test]
+async fn test_call_at_direct_address() {
+    // Serve an echo agent
+    let serving = Agent::serve()
+        .capability("echo")
+        .handler(|req: Request| async move { Ok(Response::text(format!("echo: {}", req.body()))) })
+        .start()
+        .await
+        .expect("failed to start serving agent");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Connect and call directly by address (bypassing discovery)
+    let client = Agent::connect().connect().await.expect("connect failed");
+    let result = client
+        .call_at(serving.addr(), Request::text("hello"))
+        .await
+        .expect("call_at failed");
+
+    assert_eq!(result.body(), "echo: hello");
+
+    serving.stop();
+}
