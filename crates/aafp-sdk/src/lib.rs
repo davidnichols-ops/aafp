@@ -34,6 +34,7 @@ pub mod metrics;
 pub mod protocol_frames;
 pub mod runtime_config;
 pub mod server;
+pub mod simple;
 pub mod transport_binding;
 
 pub use builder::AgentBuilder;
@@ -51,6 +52,10 @@ pub use server::{
     DEFAULT_MAX_CONNECTIONS,
 };
 pub use transport_binding::establish_session;
+
+pub use simple::{
+    ConnectBuilder, ConnectedAgent, DiscoveryBuilder, Request, Response, ServeBuilder, ServingAgent,
+};
 
 use aafp_identity::agent_record::AgentRecord;
 use aafp_identity::{AgentId, AgentKeypair};

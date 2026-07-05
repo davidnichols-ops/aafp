@@ -39,3 +39,7 @@ anyhow = { workspace = true }
 [[example]]
 name = "basic_agent"
 path = "examples/basic_agent.rs"
+
+[[test]]
+name = "simple_api"
+path = "tests/simple_api.rs"
