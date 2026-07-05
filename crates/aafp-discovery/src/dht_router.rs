@@ -1028,6 +1028,85 @@ impl DhtRouter {
         new_peers
     }
 
+    // -- Partition Handling (Track R6) -------------------------------------
+
+    /// Detect if the network is partitioned.
+    ///
+    /// Pings all peers. If more than `threshold` fraction of peers are
+    /// unreachable, the network is considered partitioned.
+    ///
+    /// Returns (total_peers, reachable_peers, is_partitioned).
+    pub async fn detect_partition(&self, threshold: f64) -> (usize, usize, bool) {
+        let peers = self.all_peers().await;
+        let total = peers.iter().filter(|p| p.agent_id != self.self_id).count();
+        let mut reachable = 0usize;
+
+        for peer in &peers {
+            if peer.agent_id == self.self_id {
+                continue;
+            }
+            if self.ping(&peer.agent_id).await {
+                reachable += 1;
+            }
+        }
+
+        let is_partitioned = if total > 0 {
+            let unreachable = total - reachable;
+            (unreachable as f64 / total as f64) > threshold
+        } else {
+            false
+        };
+
+        if is_partitioned {
+            info!(
+                "Partition detected: {}/{} peers unreachable (threshold: {:.0}%)",
+                total - reachable,
+                total,
+                threshold * 100.0
+            );
+        }
+
+        (total, reachable, is_partitioned)
+    }
+
+    /// Reconcile records after a partition heals.
+    ///
+    /// When the network partition heals, this method:
+    /// 1. Refreshes records from all reachable peers
+    /// 2. Merges records (latest timestamp wins for conflicts)
+    /// 3. Re-announces own record to ensure it's replicated
+    ///
+    /// Returns the number of records added/updated.
+    pub async fn reconcile_after_partition(&self) -> usize {
+        // Refresh records from all peers
+        let added = self.refresh_from_peers().await;
+
+        // Re-announce own record
+        self.republish_own_record().await;
+
+        // Invalidate all cache
+        self.invalidate_all_cache().await;
+
+        info!(
+            "Partition reconciliation: {} records added/updated, own record re-announced",
+            added
+        );
+
+        added
+    }
+
+    /// Check if the network has healed from a partition.
+    ///
+    /// Pings all peers. If the fraction of reachable peers is above
+    /// `threshold`, the partition is considered healed.
+    pub async fn is_partition_healed(&self, threshold: f64) -> bool {
+        let (total, reachable, _) = self.detect_partition(1.0 - threshold).await;
+        if total == 0 {
+            return true;
+        }
+        (reachable as f64 / total as f64) >= threshold
+    }
+
     // -- PEX ---------------------------------------------------------------
 
     /// Perform a PEX exchange with a peer.
@@ -3051,5 +3130,223 @@ mod query_optimization_tests {
         // Cache should have an entry (it was populated)
         let cache_size = router.cache_size().await;
         assert!(cache_size >= 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Partition Handling Tests (Track R6)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod partition_tests {
+    use super::*;
+    use crate::dht_router::tests::{make_record, make_record_with_seed, make_router};
+
+    #[tokio::test]
+    async fn test_detect_partition() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 5 nodes
+        let records: Vec<AgentRecord> = (0..5)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Node 0 knows all other nodes
+        for j in 1..5 {
+            routers[0].add_peer(records[j].clone()).await;
+        }
+
+        // No partition — all peers reachable
+        let (total, reachable, partitioned) = routers[0].detect_partition(0.5).await;
+        assert_eq!(total, 4);
+        assert_eq!(reachable, 4);
+        assert!(!partitioned);
+
+        // "Kill" nodes 3 and 4 — 50% unreachable
+        network.nodes.write().await.remove(&records[3].agent_id);
+        network.nodes.write().await.remove(&records[4].agent_id);
+
+        let (total, reachable, partitioned) = routers[0].detect_partition(0.4).await;
+        assert_eq!(total, 4);
+        assert_eq!(reachable, 2);
+        assert!(partitioned, "should detect partition when >40% unreachable");
+    }
+
+    #[tokio::test]
+    async fn test_partition_healed() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 4 nodes
+        let records: Vec<AgentRecord> = (0..4)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Node 0 knows all other nodes
+        for j in 1..4 {
+            routers[0].add_peer(records[j].clone()).await;
+        }
+
+        // Kill 2 nodes
+        network.nodes.write().await.remove(&records[2].agent_id);
+        network.nodes.write().await.remove(&records[3].agent_id);
+
+        // Not healed
+        assert!(!routers[0].is_partition_healed(0.8).await);
+
+        // "Heal" — re-register nodes
+        network.register(routers[2].clone()).await;
+        network.register(routers[3].clone()).await;
+
+        // Now healed
+        assert!(routers[0].is_partition_healed(0.8).await);
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_after_partition() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 5 nodes
+        let records: Vec<AgentRecord> = (0..5)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Build mesh
+        for i in 0..5 {
+            for j in 0..5 {
+                if i != j {
+                    routers[i].add_peer(records[j].clone()).await;
+                }
+            }
+        }
+
+        // Each node stores its record
+        for (i, router) in routers.iter().enumerate() {
+            router.store_local(records[i].clone()).await;
+        }
+
+        // Partition: remove nodes 3 and 4
+        network.nodes.write().await.remove(&records[3].agent_id);
+        network.nodes.write().await.remove(&records[4].agent_id);
+
+        // Nodes 0-2 continue operating
+        // Node 2 announces a new record during partition
+        let new_record = make_record(vec!["new_cap"]);
+        routers[2].store_local(new_record.clone()).await;
+
+        // Heal partition
+        network.register(routers[3].clone()).await;
+        network.register(routers[4].clone()).await;
+
+        // Node 3 reconciles — should get records from other nodes
+        let added = routers[3].reconcile_after_partition().await;
+        // Should have gotten some records from peers
+        assert!(
+            added > 0,
+            "reconciliation should add records, got {}",
+            added
+        );
+
+        // Node 3 should now have node 2's new_cap record
+        let local = routers[3].lookup_local("new_cap").await;
+        assert!(
+            !local.is_empty(),
+            "node 3 should have new_cap record after reconciliation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_split_brain_both_sides_accept_announces() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 4 nodes: {0,1} and {2,3}
+        let records: Vec<AgentRecord> = (0..4)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Build initial mesh
+        for i in 0..4 {
+            for j in 0..4 {
+                if i != j {
+                    routers[i].add_peer(records[j].clone()).await;
+                }
+            }
+        }
+
+        // Partition: remove nodes 2 and 3 from network
+        network.nodes.write().await.remove(&records[2].agent_id);
+        network.nodes.write().await.remove(&records[3].agent_id);
+
+        // Both sides accept announces independently
+        // Side A (nodes 0,1): announce a new record
+        let side_a_record = make_record(vec!["side_a"]);
+        routers[0].store_local(side_a_record.clone()).await;
+        routers[0].announce(side_a_record.clone()).await;
+
+        // Side B (nodes 2,3): announce a different record
+        let side_b_record = make_record(vec!["side_b"]);
+        routers[2].store_local(side_b_record.clone()).await;
+        routers[2].announce(side_b_record.clone()).await;
+
+        // Heal partition
+        network.register(routers[2].clone()).await;
+        network.register(routers[3].clone()).await;
+
+        // Reconcile — both sides' records should be visible
+        routers[0].reconcile_after_partition().await;
+        routers[2].reconcile_after_partition().await;
+
+        // Node 0 should eventually see side_b's record
+        let local_b = routers[0].lookup_local("side_b").await;
+        assert!(
+            !local_b.is_empty(),
+            "node 0 should have side_b record after reconciliation"
+        );
+
+        // Node 2 should eventually see side_a's record
+        let local_a = routers[2].lookup_local("side_a").await;
+        assert!(
+            !local_a.is_empty(),
+            "node 2 should have side_a record after reconciliation"
+        );
     }
 }
