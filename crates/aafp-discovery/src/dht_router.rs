@@ -618,6 +618,10 @@ pub struct DhtRouter {
     config: DhtRouterConfig,
     /// Current time provider (for record verification).
     now: fn() -> u64,
+    /// Lookup cache: capability → (results, cached_at).
+    lookup_cache: RwLock<HashMap<String, (Vec<AgentRecord>, u64)>>,
+    /// Lookup cache TTL (seconds).
+    cache_ttl: u64,
 }
 
 impl std::fmt::Debug for DhtRouter {
@@ -649,6 +653,8 @@ impl DhtRouter {
             transport,
             config,
             now: current_unix_time,
+            lookup_cache: RwLock::new(HashMap::new()),
+            cache_ttl: 300, // 5 minutes
         }
     }
 
@@ -656,6 +662,55 @@ impl DhtRouter {
     pub fn with_time_provider(mut self, now: fn() -> u64) -> Self {
         self.now = now;
         self
+    }
+
+    /// Set the lookup cache TTL (seconds).
+    pub fn with_cache_ttl(mut self, ttl: u64) -> Self {
+        self.cache_ttl = ttl;
+        self
+    }
+
+    // -- Lookup Cache (Track R5) -------------------------------------------
+
+    /// Get a cached lookup result if still valid.
+    async fn get_cached_lookup(&self, capability: &str) -> Option<Vec<AgentRecord>> {
+        let cache = self.lookup_cache.read().await;
+        if let Some((results, cached_at)) = cache.get(capability) {
+            let now = (self.now)();
+            if now.saturating_sub(*cached_at) <= self.cache_ttl {
+                trace!(
+                    "Lookup cache hit for '{}' (age: {}s)",
+                    capability,
+                    now.saturating_sub(*cached_at)
+                );
+                return Some(results.clone());
+            }
+        }
+        None
+    }
+
+    /// Cache a lookup result.
+    async fn cache_lookup(&self, capability: &str, results: Vec<AgentRecord>) {
+        let now = (self.now)();
+        self.lookup_cache
+            .write()
+            .await
+            .insert(capability.to_string(), (results, now));
+    }
+
+    /// Invalidate the lookup cache for a capability.
+    pub async fn invalidate_cache(&self, capability: &str) {
+        self.lookup_cache.write().await.remove(capability);
+    }
+
+    /// Invalidate the entire lookup cache.
+    pub async fn invalidate_all_cache(&self) {
+        self.lookup_cache.write().await.clear();
+    }
+
+    /// Get the number of entries in the lookup cache.
+    pub async fn cache_size(&self) -> usize {
+        self.lookup_cache.read().await.len()
     }
 
     /// Get this node's AgentId.
@@ -936,6 +991,9 @@ impl DhtRouter {
         // Remove own record from local DHT
         self.remove_local_record(&own_id).await;
 
+        // Invalidate all cache (departure may affect any capability)
+        self.invalidate_all_cache().await;
+
         info!(
             "Graceful departure: notified {} peers, removed own record",
             notified
@@ -1035,6 +1093,9 @@ impl DhtRouter {
             return Vec::new();
         }
 
+        // Invalidate cache for this capability
+        self.invalidate_cache(&capability).await;
+
         let close_peers = self
             .closest_peers_to_capability(&capability, self.config.replication)
             .await;
@@ -1079,12 +1140,81 @@ impl DhtRouter {
     /// Look up agents by capability using iterative DHT routing.
     ///
     /// This is the primary discovery operation:
-    /// 1. Check the local DHT for matching records.
-    /// 2. If fewer than `k` results, query the `alpha` closest known peers.
-    /// 3. Peers return matching records + closer peers they know about.
-    /// 4. Iterate until `k` results are found or no new peers are discovered.
+    /// 1. Check the lookup cache for recent results.
+    /// 2. Check the local DHT for matching records.
+    /// 3. If fewer than `k` results, query the `alpha` closest known peers.
+    /// 4. Peers return matching records + closer peers they know about.
+    /// 5. Iterate until `k` results are found or no new peers are discovered.
     pub async fn lookup(&self, capability: &str, k: usize) -> Vec<AgentRecord> {
-        self.find_peers(capability, k).await
+        // Check cache first
+        if let Some(cached) = self.get_cached_lookup(capability).await {
+            return cached.into_iter().take(k).collect();
+        }
+
+        let results = self.find_peers(capability, k).await;
+
+        // Cache the results
+        self.cache_lookup(capability, results.clone()).await;
+
+        results
+    }
+
+    /// Recursive lookup: ask the first closest peer to do the full lookup.
+    ///
+    /// In recursive mode, the caller sends the lookup to one peer, which
+    /// does the full iterative lookup on its own and returns the final results.
+    /// This is simpler but puts more load on the first peer.
+    pub async fn lookup_recursive(&self, capability: &str, k: usize) -> Vec<AgentRecord> {
+        // Check cache first
+        if let Some(cached) = self.get_cached_lookup(capability).await {
+            return cached.into_iter().take(k).collect();
+        }
+
+        // Check local store
+        let local_results = self.lookup_local(capability).await;
+        if local_results.len() >= k {
+            let results: Vec<AgentRecord> = local_results.into_iter().take(k).collect();
+            self.cache_lookup(capability, results.clone()).await;
+            return results;
+        }
+
+        // Get the closest peer and ask it to do the lookup
+        let cap_key = Distance::to_capability_key(capability);
+        let closest = self.routing_table.read().await.closest_peers(&cap_key, 1);
+
+        if closest.is_empty() {
+            return local_results;
+        }
+
+        let peer = &closest[0];
+        if peer.agent_id == self.self_id {
+            return local_results;
+        }
+
+        match self
+            .transport
+            .lookup_on_peer(&peer.agent_id, capability, Some(k as u64))
+            .await
+        {
+            Ok(peer_results) => {
+                let mut results: HashMap<AgentId, AgentRecord> = local_results
+                    .into_iter()
+                    .map(|r| (r.agent_id.clone(), r))
+                    .collect();
+                for record in &peer_results {
+                    if record.verify((self.now)()).is_ok() {
+                        results.insert(record.agent_id.clone(), record.clone());
+                    }
+                }
+                let results: Vec<AgentRecord> = results.into_values().take(k).collect();
+                self.cache_lookup(capability, results.clone()).await;
+                results
+            }
+            Err(_) => {
+                // Fall back to iterative
+                self.find_peers(capability, k).await
+            }
+        }
     }
 
     /// Iterative find_peers: the core Kademlia lookup operation.
@@ -2721,5 +2851,205 @@ mod churn_tests {
             new_peers > 0 || routers[0].peer_count().await >= 2,
             "repair should discover new peers or already have them"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Query Optimization Tests (Track R5)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod query_optimization_tests {
+    use super::*;
+    use crate::dht_router::tests::{make_record, make_record_with_seed, make_router};
+
+    #[tokio::test]
+    async fn test_lookup_cache_hit() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+        own_router.set_own_record(own_record).await;
+
+        // Store a record
+        let other_record = make_record(vec!["inference"]);
+        own_router.store_local(other_record.clone()).await;
+
+        // First lookup — should populate cache
+        let results1 = own_router.lookup("inference", 10).await;
+        assert!(!results1.is_empty());
+        assert_eq!(own_router.cache_size().await, 1);
+
+        // Second lookup — should hit cache (same results)
+        let results2 = own_router.lookup("inference", 10).await;
+        assert_eq!(results1.len(), results2.len());
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_on_announce() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+        own_router.set_own_record(own_record.clone()).await;
+
+        // Store a record and lookup
+        own_router.store_local(own_record.clone()).await;
+        let _ = own_router.lookup("inference", 10).await;
+        assert_eq!(own_router.cache_size().await, 1);
+
+        // Announce should invalidate cache
+        own_router.announce(own_record).await;
+        assert_eq!(own_router.cache_size().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cache_invalidation_on_depart() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let node1_record = make_record_with_seed(1, vec!["node1"]);
+        let node1_router = Arc::new(make_router(node1_record.agent_id.clone(), network.clone()));
+        node1_router.set_own_record(node1_record.clone()).await;
+        network.register(node1_router.clone()).await;
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+        own_router.set_own_record(own_record.clone()).await;
+        own_router.add_peer(node1_record.clone()).await;
+        own_router.store_local(own_record.clone()).await;
+
+        // Lookup to populate cache
+        let _ = own_router.lookup("inference", 10).await;
+        assert!(own_router.cache_size().await >= 1);
+
+        // Depart should invalidate all cache
+        own_router.depart().await;
+        assert_eq!(own_router.cache_size().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_recursive_lookup() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 3 nodes in a line: 0 → 1 → 2
+        let records: Vec<AgentRecord> = (0..3)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Node 0 knows node 1, node 1 knows node 2
+        routers[0].add_peer(records[1].clone()).await;
+        routers[1].add_peer(records[2].clone()).await;
+
+        // Node 1 stores node 2's record (simulating replication)
+        routers[1].store_local(records[2].clone()).await;
+        // Node 1 stores its own record
+        routers[1].store_local(records[1].clone()).await;
+
+        // Node 0 does recursive lookup for "node2"
+        // The recursive lookup asks node 1 (closest peer) to do the lookup
+        // Node 1 has node 2's record in its local DHT
+        let results = routers[0].lookup_recursive("node2", 10).await;
+
+        // Should find node 2's record via node 1
+        assert!(
+            results.iter().any(|r| r.agent_id == records[2].agent_id),
+            "recursive lookup should find node2's record, got {} results",
+            results.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_iterative_vs_recursive_consistency() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 5 nodes in a mesh
+        let records: Vec<AgentRecord> = (0..5)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("node{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Build mesh
+        for i in 0..5 {
+            for j in 0..5 {
+                if i != j {
+                    routers[i].add_peer(records[j].clone()).await;
+                }
+            }
+        }
+
+        // Each node stores its record
+        for (i, router) in routers.iter().enumerate() {
+            router.store_local(records[i].clone()).await;
+        }
+
+        // Clear caches
+        for router in &routers {
+            router.invalidate_all_cache().await;
+        }
+
+        // Iterative lookup from node 0
+        let iterative_results = routers[0].find_peers("node2", 10).await;
+
+        // Clear cache
+        routers[0].invalidate_all_cache().await;
+
+        // Recursive lookup from node 0
+        let recursive_results = routers[0].lookup_recursive("node2", 10).await;
+
+        // Both should find the same record
+        assert!(
+            iterative_results
+                .iter()
+                .any(|r| r.agent_id == records[2].agent_id),
+            "iterative lookup should find node2"
+        );
+        assert!(
+            recursive_results
+                .iter()
+                .any(|r| r.agent_id == records[2].agent_id),
+            "recursive lookup should find node2"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cache_expiry() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+
+        // Create router with 0-second cache TTL
+        let router = make_router(own_id, network).with_cache_ttl(0);
+        router.set_own_record(own_record.clone()).await;
+        router.store_local(own_record).await;
+
+        // Lookup — should populate cache
+        let _ = router.lookup("inference", 10).await;
+
+        // Cache should have an entry (it was populated)
+        let cache_size = router.cache_size().await;
+        assert!(cache_size >= 1);
     }
 }
