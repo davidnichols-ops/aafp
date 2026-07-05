@@ -26,6 +26,7 @@ use pyo3::prelude::*;
 use tokio::runtime::Runtime;
 
 mod agent;
+mod simple;
 mod transport;
 
 /// The dedicated tokio runtime for this extension.
@@ -53,5 +54,15 @@ fn aafp_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<agent::PyAgent>()?;
     m.add_class::<transport::PyAafpTransport>()?;
+
+    // Simple API (P2.4)
+    m.add_class::<simple::PyRequest>()?;
+    m.add_class::<simple::PyResponse>()?;
+    m.add_class::<simple::PySimpleAgent>()?;
+    m.add_class::<simple::PyServeBuilder>()?;
+    m.add_class::<simple::PyServingAgent>()?;
+    m.add_class::<simple::PyConnectedAgent>()?;
+    m.add_class::<simple::PyDiscoveryBuilder>()?;
+
     Ok(())
 }

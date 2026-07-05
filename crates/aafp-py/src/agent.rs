@@ -2,11 +2,11 @@
 
 use std::sync::{Arc, Mutex};
 
-use pyo3::prelude::*;
-use pyo3::exceptions::PyException;
-use pyo3::types::PyBytes;
-use aafp_sdk::AgentBuilder;
 use aafp_identity::AgentKeypair;
+use aafp_sdk::AgentBuilder;
+use pyo3::exceptions::PyException;
+use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 
 /// A running AAFP agent instance.
 ///

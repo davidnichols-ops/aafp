@@ -3,9 +3,9 @@ requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "aafp-transport"
+name = "aafp"
 version = "0.1.0"
-description = "AAFP post-quantum transport for Python MCP clients"
+description = "AAFP — high-level Python API for agent-to-agent networking"
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -15,6 +15,8 @@ classifiers = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "aafp_py"
 
 [tool.pytest.ini_options]
 pythonpath = ["python"]

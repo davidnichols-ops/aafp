@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use pyo3::prelude::*;
 use pyo3::exceptions::PyException;
+use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use tokio::sync::Mutex;
 
@@ -31,8 +31,11 @@ pub struct PyAafpTransport {
     inner: Arc<Mutex<Option<aafp_transport_mcp::AafpMcpTransport>>>,
     /// Cloned send handle for concurrent send operations.
     /// Set after connect/accept, None before.
-    send_handle: Arc<Mutex<Option<Arc<Mutex<Option<aafp_transport_quic::QuicSendStream>>>>>>,
+    send_handle: SendHandleSlot,
 }
+
+/// Type alias to simplify the complex nested send handle type.
+type SendHandleSlot = Arc<Mutex<Option<Arc<Mutex<Option<aafp_transport_quic::QuicSendStream>>>>>>;
 
 impl PyAafpTransport {
     fn new() -> Self {
@@ -75,11 +78,7 @@ impl PyAafpTransport {
     }
 
     /// Accept an AAFP connection (server side).
-    fn accept<'py>(
-        &self,
-        py: Python<'py>,
-        agent: &PyAgent,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn accept<'py>(&self, py: Python<'py>, agent: &PyAgent) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
         let send_handle_slot = self.send_handle.clone();
         let agent_inner = agent.inner.clone();
@@ -109,9 +108,9 @@ impl PyAafpTransport {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let guard = send_handle_slot.lock().await;
-            let send_handle = guard.as_ref().ok_or_else(|| {
-                PyException::new_err("transport not connected")
-            })?;
+            let send_handle = guard
+                .as_ref()
+                .ok_or_else(|| PyException::new_err("transport not connected"))?;
             aafp_transport_mcp::send_raw_json_on_handle(send_handle, &json_value)
                 .await
                 .map_err(|e| PyException::new_err(e.to_string()))?;
@@ -120,17 +119,14 @@ impl PyAafpTransport {
     }
 
     /// Receive a JSON-RPC message from an AAFP DATA frame.
-    fn receive<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn receive<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.inner.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let mut guard = inner.lock().await;
-            let transport = guard.as_mut().ok_or_else(|| {
-                PyException::new_err("transport not connected")
-            })?;
+            let transport = guard
+                .as_mut()
+                .ok_or_else(|| PyException::new_err("transport not connected"))?;
 
             let value = transport
                 .recv_raw_json()
