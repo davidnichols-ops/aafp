@@ -514,6 +514,15 @@ pub trait DhtTransport: Send + Sync {
         sender_record: &AgentRecord,
         known_peers: &[AgentRecord],
     ) -> Result<Vec<AgentRecord>, DhtTransportError>;
+
+    /// Send a refresh RPC to a peer.
+    ///
+    /// Requests all records from the remote peer's local DHT.
+    /// Used when a new node joins or after a partition heals.
+    async fn refresh_on_peer(
+        &self,
+        peer_id: &AgentId,
+    ) -> Result<Vec<AgentRecord>, DhtTransportError>;
 }
 
 /// Errors from DHT transport operations.
@@ -735,6 +744,83 @@ impl DhtRouter {
     /// Evict expired records from the local DHT.
     pub async fn evict_expired(&self, now: u64) -> usize {
         self.local_dht.write().await.evict_expired(now)
+    }
+
+    /// Get all records from the local DHT (for refresh responses).
+    pub async fn all_local_records(&self) -> Vec<AgentRecord> {
+        self.local_dht.read().await.all_records()
+    }
+
+    /// Republish own record to the DHT.
+    ///
+    /// Called periodically (default: every 30 minutes) before the record's
+    /// TTL expires. Re-announces to the k closest peers.
+    pub async fn republish_own_record(&self) -> Vec<AgentRecord> {
+        let own = self.own_record().await;
+        match own {
+            Some(record) => self.announce(record).await,
+            None => {
+                debug!("Republish: no own record set, skipping");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Refresh records from peers.
+    ///
+    /// Requests all records from each peer in the routing table.
+    /// Used when a new node joins or after a partition heals.
+    pub async fn refresh_from_peers(&self) -> usize {
+        let peers = self.all_peers().await;
+        let mut records_added = 0usize;
+
+        for peer in &peers {
+            if peer.agent_id == self.self_id {
+                continue;
+            }
+
+            // Request all records from this peer via refresh RPC
+            match self.transport.refresh_on_peer(&peer.agent_id).await {
+                Ok(records) => {
+                    for record in &records {
+                        if self.store_local(record.clone()).await {
+                            records_added += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!(
+                        "Refresh from {} failed: {}",
+                        peer.agent_id.to_short_hex(),
+                        e
+                    );
+                }
+            }
+        }
+
+        debug!(
+            "Refreshed {} records from {} peers",
+            records_added,
+            peers.len()
+        );
+        records_added
+    }
+
+    /// Handle a refresh request from a peer.
+    ///
+    /// Returns all records in the local DHT.
+    pub async fn handle_refresh(&self) -> Vec<AgentRecord> {
+        self.all_local_records().await
+    }
+
+    /// Run periodic maintenance: evict expired records and republish own record.
+    ///
+    /// Returns (expired_count, republished_count).
+    pub async fn maintenance(&self) -> (usize, usize) {
+        let now = (self.now)();
+        let expired = self.evict_expired(now).await;
+        let republished = self.republish_own_record().await.len();
+        (expired, republished)
     }
 
     // -- PEX ---------------------------------------------------------------
@@ -1162,6 +1248,19 @@ impl DhtTransport for InMemoryDhtNetwork {
 
         // Return the remote peer's known peers
         Ok(peer.all_peers().await)
+    }
+
+    async fn refresh_on_peer(
+        &self,
+        peer_id: &AgentId,
+    ) -> Result<Vec<AgentRecord>, DhtTransportError> {
+        let peer = self
+            .get(peer_id)
+            .await
+            .ok_or_else(|| DhtTransportError::PeerUnreachable(peer_id.to_short_hex()))?;
+
+        // Return all records from the remote peer's local DHT
+        Ok(peer.handle_refresh().await)
     }
 }
 
@@ -2043,6 +2142,203 @@ mod bootstrap_tests {
             peer_count >= 2,
             "should have at least 2 peers (seed + some from PEX), got {}",
             peer_count
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Replication / Republishing / Refresh Tests (Track R3)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod replication_tests {
+    use super::*;
+    use crate::dht_router::tests::{make_record, make_record_with_seed, make_router};
+
+    #[tokio::test]
+    async fn test_announce_replicates_to_closest_peers() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 5 nodes
+        let records: Vec<AgentRecord> = (0..5)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("cap{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Node 0 adds all other nodes as peers
+        for j in 1..5 {
+            routers[0].add_peer(records[j].clone()).await;
+        }
+
+        // Node 0 announces its record
+        let forwarded = routers[0].announce(records[0].clone()).await;
+
+        // Should have forwarded to some peers
+        assert!(!forwarded.is_empty(), "should forward to closest peers");
+
+        // The forwarded peers should have the record in their local DHT
+        for peer in &forwarded {
+            let peer_router = network.get(&peer.agent_id).await.unwrap();
+            let local = peer_router.lookup_local("cap0").await;
+            assert!(
+                local.iter().any(|r| r.agent_id == records[0].agent_id),
+                "record should be replicated to peer {}",
+                peer.agent_id.to_short_hex()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_republish_own_record() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let router = make_router(own_id, network);
+        router.set_own_record(own_record).await;
+
+        // Republish should work (stores locally + forwards to closest)
+        let _result = router.republish_own_record().await;
+        // No peers to forward to, but should store locally
+        let local = router.lookup_local("inference").await;
+        assert!(
+            !local.is_empty(),
+            "own record should be in local DHT after republish"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_refresh_from_peers() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create node 1 with a record
+        let node1_record = make_record_with_seed(1, vec!["node1"]);
+        let node1_router = Arc::new(make_router(node1_record.agent_id.clone(), network.clone()));
+        node1_router.set_own_record(node1_record.clone()).await;
+        node1_router.store_local(node1_record.clone()).await;
+        network.register(node1_router).await;
+
+        // Create node 2 with a record
+        let node2_record = make_record_with_seed(2, vec!["node2"]);
+        let node2_router = Arc::new(make_router(node2_record.agent_id.clone(), network.clone()));
+        node2_router.set_own_record(node2_record.clone()).await;
+        node2_router.store_local(node2_record.clone()).await;
+        network.register(node2_router).await;
+
+        // Create our node — knows about node1 and node2
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let own_router = make_router(own_id, network);
+        own_router.set_own_record(own_record).await;
+        own_router.add_peer(node1_record.clone()).await;
+        own_router.add_peer(node2_record.clone()).await;
+
+        // Refresh from peers — should get records from node1 and node2
+        let added = own_router.refresh_from_peers().await;
+        assert!(
+            added >= 2,
+            "should have refreshed at least 2 records, got {}",
+            added
+        );
+
+        // Verify records are in local DHT
+        let node1_local = own_router.lookup_local("node1").await;
+        assert!(
+            !node1_local.is_empty(),
+            "node1 record should be in local DHT after refresh"
+        );
+
+        let node2_local = own_router.lookup_local("node2").await;
+        assert!(
+            !node2_local.is_empty(),
+            "node2 record should be in local DHT after refresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_maintenance_evicts_expired() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        let own_record = make_record(vec!["inference"]);
+        let own_id = own_record.agent_id.clone();
+        let router = make_router(own_id, network);
+        router.set_own_record(own_record).await;
+
+        // Store a record
+        let other_record = make_record(vec!["other"]);
+        router.store_local(other_record.clone()).await;
+
+        // Maintenance with current time — nothing should expire
+        let (expired, _) = router.maintenance().await;
+        assert_eq!(expired, 0);
+
+        // Maintenance again — should still work
+        let (expired2, _republished) = router.maintenance().await;
+        assert_eq!(expired2, 0);
+    }
+
+    #[tokio::test]
+    async fn test_record_survives_peer_failure() {
+        let network = Arc::new(InMemoryDhtNetwork::new());
+
+        // Create 5 nodes in a mesh
+        let records: Vec<AgentRecord> = (0..5)
+            .map(|i| make_record_with_seed(i + 1, vec![&format!("cap{}", i)]))
+            .collect();
+
+        let routers: Vec<Arc<DhtRouter>> = records
+            .iter()
+            .map(|r| Arc::new(make_router(r.agent_id.clone(), network.clone())))
+            .collect();
+
+        for (i, router) in routers.iter().enumerate() {
+            router.set_own_record(records[i].clone()).await;
+            network.register(router.clone()).await;
+        }
+
+        // Build mesh: each node knows all others
+        for i in 0..5 {
+            for j in 0..5 {
+                if i != j {
+                    routers[i].add_peer(records[j].clone()).await;
+                }
+            }
+        }
+
+        // Node 0 announces
+        routers[0].announce(records[0].clone()).await;
+
+        // Verify record is on multiple nodes
+        let mut nodes_with_record = 0;
+        for router in &routers {
+            let local = router.lookup_local("cap0").await;
+            if local.iter().any(|r| r.agent_id == records[0].agent_id) {
+                nodes_with_record += 1;
+            }
+        }
+        assert!(
+            nodes_with_record >= 2,
+            "record should be on at least 2 nodes, got {}",
+            nodes_with_record
+        );
+
+        // "Kill" node 1 by removing it from the network
+        network.nodes.write().await.remove(&records[1].agent_id);
+
+        // Node 2 should still be able to look up node 0's record
+        let results = routers[2].lookup("cap0", 10).await;
+        assert!(
+            results.iter().any(|r| r.agent_id == records[0].agent_id),
+            "record should survive node 1 failure"
         );
     }
 }

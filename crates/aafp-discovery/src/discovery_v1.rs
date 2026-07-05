@@ -372,6 +372,16 @@ impl CapabilityDht {
     pub fn capability_count(&self) -> usize {
         self.index.len()
     }
+
+    /// Get all records in the DHT (for refresh responses).
+    pub fn all_records(&self) -> Vec<AgentRecord> {
+        self.records.values().cloned().collect()
+    }
+
+    /// Get all capability names indexed.
+    pub fn capabilities(&self) -> Vec<String> {
+        self.index.keys().cloned().collect()
+    }
 }
 
 /// Thread-safe wrapper for CapabilityDht.
