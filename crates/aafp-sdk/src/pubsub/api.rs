@@ -27,9 +27,8 @@ use crate::SdkError;
 ///
 /// This mirrors the `CapabilityHandler` / `HandlerFnV2` pattern in `simple.rs`:
 /// a boxed async closure stored in an `Arc` for sharing across tasks.
-pub type OnPublishHandler = Arc<
-    dyn Fn(&str, Event) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
->;
+pub type OnPublishHandler =
+    Arc<dyn Fn(&str, Event) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 // ─── ServeBuilderPubSubExt ─────────────────────────────────────
 

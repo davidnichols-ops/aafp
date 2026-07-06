@@ -24,12 +24,16 @@ hex = { workspace = true }
 sha2 = { workspace = true }
 core_affinity = { version = "0.8", optional = true }
 libc = { version = "0.2", optional = true }
+rand = { workspace = true, optional = true }
+async-trait = { workspace = true }
 
 [features]
-default = []
+default = ["adaptive-routing"]
 # Track L6: CPU core pinning for reduced p99 latency variance.
 # Enable with: aafp-sdk = { features = ["cpu-affinity"] }
 cpu-affinity = ["dep:core_affinity", "dep:libc"]
+# Adaptive Routing Plane: dynamic metrics, scoring, selection, resilience.
+adaptive-routing = ["dep:rand"]
 
 [dev-dependencies]
 tokio = { workspace = true }

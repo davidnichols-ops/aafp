@@ -36,9 +36,7 @@ impl PubSubError {
         match self {
             Self::TopicNotFound => "topic not found or malformed",
             Self::PublishDenied => "publish denied: insufficient UCAN capability",
-            Self::SubscribeDenied => {
-                "subscribe denied: insufficient capability or limit exceeded"
-            }
+            Self::SubscribeDenied => "subscribe denied: insufficient capability or limit exceeded",
             Self::RateLimited => "publish rate limit exceeded",
             Self::MessageTooLarge => "message payload exceeds maximum size",
         }

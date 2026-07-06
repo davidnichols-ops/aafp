@@ -10,27 +10,12 @@
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
-// NOTE: `MetadataValue` is re-exported from `aafp-identity`. We reference it
-// via a type alias here so the stub compiles without adding a dependency on
-// `aafp-identity` at the module level. The real implementation will import
-// `aafp_identity::MetadataValue` directly.
+// `MetadataValue` is re-exported from `aafp-identity` so that
+// `CapabilityDescriptor` and `SemanticCapability` share the same type.
 // ---------------------------------------------------------------------------
 
 /// Metadata value kind used inside `CapabilityAttributes.custom`.
-///
-/// Stub alias for `aafp_identity::MetadataValue`. The real implementation
-/// should replace this with `pub use aafp_identity::MetadataValue;`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MetadataValue {
-    /// A boolean metadata value.
-    Bool(bool),
-    /// A signed integer metadata value.
-    Int(i64),
-    /// A text string metadata value.
-    Text(String),
-    /// A byte string metadata value.
-    Bytes(Vec<u8>),
-}
+pub use aafp_identity::MetadataValue;
 
 /// A semantic category for a capability.
 ///
@@ -225,13 +210,47 @@ pub struct SemanticCapability {
     pub version: SemanticVersion,
     /// Optional geographic constraint.
     pub geo: Option<GeoConstraint>,
+    /// Required inputs for this capability.
+    pub requirements: Vec<Requirement>,
+    /// Outputs produced by this capability.
+    pub provides: Vec<OutputSpec>,
 }
 
 impl SemanticCapability {
     /// Create a new `SemanticCapability` with the given name and default
     /// values for all other fields.
     pub fn new(name: impl Into<String>) -> Self {
-        todo!()
+        Self {
+            name: name.into(),
+            category: CapabilityCategory::Custom("unknown".into()),
+            attributes: CapabilityAttributes::default(),
+            performance: PerformanceProfile {
+                avg_latency_ms: 0.0,
+                p99_latency_ms: 0.0,
+                throughput_rps: 0.0,
+                max_batch_size: None,
+            },
+            quality: QualityMetrics {
+                trust_score: 0,
+                accuracy: None,
+                uptime_pct: 0.0,
+                success_count: 0,
+            },
+            cost: CostModel {
+                per_invocation_micro_usd: 0,
+                per_token_micro_usd: None,
+                has_free_tier: false,
+            },
+            dependencies: vec![],
+            version: SemanticVersion {
+                major: 0,
+                minor: 0,
+                patch: 0,
+            },
+            geo: None,
+            requirements: vec![],
+            provides: vec![],
+        }
     }
 
     /// Wrap into a `CapabilityDescriptor` by embedding the encoded semantic
@@ -239,7 +258,12 @@ impl SemanticCapability {
     ///
     /// The CBOR encoding itself is implemented in [`super::encoding`].
     pub fn to_descriptor(&self) -> aafp_identity::CapabilityDescriptor {
-        todo!()
+        let cbor = self.to_cbor();
+        let bytes = aafp_cbor::encode(&cbor).unwrap_or_default();
+        aafp_identity::CapabilityDescriptor {
+            name: self.name.clone(),
+            metadata: vec![("semantic".into(), MetadataValue::Bytes(bytes))],
+        }
     }
 
     /// Extract a `SemanticCapability` from a `CapabilityDescriptor`'s
@@ -247,8 +271,35 @@ impl SemanticCapability {
     ///
     /// The CBOR decoding itself is implemented in [`super::encoding`].
     pub fn from_descriptor(desc: &aafp_identity::CapabilityDescriptor) -> Option<Self> {
-        todo!()
+        for (key, value) in &desc.metadata {
+            if key == "semantic" {
+                if let MetadataValue::Bytes(ref bytes) = value {
+                    if let Ok((decoded, _)) = aafp_cbor::decode(bytes) {
+                        return Self::from_cbor(&decoded).ok();
+                    }
+                }
+            }
+        }
+        None
     }
+}
+
+/// A required input for a capability.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Requirement {
+    /// The kind of input required (e.g., "document-bytes", "image-bytes").
+    pub kind: String,
+    /// Whether this requirement is optional.
+    pub optional: bool,
+}
+
+/// An output produced by a capability.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutputSpec {
+    /// The kind of output produced (e.g., "search-results", "web-content").
+    pub kind: String,
+    /// Additional attributes describing the output.
+    pub attributes: HashMap<String, MetadataValue>,
 }
 
 /// Errors raised by semantic capability encoding/decoding.

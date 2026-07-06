@@ -244,24 +244,37 @@ impl GossipSubRouter {
     /// - Grafts new peers when mesh drops below `d_lo`.
     /// - Prunes excess (lowest-scoring first) when mesh exceeds `d_hi`.
     pub fn maintain_mesh(&mut self, topic: &str, available: &[AgentId]) {
-        let state = self.mesh.entry(topic.to_string()).or_insert_with(|| MeshState {
-            peers: HashSet::new(),
-            gossip_peers: HashSet::new(),
-            seen_msgs: VecDeque::new(),
-            last_active: Instant::now(),
-        });
+        let prune_set: Vec<AgentId> = self
+            .peer_scores
+            .keys()
+            .filter(|p| self.should_prune(p))
+            .copied()
+            .collect();
+
+        // Clone config values to avoid borrowing self while holding a mutable borrow of self.mesh
+        let d_lo = self.config.d_lo;
+        let d_hi = self.config.d_hi;
+        let d = self.config.d;
+
+        let state = self
+            .mesh
+            .entry(topic.to_string())
+            .or_insert_with(|| MeshState {
+                peers: HashSet::new(),
+                gossip_peers: HashSet::new(),
+                seen_msgs: VecDeque::new(),
+                last_active: Instant::now(),
+            });
 
         // Prune low-scoring peers from mesh.
-        state.peers.retain(|p| !self.should_prune(p));
-
-        let cfg = &self.config;
+        state.peers.retain(|p| !prune_set.contains(p));
 
         // Graft: if below d_lo, add peers up to d.
-        if state.peers.len() < cfg.d_lo {
+        if state.peers.len() < d_lo {
             let candidates: Vec<_> = available
                 .iter()
-                .filter(|p| !state.peers.contains(p) && !self.should_prune(p))
-                .take(cfg.d.saturating_sub(state.peers.len()))
+                .filter(|p| !state.peers.contains(*p) && !prune_set.contains(*p))
+                .take(d.saturating_sub(state.peers.len()))
                 .cloned()
                 .collect();
             for c in candidates {
@@ -271,14 +284,18 @@ impl GossipSubRouter {
         }
 
         // Prune: if above d_hi, remove excess (lowest-scoring first).
-        if state.peers.len() > cfg.d_hi {
+        if state.peers.len() > d_hi {
             let mut sorted: Vec<_> = state.peers.iter().copied().collect();
+            // Sort by score (lowest first) — need to access self.peer_scores
+            // but state still borrows self.mesh. We already have the sorted list,
+            // so we can drop the state borrow, sort, then re-borrow.
+            let to_remove = state.peers.len().saturating_sub(d);
+            // Sort by peer scores (lowest first for pruning)
             sorted.sort_by(|a, b| {
                 let sa = self.peer_scores.get(a).map(|s| s.total()).unwrap_or(0.0);
                 let sb = self.peer_scores.get(b).map(|s| s.total()).unwrap_or(0.0);
                 sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
             });
-            let to_remove = state.peers.len().saturating_sub(cfg.d);
             for peer in sorted.into_iter().take(to_remove) {
                 state.peers.remove(&peer);
                 // Send PRUNE control message
@@ -299,7 +316,7 @@ impl GossipSubRouter {
             .iter()
             .filter(|p| {
                 self.peer_scores
-                    .get(p)
+                    .get(*p)
                     .is_some_and(|s| s.total() > cfg.scoring.graylist_threshold)
             })
             .take(cfg.d_lazy)
@@ -341,29 +358,191 @@ impl GossipSubRouter {
     /// - `available_peers`: closure returning the current peer set.
     /// - `shutdown`: cancellation token.
     pub async fn heartbeat_loop(
-        _router: Arc<Mutex<Self>>,
-        _available_peers: Arc<dyn Fn() -> Vec<AgentId> + Send + Sync>,
-        _shutdown: tokio_util::sync::CancellationToken,
+        router: Arc<Mutex<Self>>,
+        available_peers: Arc<dyn Fn() -> Vec<AgentId> + Send + Sync>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) {
-        // TODO(P6): implement heartbeat loop.
-        //
-        // let interval = router.lock().expect("lock").config.heartbeat_interval;
-        // let mut ticker = tokio::time::interval(interval);
-        // loop {
-        //     tokio::select! {
-        //         _ = ticker.tick() => {
-        //             let peers = available_peers();
-        //             let mut r = router.lock().expect("lock");
-        //             r.decay_all_scores();
-        //             let topics: Vec<String> = r.mesh.keys().cloned().collect();
-        //             for topic in &topics { r.maintain_mesh(topic, &peers); }
-        //             let now = Instant::now();
-        //             let fanout_ttl = r.config.fanout_ttl;
-        //             r.seen.retain(|_, expiry| now.duration_since(*expiry) < fanout_ttl);
-        //         }
-        //         _ = shutdown.cancelled() => break,
-        //     }
-        // }
-        todo!("heartbeat_loop not yet implemented")
+        let interval = router
+            .lock()
+            .expect("router lock poisoned")
+            .config
+            .heartbeat_interval;
+        let mut ticker = tokio::time::interval(interval);
+
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let peers = available_peers();
+                    let mut r = router.lock().expect("router lock poisoned");
+
+                    // 1. Decay all peer scores.
+                    r.decay_all_scores();
+
+                    // 2. Maintain mesh for each topic.
+                    let topics: Vec<String> = r.mesh.keys().cloned().collect();
+                    for topic in &topics {
+                        r.maintain_mesh(topic, &peers);
+                    }
+
+                    // 3. Evict expired seen messages.
+                    let now = Instant::now();
+                    let fanout_ttl = r.config.fanout_ttl;
+                    r.seen
+                        .retain(|_, expiry| now.duration_since(*expiry) < fanout_ttl);
+
+                    // 4. Emit IHAVE gossip to d_lazy peers per topic.
+                    // (Control messages piggybacked on next publish frame.)
+                }
+                result = shutdown.changed() => {
+                    if result.is_err() || *shutdown.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gossipsub_config_defaults() {
+        let cfg = GossipSubConfig::default();
+        assert_eq!(cfg.d, 6);
+        assert_eq!(cfg.d_lo, 4);
+        assert_eq!(cfg.d_hi, 12);
+        assert_eq!(cfg.d_lazy, 6);
+    }
+
+    #[test]
+    fn test_peer_score_total() {
+        let score = PeerScore {
+            p1_app_specific: 10.0,
+            p2_ip_colocation: -5.0,
+            p3_behavioral: -2.0,
+            p4_app_reward: 3.0,
+            p5_latency: -1.0,
+            p6_mesh_participation: 1.0,
+            p7_first_deliveries: 2.0,
+            last_updated: None,
+        };
+        assert_eq!(score.total(), 8.0);
+    }
+
+    #[test]
+    fn test_peer_score_decay() {
+        let cfg = PeerScoringConfig::default();
+        let mut score = PeerScore {
+            p1_app_specific: 10.0,
+            p3_behavioral: -20.0,
+            ..Default::default()
+        };
+        score.decay(&cfg);
+        assert!((score.p1_app_specific - 9.0).abs() < 0.001);
+        assert!((score.p3_behavioral - (-18.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_peer_score_record_invalid_message() {
+        let mut score = PeerScore::default();
+        score.record_invalid_message(50.0);
+        assert_eq!(score.p3_behavioral, -50.0);
+    }
+
+    #[test]
+    fn test_peer_score_record_first_delivery() {
+        let mut score = PeerScore::default();
+        score.record_first_delivery(5.0);
+        assert_eq!(score.p7_first_deliveries, 5.0);
+    }
+
+    #[test]
+    fn test_should_prune_below_threshold() {
+        let router = GossipSubRouter::with_defaults();
+        let peer = [1u8; 32];
+        // No score entry → should_prune returns false
+        assert!(!router.should_prune(&peer));
+    }
+
+    #[test]
+    fn test_should_prune_with_low_score() {
+        let mut router = GossipSubRouter::with_defaults();
+        let peer = [1u8; 32];
+        router.peer_scores.insert(
+            peer,
+            PeerScore {
+                p3_behavioral: -2000.0,
+                ..Default::default()
+            },
+        );
+        assert!(router.should_prune(&peer));
+    }
+
+    #[test]
+    fn test_maintain_mesh_grafts_peers() {
+        let mut router = GossipSubRouter::with_defaults();
+        let peers = vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32], [6u8; 32]];
+        router.maintain_mesh("test/topic", &peers);
+        let state = router.mesh.get("test/topic").unwrap();
+        // Should have grafted up to d (6) peers
+        assert!(state.peers.len() >= 4); // at least d_lo
+    }
+
+    #[test]
+    fn test_maintain_mesh_prunes_excess() {
+        let mut router = GossipSubRouter::with_defaults();
+        // Manually add too many peers
+        let peers: Vec<AgentId> = (0..20u8).map(|i| [i; 32]).collect();
+        router.maintain_mesh("test/topic", &peers);
+        let state = router.mesh.get("test/topic").unwrap();
+        // After initial graft, we should have at most d peers
+        assert!(state.peers.len() <= 6); // d = 6
+    }
+
+    #[test]
+    fn test_select_gossip_peers() {
+        let mut router = GossipSubRouter::with_defaults();
+        let peers = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+        router.maintain_mesh("test/topic", &peers);
+        let gossip = router.select_gossip_peers("test/topic");
+        // Should select up to d_lazy (6) peers, but we only have 3
+        assert!(gossip.len() <= 3);
+    }
+
+    #[test]
+    fn test_score_on_message_first_seen() {
+        let mut router = GossipSubRouter::with_defaults();
+        let peer = [1u8; 32];
+        router.score_on_message(&peer, [0u8; 32], true);
+        let score = router.peer_scores.get(&peer).unwrap();
+        assert!(score.p7_first_deliveries > 0.0);
+        assert!(score.last_updated.is_some());
+    }
+
+    #[test]
+    fn test_score_on_message_not_first_seen() {
+        let mut router = GossipSubRouter::with_defaults();
+        let peer = [1u8; 32];
+        router.score_on_message(&peer, [0u8; 32], false);
+        let score = router.peer_scores.get(&peer).unwrap();
+        assert_eq!(score.p7_first_deliveries, 0.0);
+        assert!(score.last_updated.is_some());
+    }
+
+    #[test]
+    fn test_decay_all_scores() {
+        let mut router = GossipSubRouter::with_defaults();
+        router.peer_scores.insert(
+            [1u8; 32],
+            PeerScore {
+                p1_app_specific: 10.0,
+                ..Default::default()
+            },
+        );
+        router.decay_all_scores();
+        let score = router.peer_scores.get(&[1u8; 32]).unwrap();
+        assert!((score.p1_app_specific - 9.0).abs() < 0.001);
     }
 }

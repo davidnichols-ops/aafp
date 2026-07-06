@@ -141,6 +141,10 @@ pub struct AgentRecord {
     /// Receivers MUST reject older versions. Equal version: accept only
     /// if bytes are identical; otherwise reject.
     pub record_version: u64,
+    /// Extension map (CBOR key 11). Optional — empty for backward compat.
+    /// Stored as `(namespace, raw CBOR Value)` pairs to preserve unknown
+    /// extensions that this agent doesn't have typed decoders for.
+    pub extensions: Vec<(String, Value)>,
 }
 
 impl AgentRecord {
@@ -166,13 +170,14 @@ impl AgentRecord {
             signature: Vec::new(),
             key_algorithm,
             record_version: 1, // A-3: starts at 1, monotonically increasing
+            extensions: Vec::new(),
         }
     }
 
     /// Encode to canonical CBOR, excluding the signature (key 8).
     /// This is the signature input per RFC-0003 §3.4.
     pub fn to_cbor_without_sig(&self) -> Value {
-        int_map(vec![
+        let mut entries = vec![
             (1, Value::TextString(self.record_type.clone())),
             (2, Value::ByteString(self.agent_id.0.to_vec())),
             (3, Value::ByteString(self.public_key.clone())),
@@ -193,12 +198,24 @@ impl AgentRecord {
             (7, Value::Unsigned(self.expires_at)),
             (9, Value::Unsigned(self.key_algorithm)),
             (10, Value::Unsigned(self.record_version)),
-        ])
+        ];
+
+        if !self.extensions.is_empty() {
+            let ext_map = str_map(
+                self.extensions
+                    .iter()
+                    .map(|(ns, v)| (ns.clone(), v.clone()))
+                    .collect(),
+            );
+            entries.push((11, ext_map));
+        }
+
+        int_map(entries)
     }
 
     /// Encode to canonical CBOR with all fields (including signature).
     pub fn to_cbor(&self) -> Value {
-        int_map(vec![
+        let mut entries = vec![
             (1, Value::TextString(self.record_type.clone())),
             (2, Value::ByteString(self.agent_id.0.to_vec())),
             (3, Value::ByteString(self.public_key.clone())),
@@ -220,7 +237,19 @@ impl AgentRecord {
             (8, Value::ByteString(self.signature.clone())),
             (9, Value::Unsigned(self.key_algorithm)),
             (10, Value::Unsigned(self.record_version)),
-        ])
+        ];
+
+        if !self.extensions.is_empty() {
+            let ext_map = str_map(
+                self.extensions
+                    .iter()
+                    .map(|(ns, v)| (ns.clone(), v.clone()))
+                    .collect(),
+            );
+            entries.push((11, ext_map));
+        }
+
+        int_map(entries)
     }
 
     /// Decode from a CBOR Value.
@@ -320,6 +349,21 @@ impl AgentRecord {
             }
         };
 
+        let extensions = match get(11) {
+            Some(Value::StrMap(entries)) => entries
+                .iter()
+                .map(|(ns, v)| (ns.clone(), v.clone()))
+                .collect(),
+            Some(Value::IntMap(_)) => Vec::new(),
+            None => Vec::new(),
+            Some(other) => {
+                return Err(IdentityError::InvalidField {
+                    field: "extensions",
+                    message: format!("expected map, got {:?}", other),
+                })
+            }
+        };
+
         Ok(Self {
             record_type,
             agent_id,
@@ -331,6 +375,7 @@ impl AgentRecord {
             signature,
             key_algorithm,
             record_version,
+            extensions,
         })
     }
 
@@ -411,6 +456,33 @@ impl AgentRecord {
     /// 30 days from the current time."
     pub fn exceeds_max_expiry_warning(&self, now: u64) -> bool {
         self.expires_at.saturating_sub(now) > MAX_RECORD_EXPIRY
+    }
+
+    /// Get a typed extension by namespace.
+    ///
+    /// Returns `None` if the extension is not present or if the version
+    /// doesn't match (forward compatibility: unknown versions are treated
+    /// as absent, not as errors).
+    pub fn get_extension<T: crate::extensions::AgentRecordExtension>(&self) -> Option<T> {
+        let entry = self.extensions.iter().find(|(ns, _)| ns == T::NAMESPACE)?;
+        T::from_extension_cbor(&entry.1).ok()
+    }
+
+    /// Set a typed extension (replaces existing entry with the same namespace).
+    ///
+    /// After calling this, the record MUST be re-signed before publishing,
+    /// because the extension data is part of the signed envelope.
+    pub fn set_extension<T: crate::extensions::AgentRecordExtension>(&mut self, ext: T) {
+        let cbor = ext.to_extension_cbor();
+        if let Some(pos) = self
+            .extensions
+            .iter()
+            .position(|(ns, _)| ns == T::NAMESPACE)
+        {
+            self.extensions[pos] = (T::NAMESPACE.to_string(), cbor);
+        } else {
+            self.extensions.push((T::NAMESPACE.to_string(), cbor));
+        }
     }
 }
 

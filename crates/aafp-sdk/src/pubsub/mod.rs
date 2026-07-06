@@ -40,7 +40,17 @@ pub mod gossipsub;
 
 // Re-export the primary P1/P2 public types so that, once wired into `lib.rs`,
 // consumers can access them as `aafp_sdk::pubsub::Event`, etc.
+pub use api::{ConnectedAgentPubSubExt, OnPublishHandler, ServeBuilderPubSubExt};
+pub use backchannel::{
+    backchannel_topic, extract_backchannel_topic, frame_with_backchannel,
+    generate_request_id, is_backchannel_topic, parse_backchannel_topic, EXT_BACKCHANNEL_TOPIC,
+};
 pub use bridge::PubSubBridge;
 pub use event::Event;
 pub use handler::PubSubRpcHandler;
 pub use subscription::SubscriptionStream;
+pub use topic::{
+    check_reserved_prefix, split_topic, topic_matches, validate_filter, validate_publish_topic,
+    MAX_TOPIC_DEPTH, MAX_TOPIC_LENGTH,
+};
+pub use topic_matcher::TopicMatcher;

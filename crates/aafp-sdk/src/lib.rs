@@ -33,10 +33,14 @@ pub mod handshake_driver;
 pub mod metrics;
 pub mod prometheus;
 pub mod protocol_frames;
+pub mod pubsub;
 pub mod runtime_config;
 pub mod server;
 pub mod simple;
 pub mod transport_binding;
+
+#[cfg(feature = "adaptive-routing")]
+pub mod routing;
 
 pub use builder::AgentBuilder;
 pub use client::AgentClient;
@@ -56,8 +60,11 @@ pub use server::{
 pub use transport_binding::establish_session;
 
 pub use simple::{
-    ConnectBuilder, ConnectedAgent, DiscoveryBuilder, Request, Response, ServeBuilder, ServingAgent,
+    Backchannel, BackchannelHandlerFn, ConnectBuilder, ConnectedAgent, DiscoveryBuilder,
+    ProgressStream, Request, Response, ServeBuilder, ServingAgent,
 };
+
+pub use pubsub::{Event, PubSubBridge, SubscriptionStream, TopicMatcher};
 
 use aafp_identity::agent_record::AgentRecord;
 use aafp_identity::{AgentId, AgentKeypair};
@@ -102,6 +109,18 @@ pub enum SdkError {
     /// An I/O error.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// Circuit breaker is open for the peer.
+    #[error("circuit open")]
+    CircuitOpen(aafp_identity::identity_v1::AgentId),
+    /// Bulkhead concurrency limit reached for the peer.
+    #[error("concurrency limit reached")]
+    ConcurrencyLimit(aafp_identity::identity_v1::AgentId),
+    /// Operation timed out.
+    #[error("timeout")]
+    Timeout,
+    /// No viable candidate found after filtering and scoring.
+    #[error("no viable candidate")]
+    NoViableCandidate,
 }
 
 /// A running AAFP agent instance.
@@ -207,8 +226,8 @@ impl Agent {
     }
 
     /// Get active pubsub topics.
-    pub fn pubsub_topics(&self) -> Vec<&str> {
-        self.pubsub.topics()
+    pub fn pubsub_topics(&self) -> Vec<String> {
+        self.pubsub.topics().into_iter().map(String::from).collect()
     }
 
     /// Get a metrics snapshot (Track S4).

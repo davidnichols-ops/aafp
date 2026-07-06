@@ -1472,6 +1472,7 @@ fn record_placeholder(self_id: &AgentId) -> AgentRecord {
         signature: vec![],
         key_algorithm: aafp_identity::KEY_ALG_ML_DSA_65,
         record_version: 1,
+        extensions: vec![],
     }
 }
 

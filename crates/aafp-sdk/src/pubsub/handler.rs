@@ -23,8 +23,10 @@ use aafp_cbor::Value;
 use aafp_identity::AgentId;
 use aafp_messaging::{
     NetworkedPubSub, PubSubRpcHandler as MessagingPubSubRpcHandler, PubSubV1Error as PubSubError,
-    METHOD_PUBLISH, METHOD_SUBSCRIBE, METHOD_UNSUBSCRIBE,
 };
+
+#[cfg(test)]
+use aafp_messaging::{METHOD_PUBLISH, METHOD_SUBSCRIBE, METHOD_UNSUBSCRIBE};
 
 /// Prefix for all PubSub RPC methods.
 pub const PUBSUB_METHOD_PREFIX: &str = "aafp.pubsub.";
@@ -159,7 +161,8 @@ mod tests {
         let pubsub = Arc::new(NetworkedPubSub::new([1u8; 32]));
         let handler = PubSubRpcHandler::new(Arc::clone(&pubsub));
 
-        let params = aafp_cbor::int_map(vec![(1, aafp_cbor::Value::TextString("test".to_string()))]);
+        let params =
+            aafp_cbor::int_map(vec![(1, aafp_cbor::Value::TextString("test".to_string()))]);
         let result = handler.dispatch(METHOD_SUBSCRIBE, &params, &[2u8; 32]);
         assert!(result.is_ok());
 

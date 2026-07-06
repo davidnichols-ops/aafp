@@ -1,88 +1,113 @@
-//! Bulkhead — per-peer concurrency limits.
+//! Bulkhead concurrency limiter for per-peer request isolation.
 //!
-//! Caps the number of concurrent in-flight requests per peer so a single
-//! slow peer cannot exhaust the client's connection pool or task budget.
-//! The counter uses `AtomicU32` for lock-free admission.
-//!
-//! See `AR_T3_T4_BREAKER_HEDGING.md` Part 2 (ADAPTIVE_ROUTING_PLANE.md §5.4).
-//!
-//! **Stub:** all method bodies are `todo!()` — to be implemented in the
-//! T3-T4 build phase.
+//! Provides a `ConcurrencyLimit` guard that automatically releases on drop,
+//! and a `with_bulkhead` helper that integrates with `BulkheadRegistry`.
 
-use aafp_identity::AgentId;
-use std::collections::HashMap;
-use std::sync::atomic::AtomicU32;
-use std::sync::Mutex;
+use aafp_identity::identity_v1::AgentId;
+use crate::routing::circuit::BulkheadRegistry;
 
-/// Per-peer concurrency limit (bulkhead). Calls beyond `max_inflight`
-/// are rejected so the router can skip to the next candidate.
-pub struct ConcurrencyLimit {
-    max_inflight: u32,
-    current: AtomicU32,
+/// RAII guard that releases a bulkhead slot on drop.
+pub struct ConcurrencyGuard<'a> {
+    registry: &'a BulkheadRegistry,
+    agent_id: AgentId,
 }
 
-impl ConcurrencyLimit {
-    /// Create a new limit capped at `max_inflight` concurrent requests.
-    pub fn new(max_inflight: u32) -> Self {
+impl Drop for ConcurrencyGuard<'_> {
+    fn drop(&mut self) {
+        self.registry.release(&self.agent_id);
+    }
+}
+
+/// Attempt to acquire a bulkhead slot for `agent_id`.
+///
+/// Returns `Some(guard)` if the slot was acquired, or `None` if the
+/// per-peer concurrency limit has been reached.
+pub fn try_acquire<'a>(
+    registry: &'a BulkheadRegistry,
+    agent_id: &AgentId,
+) -> Option<ConcurrencyGuard<'a>> {
+    if registry.try_acquire(agent_id) {
+        Some(ConcurrencyGuard {
+            registry,
+            agent_id: *agent_id,
+        })
+    } else {
+        None
+    }
+}
+
+/// Configuration for bulkhead behavior.
+#[derive(Clone, Debug)]
+pub struct BulkheadConfig {
+    pub max_per_peer: u32,
+    pub timeout_ms: u64,
+}
+
+impl Default for BulkheadConfig {
+    fn default() -> Self {
         Self {
-            max_inflight,
-            current: AtomicU32::new(0),
+            max_per_peer: 8,
+            timeout_ms: 100,
         }
     }
-
-    /// Try to acquire a slot. Returns `true` if admitted, `false` if at
-    /// capacity. Uses a compare-exchange CAS loop.
-    pub fn acquire(&self) -> bool {
-        todo!("implement try_acquire CAS loop per AR_T3_T4 §5.4")
-    }
-
-    /// Release a slot. Called on response or error.
-    pub fn release(&self) {
-        todo!("implement release per AR_T3_T4 §5.4")
-    }
-
-    /// Current number of in-flight requests.
-    pub fn count(&self) -> u32 {
-        todo!("implement current_inflight load per AR_T3_T4 §5.4")
-    }
-
-    /// The configured maximum.
-    pub fn max_inflight(&self) -> u32 {
-        self.max_inflight
-    }
 }
 
-/// Registry of per-peer concurrency limits.
-pub struct BulkheadRegistry {
-    limits: Mutex<HashMap<AgentId, ConcurrencyLimit>>,
-    default_max: u32,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl BulkheadRegistry {
-    /// Create a new registry; each peer gets a limit of `default_max`.
-    pub fn new(default_max: u32) -> Self {
-        Self {
-            limits: Mutex::new(HashMap::new()),
-            default_max,
+    #[test]
+    fn test_guard_releases_on_drop() {
+        let registry = BulkheadRegistry::new(2);
+        let id = AgentId([1u8; 32]);
+        {
+            let _g1 = try_acquire(&registry, &id).unwrap();
+            assert_eq!(registry.in_flight(&id), 1);
         }
+        assert_eq!(registry.in_flight(&id), 0);
     }
 
-    /// Try to acquire a slot for `agent_id`, creating the per-peer limit
-    /// lazily on first use.
-    pub fn acquire(&self, agent_id: &AgentId) -> bool {
-        let _ = agent_id;
-        todo!("implement per-peer try_acquire per AR_T3_T4 §5.4")
+    #[test]
+    fn test_guard_releases_on_early_drop() {
+        let registry = BulkheadRegistry::new(1);
+        let id = AgentId([2u8; 32]);
+        {
+            let g = try_acquire(&registry, &id);
+            assert!(g.is_some());
+            assert_eq!(registry.in_flight(&id), 1);
+            // second acquire fails
+            assert!(try_acquire(&registry, &id).is_none());
+        }
+        // after scope, slot is released
+        assert_eq!(registry.in_flight(&id), 0);
+        assert!(try_acquire(&registry, &id).is_some());
     }
 
-    /// Release a slot for `agent_id`.
-    pub fn release(&self, agent_id: &AgentId) {
-        let _ = agent_id;
-        todo!("implement per-peer release per AR_T3_T4 §5.4")
+    #[test]
+    fn test_try_acquire_returns_none_at_limit() {
+        let registry = BulkheadRegistry::new(1);
+        let id = AgentId([3u8; 32]);
+        let _g = try_acquire(&registry, &id).unwrap();
+        assert!(try_acquire(&registry, &id).is_none());
     }
 
-    /// Current in-flight count for `agent_id` (0 if unknown).
-    pub fn count(&self, agent_id: &AgentId) -> u32 {
-        let _ = agent_id;
-        todo!("implement per-peer count per AR_T3_T4 §5.4")
+    #[test]
+    fn test_multiple_guards_release_correctly() {
+        let registry = BulkheadRegistry::new(3);
+        let id = AgentId([4u8; 32]);
+        let g1 = try_acquire(&registry, &id).unwrap();
+        let g2 = try_acquire(&registry, &id).unwrap();
+        assert_eq!(registry.in_flight(&id), 2);
+        drop(g1);
+        assert_eq!(registry.in_flight(&id), 1);
+        drop(g2);
+        assert_eq!(registry.in_flight(&id), 0);
+    }
+
+    #[test]
+    fn test_bulkhead_config_default() {
+        let config = BulkheadConfig::default();
+        assert_eq!(config.max_per_peer, 8);
+        assert_eq!(config.timeout_ms, 100);
     }
 }

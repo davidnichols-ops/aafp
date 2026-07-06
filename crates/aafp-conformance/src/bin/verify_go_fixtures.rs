@@ -453,6 +453,7 @@ fn main() {
                 Some(Value::Unsigned(n)) => *n,
                 _ => 0,
             },
+            extensions: Vec::new(),
         };
         let rust_bytes = encode(&record.to_cbor_without_sig()).unwrap();
         if rust_bytes == go_bytes {
@@ -526,6 +527,7 @@ fn main() {
                 Some(Value::Unsigned(n)) => *n,
                 _ => 0,
             },
+            extensions: Vec::new(),
         };
         let rust_bytes = encode(&record.to_cbor_without_sig()).unwrap();
         if rust_bytes == go_bytes {

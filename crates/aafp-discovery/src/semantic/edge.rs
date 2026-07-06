@@ -39,6 +39,10 @@ pub struct CapabilityEdge {
 impl CapabilityEdge {
     /// Create a new edge with no constraint.
     pub fn new(target: impl Into<String>, edge_type: EdgeType) -> Self {
-        todo!()
+        Self {
+            target: target.into(),
+            edge_type,
+            constraint: None,
+        }
     }
 }

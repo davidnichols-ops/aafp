@@ -1,135 +1,365 @@
-//! Routing observability: decision logging and Prometheus metrics (Track T5).
+//! Observability for the adaptive routing plane.
 //!
-//! Every routing decision produces a [`RoutingDecision`] record, stored in a
-//! thread-safe ring buffer ([`DecisionLog`], last 1024 by default) and emitted
-//! to the `tracing` span. [`RoutingMetrics`] exposes 10 Prometheus counters /
-//! histograms / gauges for the routing plane.
-//!
-//! This is a pre-build scaffold: `record_decision()` and metric registration
-//! are `todo!()` stubs to be filled in during T5 implementation.
+//! Provides `RoutingSnapshot` for point-in-time state export and
+//! `RoutingStats` for aggregate statistics, along with a `RoutingObserver`
+//! that collects events for logging/metrics export.
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use crate::routing::circuit::{BulkheadRegistry, CircuitBreakerRegistry, CircuitState};
+use crate::routing::metrics::PeerMetricsRegistry;
+use aafp_identity::identity_v1::AgentId;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
 
-use aafp_identity::AgentId;
-
-use crate::routing::config::RoutingStrategy;
-
-/// A routing decision record, for logging and debugging.
+/// Point-in-time snapshot of a single peer's routing state.
 #[derive(Clone, Debug)]
-pub struct RoutingDecision {
-    /// Capability tag that was discovered (e.g. `"ocr"`).
-    pub capability: String,
-    /// Human-readable query digest.
-    pub query_summary: String,
-    /// Total candidates considered before filtering.
-    pub candidates_total: usize,
-    /// Candidates surviving the static hard-constraint filter.
-    pub candidates_passed_static: usize,
-    /// Candidates surviving the dynamic hard-constraint filter.
-    pub candidates_passed_dynamic: usize,
-    /// Candidates eliminated because their circuit was open.
-    pub candidates_filtered_circuit: usize,
-    /// The agent ultimately selected, if any.
-    pub selected: Option<AgentId>,
-    pub selected_static_score: Option<f64>,
-    pub selected_dynamic_score: Option<f64>,
-    pub selected_total_score: Option<f64>,
-    pub selected_latency_ewma_ms: Option<f64>,
-    pub selected_success_rate: Option<f64>,
-    /// Strategy used for this decision.
-    pub strategy: RoutingStrategy,
-    /// Whether this call was hedged.
-    pub hedged: bool,
-    /// Time spent making the routing decision, in microseconds.
-    pub elapsed_us: u64,
+pub struct PeerSnapshot {
+    pub agent_id: AgentId,
+    pub circuit: CircuitState,
+    pub latency_ewma_ms: f64,
+    pub latency_initialized: bool,
+    pub latency_min_ms: f64,
+    pub success_rate: f64,
+    pub sample_count: u8,
+    pub consecutive_failures: u32,
+    pub consecutive_successes: u32,
+    pub in_flight: u32,
+    pub bulkhead_in_flight: u32,
+    pub stale: bool,
 }
 
-/// Thread-safe ring buffer of recent routing decisions.
-pub struct DecisionLog {
-    buffer: Mutex<VecDeque<RoutingDecision>>,
-    capacity: usize,
+/// Point-in-time snapshot of the entire routing plane.
+#[derive(Clone, Debug)]
+pub struct RoutingSnapshot {
+    pub peers: Vec<PeerSnapshot>,
+    pub total_peers: usize,
+    pub open_circuits: usize,
+    pub half_open_circuits: usize,
+    pub closed_circuits: usize,
+    pub total_in_flight: u32,
 }
 
-impl DecisionLog {
-    /// Create a new ring buffer holding the last `capacity` decisions,
-    /// wrapped in an [`Arc`] for shared ownership across the routing plane.
-    pub fn new(capacity: usize) -> Arc<Self> {
-        Arc::new(Self {
-            buffer: Mutex::new(VecDeque::with_capacity(capacity)),
-            capacity,
-        })
+impl RoutingSnapshot {
+    /// Build a snapshot from the registries.
+    pub fn collect(
+        metrics: &PeerMetricsRegistry,
+        circuits: &CircuitBreakerRegistry,
+        bulkhead: &BulkheadRegistry,
+    ) -> Self {
+        let all_metrics = metrics.snapshot_all();
+        let now = Instant::now();
+        let mut peers = Vec::with_capacity(all_metrics.len());
+        let mut open = 0;
+        let mut half_open = 0;
+        let mut closed = 0;
+        let mut total_in_flight = 0u32;
+
+        for m in all_metrics {
+            let circuit = circuits.state(&m.agent_id);
+            let bulkhead_in_flight = bulkhead.in_flight(&m.agent_id);
+            let stale = now.duration_since(m.last_seen) >= metrics.staleness_threshold;
+            match circuit {
+                CircuitState::Open => open += 1,
+                CircuitState::HalfOpen => half_open += 1,
+                CircuitState::Closed => closed += 1,
+            }
+            total_in_flight = total_in_flight.saturating_add(m.in_flight);
+            peers.push(PeerSnapshot {
+                agent_id: m.agent_id,
+                circuit,
+                latency_ewma_ms: m.latency_ewma_ms.value(),
+                latency_initialized: m.latency_ewma_ms.is_initialized(),
+                latency_min_ms: if m.latency_min_ms == f64::MAX {
+                    0.0
+                } else {
+                    m.latency_min_ms
+                },
+                success_rate: m.success_window.success_rate(),
+                sample_count: m.success_window.sample_count(),
+                consecutive_failures: m.consecutive_failures,
+                consecutive_successes: m.consecutive_successes,
+                in_flight: m.in_flight,
+                bulkhead_in_flight,
+                stale,
+            });
+        }
+
+        Self {
+            total_peers: peers.len(),
+            open_circuits: open,
+            half_open_circuits: half_open,
+            closed_circuits: closed,
+            total_in_flight,
+            peers,
+        }
     }
 
-    /// Append a decision to the ring buffer, evicting the oldest entry when
-    /// full, and emit a structured `tracing` event.
-    pub fn record(&self, decision: RoutingDecision) {
-        // TODO(T5): implement per AR_T5_T7_INTEGRATION_API.md §6.1.
-        //   - lock buffer, pop_front if at capacity, push_back
-        //   - emit tracing::debug!(capability, selected, score, "routing decision")
-        let _ = decision;
-        todo!("DecisionLog::record: implement ring-buffer append + tracing emit (§6.1)")
+    /// Get peers with open circuits.
+    pub fn open_circuit_peers(&self) -> Vec<&PeerSnapshot> {
+        self.peers
+            .iter()
+            .filter(|p| p.circuit == CircuitState::Open)
+            .collect()
     }
 
-    /// Return a snapshot of the buffered decisions in insertion order.
-    pub fn snapshot(&self) -> Vec<RoutingDecision> {
-        // TODO(T5): implement — lock and clone.
-        todo!("DecisionLog::snapshot: implement buffered-decision snapshot (§6.1)")
-    }
-}
-
-/// Prometheus metrics for the routing plane (10 metrics).
-///
-/// Counters:
-///   - `aafp_routing_decisions_total`
-///   - `aafp_routing_circuit_open_total`
-///   - `aafp_routing_hedge_total`
-///   - `aafp_routing_hedge_won_total`
-///   - `aafp_routing_no_viable_total`
-/// Histogram:
-///   - `aafp_routing_decision_us`
-/// Gauges (label: `agent_id`):
-///   - `aafp_peer_latency_ewma_ms`
-///   - `aafp_peer_success_rate`
-///   - `aafp_peer_in_flight`
-///   - `aafp_peer_circuit_state` (0=closed, 1=open, 2=half)
-pub struct RoutingMetrics {
-    // TODO(T5): replace placeholders with prometheus::{IntCounter, Histogram, GaugeVec}
-    // once the prometheus dependency is wired in.
-    pub decisions_total: (),
-    pub circuit_open_total: (),
-    pub hedge_total: (),
-    pub hedge_won_total: (),
-    pub no_viable_candidate_total: (),
-    pub decision_latency_us: (),
-    pub peer_latency_ewma_ms: (),
-    pub peer_success_rate: (),
-    pub peer_in_flight: (),
-    pub peer_circuit_state: (),
-}
-
-impl RoutingMetrics {
-    /// Register all routing metrics on the given Prometheus registry.
-    pub fn register(_registry: &()) -> Result<Self, ()> {
-        // TODO(T5): implement per AR_T5_T7_INTEGRATION_API.md §6.2.
-        //   Construct IntCounter/Histogram/GaugeVec instances and register
-        //   each on the provided prometheus::Registry.
-        todo!("RoutingMetrics::register: implement Prometheus metric registration (§6.2)")
+    /// Get healthy peers (closed circuit, not stale, success rate > 0.5).
+    pub fn healthy_peers(&self) -> Vec<&PeerSnapshot> {
+        self.peers
+            .iter()
+            .filter(|p| {
+                p.circuit == CircuitState::Closed && !p.stale && p.success_rate > 0.5
+            })
+            .collect()
     }
 }
 
-/// Record a routing decision: update counters/histograms and append to the
-/// decision log. This is the single observability hook invoked on every
-/// `discover().call()`.
-pub fn record_decision(
-    _metrics: &RoutingMetrics,
-    _log: &DecisionLog,
-    _decision: RoutingDecision,
-) {
-    // TODO(T5): implement per AR_T5_T7_INTEGRATION_API.md §6.
-    //   - increment decisions_total
-    //   - observe decision_latency_us
-    //   - increment circuit_open_total / no_viable_candidate_total as appropriate
-    //   - log.record(decision)
-    todo!("record_decision: wire metrics + decision log (§6)")
+/// Aggregate routing statistics (cumulative counters).
+#[derive(Clone, Debug, Default)]
+pub struct RoutingStats {
+    pub total_requests: u64,
+    pub total_successes: u64,
+    pub total_failures: u64,
+    pub total_timeouts: u64,
+    pub total_circuit_opens: u64,
+    pub total_hedges_sent: u64,
+    pub total_retries: u64,
+    pub total_bulkhead_rejections: u64,
+}
+
+impl RoutingStats {
+    pub fn success_rate(&self) -> f64 {
+        let total = self.total_successes + self.total_failures;
+        if total == 0 {
+            return 1.0;
+        }
+        self.total_successes as f64 / total as f64
+    }
+
+    pub fn record_success(&mut self) {
+        self.total_requests += 1;
+        self.total_successes += 1;
+    }
+
+    pub fn record_failure(&mut self) {
+        self.total_requests += 1;
+        self.total_failures += 1;
+    }
+
+    pub fn record_timeout(&mut self) {
+        self.total_requests += 1;
+        self.total_timeouts += 1;
+        self.total_failures += 1;
+    }
+
+    pub fn record_circuit_open(&mut self) {
+        self.total_circuit_opens += 1;
+    }
+
+    pub fn record_hedge(&mut self) {
+        self.total_hedges_sent += 1;
+    }
+
+    pub fn record_retry(&mut self) {
+        self.total_retries += 1;
+    }
+
+    pub fn record_bulkhead_rejection(&mut self) {
+        self.total_bulkhead_rejections += 1;
+    }
+}
+
+/// Thread-safe routing stats collector.
+pub struct RoutingObserver {
+    stats: Mutex<RoutingStats>,
+}
+
+impl RoutingObserver {
+    pub fn new() -> Self {
+        Self {
+            stats: Mutex::new(RoutingStats::default()),
+        }
+    }
+
+    pub fn record_success(&self) {
+        self.stats.lock().unwrap().record_success();
+    }
+    pub fn record_failure(&self) {
+        self.stats.lock().unwrap().record_failure();
+    }
+    pub fn record_timeout(&self) {
+        self.stats.lock().unwrap().record_timeout();
+    }
+    pub fn record_circuit_open(&self) {
+        self.stats.lock().unwrap().record_circuit_open();
+    }
+    pub fn record_hedge(&self) {
+        self.stats.lock().unwrap().record_hedge();
+    }
+    pub fn record_retry(&self) {
+        self.stats.lock().unwrap().record_retry();
+    }
+    pub fn record_bulkhead_rejection(&self) {
+        self.stats.lock().unwrap().record_bulkhead_rejection();
+    }
+
+    pub fn snapshot(&self) -> RoutingStats {
+        self.stats.lock().unwrap().clone()
+    }
+}
+
+impl Default for RoutingObserver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Export routing stats as a flat key-value map (for Prometheus or similar).
+pub fn export_stats(stats: &RoutingStats) -> HashMap<&'static str, f64> {
+    let mut map = HashMap::new();
+    map.insert("routing_requests_total", stats.total_requests as f64);
+    map.insert("routing_successes_total", stats.total_successes as f64);
+    map.insert("routing_failures_total", stats.total_failures as f64);
+    map.insert("routing_timeouts_total", stats.total_timeouts as f64);
+    map.insert("routing_circuit_opens_total", stats.total_circuit_opens as f64);
+    map.insert("routing_hedges_sent_total", stats.total_hedges_sent as f64);
+    map.insert("routing_retries_total", stats.total_retries as f64);
+    map.insert(
+        "routing_bulkhead_rejections_total",
+        stats.total_bulkhead_rejections as f64,
+    );
+    map.insert("routing_success_rate", stats.success_rate());
+    map
+}
+
+/// Export a routing snapshot as a flat key-value map.
+pub fn export_snapshot(snapshot: &RoutingSnapshot) -> HashMap<&'static str, f64> {
+    let mut map = HashMap::new();
+    map.insert("routing_total_peers", snapshot.total_peers as f64);
+    map.insert("routing_open_circuits", snapshot.open_circuits as f64);
+    map.insert("routing_half_open_circuits", snapshot.half_open_circuits as f64);
+    map.insert("routing_closed_circuits", snapshot.closed_circuits as f64);
+    map.insert("routing_total_in_flight", snapshot.total_in_flight as f64);
+    for p in &snapshot.peers {
+        let prefix = format!("routing_peer_{:?}", p.agent_id);
+        map.insert(leak_str(format!("{prefix}_latency_ewma_ms")), p.latency_ewma_ms);
+        map.insert(leak_str(format!("{prefix}_success_rate")), p.success_rate);
+        map.insert(leak_str(format!("{prefix}_in_flight")), p.in_flight as f64);
+    }
+    map
+}
+
+fn leak_str(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_routing_stats_success_rate() {
+        let mut stats = RoutingStats::default();
+        assert_eq!(stats.success_rate(), 1.0);
+        for _ in 0..8 {
+            stats.record_success();
+        }
+        for _ in 0..2 {
+            stats.record_failure();
+        }
+        assert!((stats.success_rate() - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_routing_stats_timeout_counts_as_failure() {
+        let mut stats = RoutingStats::default();
+        stats.record_timeout();
+        assert_eq!(stats.total_timeouts, 1);
+        assert_eq!(stats.total_failures, 1);
+        assert_eq!(stats.total_requests, 1);
+    }
+
+    #[test]
+    fn test_routing_observer_thread_safe() {
+        let observer = RoutingObserver::new();
+        observer.record_success();
+        observer.record_success();
+        observer.record_failure();
+        observer.record_hedge();
+        observer.record_retry();
+        let stats = observer.snapshot();
+        assert_eq!(stats.total_successes, 2);
+        assert_eq!(stats.total_failures, 1);
+        assert_eq!(stats.total_hedges_sent, 1);
+        assert_eq!(stats.total_retries, 1);
+    }
+
+    #[test]
+    fn test_export_stats_keys() {
+        let mut stats = RoutingStats::default();
+        stats.record_success();
+        stats.record_failure();
+        let map = export_stats(&stats);
+        assert_eq!(map.get("routing_requests_total"), Some(&2.0));
+        assert_eq!(map.get("routing_successes_total"), Some(&1.0));
+        assert_eq!(map.get("routing_failures_total"), Some(&1.0));
+        assert!(map.get("routing_success_rate").is_some());
+    }
+
+    #[test]
+    fn test_snapshot_collect_empty() {
+        let metrics = PeerMetricsRegistry::new();
+        let circuits = CircuitBreakerRegistry::default();
+        let bulkhead = BulkheadRegistry::default();
+        let snapshot = RoutingSnapshot::collect(&metrics, &circuits, &bulkhead);
+        assert_eq!(snapshot.total_peers, 0);
+        assert_eq!(snapshot.open_circuits, 0);
+    }
+
+    #[test]
+    fn test_snapshot_collect_with_peers() {
+        let metrics = PeerMetricsRegistry::new();
+        let circuits = CircuitBreakerRegistry::default();
+        let bulkhead = BulkheadRegistry::default();
+        let id1 = AgentId([1u8; 32]);
+        let id2 = AgentId([2u8; 32]);
+        metrics.record_outcome(&id1, 50.0, true);
+        metrics.record_outcome(&id2, 100.0, false);
+        let snapshot = RoutingSnapshot::collect(&metrics, &circuits, &bulkhead);
+        assert_eq!(snapshot.total_peers, 2);
+        assert_eq!(snapshot.closed_circuits, 2);
+        let healthy = snapshot.healthy_peers();
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy[0].agent_id, id1);
+    }
+
+    #[test]
+    fn test_snapshot_open_circuit_peers() {
+        let metrics = PeerMetricsRegistry::new();
+        let circuits = CircuitBreakerRegistry::new(
+            crate::routing::circuit::CircuitBreakerConfig {
+                failure_threshold: 1,
+                ..Default::default()
+            },
+        );
+        let bulkhead = BulkheadRegistry::default();
+        let id = AgentId([1u8; 32]);
+        metrics.record_outcome(&id, 100.0, false);
+        circuits.record_failure(&id);
+        let snapshot = RoutingSnapshot::collect(&metrics, &circuits, &bulkhead);
+        assert_eq!(snapshot.open_circuits, 1);
+        assert_eq!(snapshot.open_circuit_peers().len(), 1);
+    }
+
+    #[test]
+    fn test_export_snapshot() {
+        let metrics = PeerMetricsRegistry::new();
+        let circuits = CircuitBreakerRegistry::default();
+        let bulkhead = BulkheadRegistry::default();
+        let id = AgentId([1u8; 32]);
+        metrics.record_outcome(&id, 50.0, true);
+        let snapshot = RoutingSnapshot::collect(&metrics, &circuits, &bulkhead);
+        let map = export_snapshot(&snapshot);
+        assert_eq!(map.get("routing_total_peers"), Some(&1.0));
+        assert_eq!(map.get("routing_closed_circuits"), Some(&1.0));
+    }
 }

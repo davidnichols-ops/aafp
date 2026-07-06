@@ -99,7 +99,11 @@ impl TopicAcl {
             return false;
         };
         tokens.iter().any(|token| {
-            token.payload.cap.iter().any(|cap| Self::cap_matches(cap, topic, action))
+            token
+                .payload
+                .cap
+                .iter()
+                .any(|cap| Self::cap_matches(cap, topic, action))
         })
     }
 
@@ -120,11 +124,9 @@ impl Default for TopicAcl {
 /// Check whether a topic filter matches a concrete topic.
 ///
 /// Supports MQTT-style wildcards: `+` (single level) and `#` (multi-level).
-#[allow(clippy::result_unit_err)]
+/// Delegates to `crate::pubsub::topic::topic_matches`.
 pub fn topic_matches(filter: &str, topic: &str) -> bool {
-    // TODO(P5): implement MQTT-style wildcard matching (+ and #).
-    let _ = (filter, topic);
-    todo!("topic_matches: MQTT wildcard matching not yet implemented")
+    crate::pubsub::topic::topic_matches(filter, topic)
 }
 
 /// Authorization context backed by the PubSub ACL.
@@ -204,12 +206,19 @@ impl AuthorizationProvider for AclAuthorizationProvider {
 /// Returns `Ok(())` if authorized, or `Err(())` if denied (caller maps to
 /// `PubSubError::PublishDenied` / error code 9007).
 pub async fn authorize_publish(
-    _acl: &AclAuthorizationProvider,
-    _caller: &AgentId,
-    _topic: &str,
+    acl: &AclAuthorizationProvider,
+    caller: &AgentId,
+    topic: &str,
 ) -> Result<(), ()> {
-    // TODO(P5): wire into PubSubRpcHandler::handle_publish.
-    todo!("authorize_publish not yet implemented")
+    let ctx = acl
+        .authorize(caller, &[])
+        .await
+        .map_err(|_| ())?;
+    if ctx.is_authorized(&format!("pubsub/{topic}/publish")) {
+        Ok(())
+    } else {
+        Err(())
+    }
 }
 
 /// Authorize a subscribe request against the ACL provider.
@@ -217,10 +226,69 @@ pub async fn authorize_publish(
 /// Returns `Ok(())` if authorized, or `Err(())` if denied (caller maps to
 /// `PubSubError::SubscribeDenied` / error code 9008).
 pub async fn authorize_subscribe(
-    _acl: &AclAuthorizationProvider,
-    _caller: &AgentId,
-    _topic: &str,
+    acl: &AclAuthorizationProvider,
+    caller: &AgentId,
+    topic: &str,
 ) -> Result<(), ()> {
-    // TODO(P5): wire into PubSubRpcHandler::handle_subscribe.
-    todo!("authorize_subscribe not yet implemented")
+    let ctx = acl
+        .authorize(caller, &[])
+        .await
+        .map_err(|_| ())?;
+    if ctx.is_authorized(&format!("pubsub/{topic}/subscribe")) {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pubsub_capability_parse_publish() {
+        let cap = PubSubCapability::parse("pubsub/tasks.*/publish").unwrap();
+        assert_eq!(cap.topic_filter, "tasks.*");
+        assert_eq!(cap.action, TopicAction::Publish);
+    }
+
+    #[test]
+    fn test_pubsub_capability_parse_subscribe() {
+        let cap = PubSubCapability::parse("pubsub/agents.A.inbox/subscribe").unwrap();
+        assert_eq!(cap.topic_filter, "agents.A.inbox");
+        assert_eq!(cap.action, TopicAction::Subscribe);
+    }
+
+    #[test]
+    fn test_pubsub_capability_parse_invalid() {
+        assert!(PubSubCapability::parse("not_pubsub").is_none());
+        assert!(PubSubCapability::parse("pubsub/topic").is_none());
+        assert!(PubSubCapability::parse("pubsub/topic/delete").is_none());
+    }
+
+    #[test]
+    fn test_pubsub_capability_encode() {
+        let cap = PubSubCapability::parse("pubsub/tasks.*/publish").unwrap();
+        assert_eq!(cap.encode(), "pubsub/tasks.*/publish");
+    }
+
+    #[test]
+    fn test_topic_acl_check_no_grants() {
+        let acl = TopicAcl::new();
+        let caller = [1u8; 32];
+        assert!(!acl.check(&caller, "tasks/123", TopicAction::Publish));
+    }
+
+    #[test]
+    fn test_topic_matches_exact() {
+        assert!(topic_matches("tasks/123", "tasks/123"));
+        assert!(!topic_matches("tasks/123", "tasks/456"));
+    }
+
+    #[test]
+    fn test_topic_matches_wildcard() {
+        assert!(topic_matches("tasks/+", "tasks/123"));
+        assert!(topic_matches("agents/+/status", "agents/A/status"));
+        assert!(!topic_matches("agents/+/status", "agents/A/inbox"));
+    }
 }

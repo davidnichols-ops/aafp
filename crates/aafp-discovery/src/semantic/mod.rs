@@ -23,10 +23,11 @@ pub mod query;
 
 pub use capability::{
     CapabilityAttributes, CapabilityCategory, CostModel, GeoConstraint, HardwareSpec, Modality,
-    PerformanceProfile, QualityMetrics, SemanticCapability, SemanticVersion,
+    OutputSpec, PerformanceProfile, QualityMetrics, Requirement, SemanticCapability,
+    SemanticVersion,
 };
 pub use edge::{CapabilityEdge, EdgeType};
 pub use query::{
-    CapabilityQuery, CostFilter, GeoFilter, PerformanceFilter, QualityFilter, QueryFilter,
-    RangeOp, VersionFilter,
+    CapabilityQuery, CostFilter, GeoFilter, PerformanceFilter, QualityFilter, QueryFilter, RangeOp,
+    VersionFilter,
 };

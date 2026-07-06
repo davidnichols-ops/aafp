@@ -148,49 +148,79 @@ pub struct CapabilityQuery {
 impl CapabilityQuery {
     /// Create a new query for the given capability name.
     pub fn new(name: impl Into<String>) -> Self {
-        todo!()
+        Self {
+            name: name.into(),
+            filters: Vec::new(),
+            performance: None,
+            quality: None,
+            cost: None,
+            geo: None,
+            version: None,
+        }
     }
 
     /// Add an attribute/metadata filter predicate (builder pattern).
     pub fn with_filter(mut self, filter: QueryFilter) -> Self {
-        todo!()
+        self.filters.push(filter);
+        self
     }
 
     /// Set performance requirements (builder pattern).
     pub fn with_performance(mut self, perf: PerformanceFilter) -> Self {
-        todo!()
+        self.performance = Some(perf);
+        self
     }
 
     /// Set quality requirements (builder pattern).
     pub fn with_quality(mut self, qual: QualityFilter) -> Self {
-        todo!()
+        self.quality = Some(qual);
+        self
     }
 
     /// Set cost constraints (builder pattern).
     pub fn with_cost(mut self, cost: CostFilter) -> Self {
-        todo!()
+        self.cost = Some(cost);
+        self
     }
 
     /// Set geographic constraints (builder pattern).
     pub fn with_geo(mut self, geo: GeoFilter) -> Self {
-        todo!()
+        self.geo = Some(geo);
+        self
     }
 
     /// Set version constraints (builder pattern).
     pub fn with_version(mut self, ver: VersionFilter) -> Self {
-        todo!()
+        self.version = Some(ver);
+        self
     }
 
     /// Terminal builder method — returns `self`. Follows the design-doc
     /// pattern for ergonomic query construction.
     pub fn build(self) -> Self {
-        todo!()
+        self
     }
 }
 
 impl VersionFilter {
     /// Returns true if `ver` satisfies this version constraint.
     pub fn matches(&self, ver: &SemanticVersion) -> bool {
-        todo!()
+        match self {
+            VersionFilter::Exact(v) => v == ver,
+            VersionFilter::Minimum(min) => {
+                ver.major > min.major
+                    || (ver.major == min.major && ver.minor > min.minor)
+                    || (ver.major == min.major && ver.minor == min.minor && ver.patch >= min.patch)
+            }
+            VersionFilter::Range { min, max } => {
+                VersionFilter::Minimum(min.clone()).matches(ver)
+                    && !VersionFilter::Minimum(SemanticVersion {
+                        major: max.major,
+                        minor: max.minor,
+                        patch: max.patch + 1,
+                    })
+                    .matches(ver)
+            }
+        }
     }
 }

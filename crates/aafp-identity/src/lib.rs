@@ -11,6 +11,8 @@ pub mod agent_id;
 pub mod agent_record;
 /// CA certificates for enterprise deployments (RFC 0011 §5).
 pub mod ca_certificate;
+/// AgentRecord extensions (geo, performance, cost, semantic, reputation, etc.)
+pub mod extensions;
 pub mod identity_v1;
 /// Key rotation: old key signs new key (RFC 0011 §6).
 pub mod key_directory;
@@ -57,4 +59,14 @@ pub use web_of_trust::{
     TrustSignature, WebOfTrust, WotError, RECOMMENDED_WOT_VALIDITY_SECS, TRUST_LEVEL_FULL,
     TRUST_LEVEL_MARGINAL, TRUST_LEVEL_NONE, TRUST_LEVEL_ULTIMATE, WOT_DOMAIN_SEPARATOR,
     WOT_SIG_TYPE_V1,
+};
+
+// Extension re-exports
+pub use extensions::{
+    compute_reputation, delegate_attest_capability, verify_attestation_authorization,
+    AgentRecordExtension, Attestation, AttestationData, AttestationError, AttestationKey,
+    AttestationStore, AttestationStoreError, CapabilityVersionExtension, CostExtension,
+    GeoExtension, HeartbeatExtension, HeartbeatTracker, HeartbeatUpdate, PerformanceExtension,
+    ReputationExtension, SemanticExtension, SemanticVersion, ATTESTATION_DOMAIN_SEPARATOR,
+    ATTESTATION_TYPE_V1,
 };

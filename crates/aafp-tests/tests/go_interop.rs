@@ -517,6 +517,7 @@ fn test_go_agent_record_decode() {
                 Some(Value::Unsigned(n)) => *n,
                 _ => 0,
             },
+            extensions: Vec::new(),
         };
         let rust_bytes = encode(&record.to_cbor_without_sig()).unwrap();
         assert_eq!(

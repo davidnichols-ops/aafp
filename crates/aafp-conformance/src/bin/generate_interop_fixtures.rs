@@ -219,6 +219,7 @@ fn main() {
         signature: vec![],
         key_algorithm: KEY_ALG_ML_DSA_65,
         record_version: 1,
+        extensions: Vec::new(),
     };
     write_cbor(&ar_dir, "without_sig.bin", &record_a.to_cbor_without_sig());
 
@@ -233,6 +234,7 @@ fn main() {
         signature: vec![],
         key_algorithm: KEY_ALG_ML_DSA_65,
         record_version: 1,
+        extensions: Vec::new(),
     };
     write_cbor(
         &ar_dir,
@@ -251,6 +253,7 @@ fn main() {
         signature: SIGNATURE_A.to_vec(),
         key_algorithm: KEY_ALG_ML_DSA_65,
         record_version: 1,
+        extensions: Vec::new(),
     };
     write_cbor(&ar_dir, "with_sig.bin", &record_with_sig.to_cbor());
 

@@ -94,3 +94,54 @@ pub fn check_message_size(data: &[u8], limits: &ConnectionLimits) -> Result<(), 
 
 /// Map of peer `AgentId` -> `ConnectionState`, guarded by a `Mutex`.
 pub type ConnectionStates = Arc<Mutex<HashMap<AgentId, ConnectionState>>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_connection_limits_defaults() {
+        let limits = ConnectionLimits::default();
+        assert_eq!(limits.max_subscriptions, 1024);
+        assert_eq!(limits.max_publish_rate, 100);
+        assert_eq!(limits.max_message_size, 1024 * 1024);
+        assert_eq!(limits.max_topic_length, 256);
+        assert_eq!(limits.max_topic_depth, 16);
+    }
+
+    #[test]
+    fn test_check_publish_rate_under_limit() {
+        let mut state = ConnectionState::new();
+        for _ in 0..10 {
+            assert!(state.check_publish_rate(100).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_check_publish_rate_over_limit() {
+        let mut state = ConnectionState::new();
+        for _ in 0..5 {
+            assert!(state.check_publish_rate(5).is_ok());
+        }
+        // 6th publish should be rate-limited
+        assert_eq!(state.check_publish_rate(5), Err(PubSubError::RateLimited));
+    }
+
+    #[test]
+    fn test_check_message_size_ok() {
+        let limits = ConnectionLimits::default();
+        assert!(check_message_size(&[0u8; 100], &limits).is_ok());
+    }
+
+    #[test]
+    fn test_check_message_size_too_large() {
+        let limits = ConnectionLimits {
+            max_message_size: 10,
+            ..Default::default()
+        };
+        assert_eq!(
+            check_message_size(&[0u8; 100], &limits),
+            Err(PubSubError::MessageTooLarge)
+        );
+    }
+}

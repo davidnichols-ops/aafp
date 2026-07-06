@@ -607,6 +607,7 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
                     signature: vec![],
                     key_algorithm: KEY_ALG_ML_DSA_65,
                     record_version: 1,
+                    extensions: Vec::new(),
                 };
                 Some(aafp_cbor::encode(&record.to_cbor_without_sig()).unwrap())
             },
@@ -625,6 +626,7 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
                     signature: vec![],
                     key_algorithm: KEY_ALG_ML_DSA_65,
                     record_version: 1,
+                    extensions: Vec::new(),
                 };
                 let bytes = aafp_cbor::encode(&record.to_cbor_without_sig()).unwrap();
                 TestVector::hash(&bytes)
@@ -648,6 +650,7 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
                     signature: vec![],
                     key_algorithm: KEY_ALG_ML_DSA_65,
                     record_version: 1,
+                    extensions: Vec::new(),
                 };
                 Some(aafp_cbor::encode(&record.to_cbor_without_sig()).unwrap())
             },
@@ -665,6 +668,7 @@ pub fn agent_record_vectors() -> Vec<TestVector> {
                     signature: vec![],
                     key_algorithm: KEY_ALG_ML_DSA_65,
                     record_version: 1,
+                    extensions: Vec::new(),
                 };
                 let bytes = aafp_cbor::encode(&record.to_cbor_without_sig()).unwrap();
                 TestVector::hash(&bytes)
@@ -839,6 +843,7 @@ pub fn discovery_vectors() -> Vec<TestVector> {
                     signature: SIGNATURE_A.to_vec(),
                     key_algorithm: KEY_ALG_ML_DSA_65,
                     record_version: 1,
+                    extensions: Vec::new(),
                 };
                 let params = AnnounceParams::new(record);
                 Some(aafp_cbor::encode(&params.to_cbor()).unwrap())
@@ -857,6 +862,7 @@ pub fn discovery_vectors() -> Vec<TestVector> {
                     signature: SIGNATURE_A.to_vec(),
                     key_algorithm: KEY_ALG_ML_DSA_65,
                     record_version: 1,
+                    extensions: Vec::new(),
                 };
                 let params = AnnounceParams::new(record);
                 TestVector::hash(&aafp_cbor::encode(&params.to_cbor()).unwrap())

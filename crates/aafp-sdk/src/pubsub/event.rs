@@ -128,7 +128,7 @@ impl Event {
     /// from the `TopicMessage` and apply the text/binary heuristic to `data`.
     /// The `timestamp` is set to the current time (the wire format does not
     /// carry a timestamp — it is inferred at receive time).
-    pub fn from_topic_message(msg: &aafp_messaging::TopicMessage) -> Self {
+    pub fn from_topic_message(msg: &aafp_messaging::pubsub_v1::TopicMessage) -> Self {
         // Heuristic: try to interpret as UTF-8 text; if it fails, treat as binary.
         let text = String::from_utf8(msg.data.clone()).unwrap_or_default();
         let data = if String::from_utf8(msg.data.clone()).is_ok() {
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_event_from_topic_message_text() {
-        let msg = aafp_messaging::TopicMessage {
+        let msg = aafp_messaging::pubsub_v1::TopicMessage {
             topic: "test.topic".to_string(),
             from: [42u8; 32],
             data: b"hello world".to_vec(),
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_event_from_topic_message_binary() {
-        let msg = aafp_messaging::TopicMessage {
+        let msg = aafp_messaging::pubsub_v1::TopicMessage {
             topic: "bin.topic".to_string(),
             from: [7u8; 32],
             data: vec![0xff, 0xfe, 0x00],

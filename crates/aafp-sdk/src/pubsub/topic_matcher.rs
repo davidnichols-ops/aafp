@@ -3,9 +3,6 @@
 //! Stores exact subscriptions in a `HashMap` for O(1) lookup, and wildcard
 //! subscriptions in a `Vec` scanned on each publish (O(wildcards × depth)).
 //! A trie index is a future optimization for large wildcard counts (§12.4).
-//!
-//! This module is a pre-build scaffold; method bodies are `todo!()` stubs
-//! to be implemented in the P4 build pass.
 
 #![allow(dead_code)]
 
@@ -41,7 +38,15 @@ impl<T: Clone> TopicMatcher<T> {
     /// map; otherwise in the wildcard vec. Subscribers for an existing
     /// wildcard filter are appended to that filter's entry.
     pub fn subscribe(&mut self, filter: &str, sub: T) {
-        todo!("if filter contains + or # -> wildcard vec (find or push), else exact map")
+        if filter.contains('+') || filter.contains('#') {
+            if let Some(entry) = self.wildcard.iter_mut().find(|(f, _)| *f == filter) {
+                entry.1.push(sub);
+            } else {
+                self.wildcard.push((filter.to_string(), vec![sub]));
+            }
+        } else {
+            self.exact.entry(filter.to_string()).or_default().push(sub);
+        }
     }
 
     /// Remove a subscriber from a filter.
@@ -52,7 +57,21 @@ impl<T: Clone> TopicMatcher<T> {
     where
         T: PartialEq,
     {
-        todo!("retain in exact[filter] and wildcard entry; return true if any removed")
+        let removed_from_exact = self.exact.get_mut(filter).is_some_and(|v| {
+            let before = v.len();
+            v.retain(|s| s != sub);
+            v.len() < before
+        });
+        let removed_from_wild = self
+            .wildcard
+            .iter_mut()
+            .find(|(f, _)| *f == filter)
+            .is_some_and(|(_, v)| {
+                let before = v.len();
+                v.retain(|s| s != sub);
+                v.len() < before
+            });
+        removed_from_exact || removed_from_wild
     }
 
     /// Find all subscribers whose filter matches the given published topic.
@@ -60,23 +79,107 @@ impl<T: Clone> TopicMatcher<T> {
     /// Returns a `Vec` of cloned subscriber references. Exact matches are
     /// O(1); wildcard matches are O(wildcards × depth) via `topic_matches`.
     pub fn matches(&self, topic: &str) -> Vec<T> {
-        let _ = topic_matches; // referenced for stub wiring
-        todo!("extend from exact.get(topic) + wildcard entries where topic_matches")
+        let mut out = Vec::new();
+        // Exact match: O(1).
+        if let Some(subs) = self.exact.get(topic) {
+            out.extend_from_slice(subs);
+        }
+        // Wildcard match: O(wildcards × depth).
+        for (filter, subs) in &self.wildcard {
+            if topic_matches(filter, topic) {
+                out.extend_from_slice(subs);
+            }
+        }
+        out
     }
 
     /// Number of distinct filters (exact + wildcard).
     pub fn filter_count(&self) -> usize {
-        todo!("self.exact.len() + self.wildcard.len()")
+        self.exact.len() + self.wildcard.len()
     }
 
     /// Total subscriber count across all filters.
     pub fn subscriber_count(&self) -> usize {
-        todo!("sum exact.values().len() + sum wildcard entry len()")
+        self.exact.values().map(|v| v.len()).sum::<usize>()
+            + self.wildcard.iter().map(|(_, v)| v.len()).sum::<usize>()
     }
 }
 
 impl<T: Clone> Default for TopicMatcher<T> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matcher_exact_only() {
+        let mut m: TopicMatcher<&str> = TopicMatcher::new();
+        m.subscribe("a/b/c", "sub1");
+        assert_eq!(m.matches("a/b/c"), vec!["sub1"]);
+        assert!(m.matches("a/b/d").is_empty());
+    }
+
+    #[test]
+    fn matcher_single_wildcard() {
+        let mut m: TopicMatcher<&str> = TopicMatcher::new();
+        m.subscribe("agents/+/status", "sub1");
+        assert_eq!(m.matches("agents/A/status"), vec!["sub1"]);
+        assert_eq!(m.matches("agents/B/status"), vec!["sub1"]);
+        assert!(m.matches("agents/A/inbox").is_empty());
+    }
+
+    #[test]
+    fn matcher_multi_wildcard() {
+        let mut m: TopicMatcher<&str> = TopicMatcher::new();
+        m.subscribe("tasks/#", "sub1");
+        assert_eq!(m.matches("tasks"), vec!["sub1"]);
+        assert_eq!(m.matches("tasks/123"), vec!["sub1"]);
+        assert_eq!(m.matches("tasks/123/events"), vec!["sub1"]);
+        assert!(m.matches("agents/A/status").is_empty());
+    }
+
+    #[test]
+    fn matcher_multiple_filters_same_topic() {
+        let mut m: TopicMatcher<&str> = TopicMatcher::new();
+        m.subscribe("a/b/c", "exact");
+        m.subscribe("a/+/c", "single");
+        m.subscribe("a/#", "multi");
+        let mut matches = m.matches("a/b/c");
+        matches.sort();
+        assert_eq!(matches, vec!["exact", "multi", "single"]);
+    }
+
+    #[test]
+    fn matcher_unsubscribe() {
+        let mut m: TopicMatcher<&str> = TopicMatcher::new();
+        m.subscribe("a/b", "sub1");
+        m.subscribe("a/b", "sub2");
+        assert_eq!(m.matches("a/b").len(), 2);
+        assert!(m.unsubscribe("a/b", &"sub1"));
+        assert_eq!(m.matches("a/b"), vec!["sub2"]);
+        assert!(!m.unsubscribe("a/b", &"sub1")); // already removed
+    }
+
+    #[test]
+    fn matcher_unsubscribe_wildcard() {
+        let mut m: TopicMatcher<&str> = TopicMatcher::new();
+        m.subscribe("a/+/c", "sub1");
+        m.subscribe("a/+/c", "sub2");
+        assert!(m.unsubscribe("a/+/c", &"sub1"));
+        assert_eq!(m.matches("a/b/c"), vec!["sub2"]);
+    }
+
+    #[test]
+    fn matcher_counts() {
+        let mut m: TopicMatcher<&str> = TopicMatcher::new();
+        m.subscribe("a/b", "s1");
+        m.subscribe("a/+/c", "s2");
+        m.subscribe("a/#", "s3");
+        assert_eq!(m.filter_count(), 3);
+        assert_eq!(m.subscriber_count(), 3);
     }
 }

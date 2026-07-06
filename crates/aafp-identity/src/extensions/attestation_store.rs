@@ -2,117 +2,93 @@
 //!
 //! Attestations are stored under a separate key namespace from AgentRecords:
 //!   key = SHA-256(b"aafp-attestation" || subject_agent_id || attester_agent_id)
-//!
-//! This keeps attested metrics (signed by third parties) decoupled from
-//! self-signed AgentRecords, preventing agents from lying about their own
-//! quality (§7.1).
-//!
-//! This is a stub module — function bodies are `todo!()` and will be
-//! implemented in a subsequent build phase.
 
-use crate::AgentId;
+use super::attestation::Attestation;
+use crate::identity_v1::AgentId;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-/// DHT key for an attestation: `SHA-256(b"aafp-attestation" || subject || attester)`.
+/// DHT key for an attestation.
 pub type AttestationKey = [u8; 32];
 
-/// In-memory attestation store with a separate key namespace from
-/// `CapabilityDht`. Mirrors the in-memory approach of the capability DHT.
-///
-/// Attestations are indexed by `AttestationKey` (derived from
-/// subject + attester AgentIds) with a reverse index by subject for
-/// efficient prefix-style lookup of all attestations for a given agent.
+/// In-memory attestation store with a separate key namespace.
 #[derive(Debug, Default)]
 pub struct AttestationStore {
-    /// `AttestationKey -> attestation payload` (opaque bytes in stub form).
-    store: HashMap<AttestationKey, Vec<u8>>,
-    /// `SubjectAgentId -> Vec<AttestationKey>` (reverse index).
+    store: HashMap<AttestationKey, Attestation>,
     by_subject: HashMap<AgentId, Vec<AttestationKey>>,
 }
 
 impl AttestationStore {
-    /// Create a new empty attestation store.
     pub fn new() -> Self {
-        Self {
-            store: HashMap::new(),
-            by_subject: HashMap::new(),
-        }
+        Self::default()
     }
 
-    /// Compute the DHT key for an attestation.
-    ///
-    /// `key = SHA-256(b"aafp-attestation" || subject.0 || attester.0)`
-    ///
-    /// # Stub
-    /// This is a stub — SHA-256 hashing will be implemented in a subsequent phase.
     pub fn attestation_key(subject: &AgentId, attester: &AgentId) -> AttestationKey {
-        let _ = (subject, attester);
-        todo!("attestation_key: SHA-256(b\"aafp-attestation\" || subject || attester)")
+        let mut hasher = Sha256::new();
+        hasher.update(b"aafp-attestation");
+        hasher.update(subject.0);
+        hasher.update(attester.0);
+        let result = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&result);
+        key
     }
 
-    /// Store an attestation.
-    ///
-    /// Verifies the signature and expiry first, then rejects self-attestations
-    /// (where `attester == subject`) per §7.5 Sybil resistance.
-    ///
-    /// # Stub
-    /// This is a stub — verification and storage will be implemented in a
-    /// subsequent phase.
     pub fn store(
         &mut self,
         subject: &AgentId,
         attester: &AgentId,
-        attestation_bytes: &[u8],
-        expires_at: u64,
+        attestation: Attestation,
         now: u64,
     ) -> Result<(), AttestationStoreError> {
-        let _ = (subject, attester, attestation_bytes, expires_at, now);
-        todo!("store: verify signature/expiry, reject self-attestation, insert")
+        attestation
+            .verify(now)
+            .map_err(|_| AttestationStoreError::VerificationFailed)?;
+
+        if subject == attester {
+            return Err(AttestationStoreError::SelfAttestation);
+        }
+
+        let key = Self::attestation_key(subject, attester);
+        self.by_subject.entry(*subject).or_default().push(key);
+        self.store.insert(key, attestation);
+        Ok(())
     }
 
-    /// Get all attestations for a subject agent.
-    ///
-    /// # Stub
-    /// This is a stub — lookup via the reverse index will be implemented in a
-    /// subsequent phase.
-    pub fn get_for_agent(&self, subject: &AgentId) -> Vec<&[u8]> {
-        let _ = subject;
-        todo!("get_for_agent: return all attestations for subject via by_subject index")
+    pub fn get_for_agent(&self, subject: &AgentId) -> Vec<&Attestation> {
+        self.by_subject
+            .get(subject)
+            .map(|keys| keys.iter().filter_map(|k| self.store.get(k)).collect())
+            .unwrap_or_default()
     }
 
-    /// Reject self-attestations where `attester == subject` (§7.5).
-    ///
-    /// Returns `Err(SelfAttestation)` if the attester and subject are the
-    /// same agent. This is called by [`store`](Self::store) before insertion.
-    ///
-    /// # Stub
-    /// This is a stub — the check itself is trivial but is separated for
-    /// testability; implementation will be added in a subsequent phase.
-    pub fn reject_self_attestation(
-        subject: &AgentId,
-        attester: &AgentId,
-    ) -> Result<(), AttestationStoreError> {
-        let _ = (subject, attester);
-        todo!("reject_self_attestation: Err if subject == attester")
+    pub fn get(&self, subject: &AgentId, attester: &AgentId) -> Option<&Attestation> {
+        let key = Self::attestation_key(subject, attester);
+        self.store.get(&key)
     }
 
-    /// Remove expired attestations.
-    ///
-    /// Returns the number of evicted entries.
-    ///
-    /// # Stub
-    /// This is a stub — eviction logic will be implemented in a subsequent phase.
     pub fn evict_expired(&mut self, now: u64) -> usize {
-        let _ = now;
-        todo!("evict_expired: remove entries where expires_at <= now, return count")
+        let expired_keys: Vec<AttestationKey> = self
+            .store
+            .iter()
+            .filter(|(_, att)| att.expires_at <= now)
+            .map(|(k, _)| *k)
+            .collect();
+        let count = expired_keys.len();
+        for key in &expired_keys {
+            if let Some(att) = self.store.remove(key) {
+                if let Some(keys) = self.by_subject.get_mut(&att.subject_agent_id) {
+                    keys.retain(|k| k != key);
+                }
+            }
+        }
+        count
     }
 
-    /// Total number of attestations stored.
     pub fn len(&self) -> usize {
         self.store.len()
     }
 
-    /// Whether the store is empty.
     pub fn is_empty(&self) -> bool {
         self.store.is_empty()
     }
@@ -121,13 +97,75 @@ impl AttestationStore {
 /// Errors returned by `AttestationStore` operations.
 #[derive(Debug, thiserror::Error)]
 pub enum AttestationStoreError {
-    /// Signature verification failed.
     #[error("attestation signature verification failed")]
     VerificationFailed,
-    /// Self-attestation rejected (attester == subject, §7.5).
     #[error("self-attestation rejected (attester == subject)")]
     SelfAttestation,
-    /// Attestation has expired.
-    #[error("attestation expired at {0}")]
-    Expired(u64),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::attestation::{AttestationData, ATTESTATION_TYPE_V1};
+    use super::*;
+    use crate::keypair::AgentKeypair;
+
+    #[test]
+    fn test_attestation_key_deterministic() {
+        let subject = AgentId([1u8; 32]);
+        let attester = AgentId([2u8; 32]);
+        let k1 = AttestationStore::attestation_key(&subject, &attester);
+        let k2 = AttestationStore::attestation_key(&subject, &attester);
+        assert_eq!(k1, k2);
+
+        let k3 = AttestationStore::attestation_key(&attester, &subject);
+        assert_ne!(k1, k3);
+    }
+
+    #[test]
+    fn test_store_and_retrieve() {
+        let attester_kp = AgentKeypair::generate();
+        let subject_kp = AgentKeypair::generate();
+        let subject_id = AgentId::from_public_key(&subject_kp.public_key);
+        let now = 1700000000u64;
+
+        let att = Attestation::create_and_sign(
+            &attester_kp,
+            subject_id,
+            now + 86400,
+            AttestationData {
+                sample_count: 50,
+                trust_score: 80,
+                ..Default::default()
+            },
+            now,
+        )
+        .unwrap();
+
+        let mut store = AttestationStore::new();
+        let attester_id = AgentId::from_public_key(&attester_kp.public_key);
+        store.store(&subject_id, &attester_id, att, now).unwrap();
+
+        let retrieved = store.get_for_agent(&subject_id);
+        assert_eq!(retrieved.len(), 1);
+    }
+
+    #[test]
+    fn test_reject_self_attestation() {
+        let kp = AgentKeypair::generate();
+        let agent_id = AgentId::from_public_key(&kp.public_key);
+        let now = 1700000000u64;
+
+        let att = Attestation::create_and_sign(
+            &kp,
+            agent_id,
+            now + 86400,
+            AttestationData::default(),
+            now,
+        )
+        .unwrap();
+
+        let mut store = AttestationStore::new();
+        let result = store.store(&agent_id, &agent_id, att, now);
+        assert!(result.is_err());
+    }
 }

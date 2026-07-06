@@ -2,19 +2,28 @@
 //!
 //! Namespace: `"aafp.semantic.v1"`. Carries agent-level semantic capability
 //! attributes (languages, modalities, hardware, frameworks, precision) and
-//! per-capability semantic descriptors linking to the Track U Semantic
-//! Capability Graphs.
+//! per-capability semantic descriptors.
 
-use aafp_cbor::Value;
-use crate::identity_v1::IdentityError;
 use super::AgentRecordExtension;
+use crate::identity_v1::IdentityError;
+use aafp_cbor::{int_map, int_map_get, Value};
 
 /// Agent-level semantic capability extension (key 11, namespace
 /// "aafp.semantic.v1").
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SemanticExtension {
-    /// Per-capability semantic descriptors.
-    pub capabilities: Vec<SemanticCapabilityData>,
+    /// Extension version (always 1 for v1).
+    pub version: u64,
+    /// Agent-wide supported languages (BCP-47 tags, e.g., "en", "fr").
+    pub languages: Vec<String>,
+    /// Supported modalities: "text", "image", "audio", "video".
+    pub modalities: Vec<String>,
+    /// Hardware available (e.g., "gpu:rtx5090", "npu:apple-m4").
+    pub hardware: Vec<String>,
+    /// Software frameworks (e.g., "cuda", "tensorrt", "coreml").
+    pub frameworks: Vec<String>,
+    /// Precision modes supported (e.g., "fp32", "fp16", "fp8").
+    pub precision: Vec<String>,
 }
 
 impl AgentRecordExtension for SemanticExtension {
@@ -22,19 +31,90 @@ impl AgentRecordExtension for SemanticExtension {
     const VERSION: u64 = 1;
 
     fn to_cbor(&self) -> Value {
-        todo!()
+        let mut entries: Vec<(i64, Value)> = Vec::new();
+        if !self.languages.is_empty() {
+            entries.push((
+                1,
+                Value::Array(
+                    self.languages
+                        .iter()
+                        .map(|s| Value::TextString(s.clone()))
+                        .collect(),
+                ),
+            ));
+        }
+        if !self.modalities.is_empty() {
+            entries.push((
+                2,
+                Value::Array(
+                    self.modalities
+                        .iter()
+                        .map(|s| Value::TextString(s.clone()))
+                        .collect(),
+                ),
+            ));
+        }
+        if !self.hardware.is_empty() {
+            entries.push((
+                3,
+                Value::Array(
+                    self.hardware
+                        .iter()
+                        .map(|s| Value::TextString(s.clone()))
+                        .collect(),
+                ),
+            ));
+        }
+        if !self.frameworks.is_empty() {
+            entries.push((
+                4,
+                Value::Array(
+                    self.frameworks
+                        .iter()
+                        .map(|s| Value::TextString(s.clone()))
+                        .collect(),
+                ),
+            ));
+        }
+        if !self.precision.is_empty() {
+            entries.push((
+                5,
+                Value::Array(
+                    self.precision
+                        .iter()
+                        .map(|s| Value::TextString(s.clone()))
+                        .collect(),
+                ),
+            ));
+        }
+        int_map(entries)
     }
 
-    fn from_cbor(_val: &Value) -> Result<Self, IdentityError> {
-        todo!()
+    fn from_cbor(val: &Value) -> Result<Self, IdentityError> {
+        let extract_arr = |k: i64| -> Vec<String> {
+            match int_map_get(val, k) {
+                Some(Value::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::TextString(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        Ok(Self {
+            version: 1,
+            languages: extract_arr(1),
+            modalities: extract_arr(2),
+            hardware: extract_arr(3),
+            frameworks: extract_arr(4),
+            precision: extract_arr(5),
+        })
     }
 }
 
 /// Per-capability semantic data (key 3 in CapabilityDescriptor-v2).
-///
-/// This links the AgentRecord extension system to the Track U Semantic
-/// Capability Graphs. Agents that don't understand key 3 ignore it and
-/// use the base name + metadata.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SemanticCapabilityData {
     /// Structured attributes for multi-dimensional queries.
@@ -61,28 +141,42 @@ pub struct CapabilityAttributes {
 }
 
 /// Self-reported performance profile.
-/// Uses integer types to avoid floating point on the wire.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PerformanceProfile {
-    /// Average latency in milliseconds.
     pub avg_latency_ms: Option<u16>,
-    /// P99 latency in milliseconds.
     pub p99_latency_ms: Option<u16>,
-    /// Throughput in requests per second.
     pub throughput_rps: Option<u32>,
-    /// Maximum batch size supported.
     pub max_batch_size: Option<u32>,
 }
 
-/// Self-reported quality metrics. Verified metrics come from attestations.
+/// Self-reported quality metrics.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QualityMetrics {
-    /// Trust score (0-100). Self-reported — treat as unverified.
     pub trust_score: u8,
-    /// Accuracy metric (0-10000 basis points, 10000 = 100%).
     pub accuracy_bps: Option<u16>,
-    /// Uptime percentage (0-10000 basis points).
     pub uptime_bps: Option<u16>,
-    /// Total successful invocations.
     pub success_count: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aafp_cbor::{decode, encode};
+
+    #[test]
+    fn test_semantic_roundtrip() {
+        let ext = SemanticExtension {
+            version: 1,
+            languages: vec!["en".into(), "fr".into()],
+            modalities: vec!["text".into(), "image".into()],
+            hardware: vec!["gpu:rtx5090".into()],
+            frameworks: vec!["cuda".into()],
+            precision: vec!["fp16".into()],
+        };
+        let cbor = ext.to_extension_cbor();
+        let bytes = encode(&cbor).unwrap();
+        let (decoded, _) = decode(&bytes).unwrap();
+        let ext2 = SemanticExtension::from_extension_cbor(&decoded).unwrap();
+        assert_eq!(ext, ext2);
+    }
 }

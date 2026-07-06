@@ -14,9 +14,7 @@
 use std::sync::Arc;
 
 use aafp_identity::AgentId;
-use aafp_messaging::{
-    NetworkedPubSub, PubSubRpcHandler, DEFAULT_TTL,
-};
+use aafp_messaging::{NetworkedPubSub, PubSubRpcHandler, DEFAULT_TTL};
 use tokio::sync::mpsc;
 
 use crate::connection_pool::ConnectionPool;
@@ -235,10 +233,7 @@ impl PubSubBridge {
                     let peer_addr = match find_peer_addr(&agent, peer) {
                         Some(a) => a,
                         None => {
-                            tracing::warn!(
-                                "pubsub: no address for peer {:?}, skipping",
-                                peer
-                            );
+                            tracing::warn!("pubsub: no address for peer {:?}, skipping", peer);
                             continue;
                         }
                     };
@@ -257,9 +252,7 @@ impl PubSubBridge {
                     };
 
                     // Send publish RPC to the peer via the connection pool
-                    if let Err(e) =
-                        send_publish_rpc(&agent, &pool, &peer_addr, payload).await
-                    {
+                    if let Err(e) = send_publish_rpc(&agent, &pool, &peer_addr, payload).await {
                         tracing::warn!("pubsub forward to {} failed: {e}", peer_addr);
                     }
                 }

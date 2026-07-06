@@ -19,7 +19,7 @@
 use aafp_cbor::{encode, int_map, int_map_get, CborError, Value};
 use aafp_identity::AgentId;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -266,7 +266,7 @@ impl SeenCache {
 /// via floodsub, and deduplicates messages using a seen-cache.
 pub struct NetworkedPubSub {
     /// Local subscriptions: topic → broadcast sender
-    local: HashMap<Topic, broadcast::Sender<TopicMessage>>,
+    local: RwLock<HashMap<Topic, broadcast::Sender<TopicMessage>>>,
     /// Remote peer subscriptions: topic → set of peer AgentIds
     remote: Arc<Mutex<HashMap<Topic, HashSet<AgentId>>>>,
     /// Our agent ID
@@ -281,7 +281,7 @@ impl NetworkedPubSub {
     /// Create a new networked pubsub with the given agent ID.
     pub fn new(our_id: AgentId) -> Self {
         Self {
-            local: HashMap::new(),
+            local: RwLock::new(HashMap::new()),
             remote: Arc::new(Mutex::new(HashMap::new())),
             our_id,
             buffer_size: DEFAULT_BUFFER_SIZE,
@@ -292,7 +292,7 @@ impl NetworkedPubSub {
     /// Create with a custom buffer size.
     pub fn with_buffer_size(our_id: AgentId, buffer_size: usize) -> Self {
         Self {
-            local: HashMap::new(),
+            local: RwLock::new(HashMap::new()),
             remote: Arc::new(Mutex::new(HashMap::new())),
             our_id,
             buffer_size,
@@ -301,18 +301,18 @@ impl NetworkedPubSub {
     }
 
     /// Subscribe to a topic locally. Returns a receiver for messages.
-    pub fn subscribe(&mut self, topic: &str) -> broadcast::Receiver<TopicMessage> {
+    pub fn subscribe(&self, topic: &str) -> broadcast::Receiver<TopicMessage> {
         let buffer_size = self.buffer_size;
-        let sender = self
-            .local
+        let mut local = self.local.write().unwrap();
+        let sender = local
             .entry(topic.to_string())
             .or_insert_with(|| broadcast::channel(buffer_size).0);
         sender.subscribe()
     }
 
     /// Unsubscribe from a topic locally (drops the broadcast channel).
-    pub fn unsubscribe(&mut self, topic: &str) {
-        self.local.remove(topic);
+    pub fn unsubscribe(&self, topic: &str) {
+        self.local.write().unwrap().remove(topic);
     }
 
     /// Publish a message locally (does not propagate to remote peers).
@@ -325,7 +325,8 @@ impl NetworkedPubSub {
         from: AgentId,
         data: Vec<u8>,
     ) -> Result<(), PubSubError> {
-        let sender = self.local.get(topic).ok_or(PubSubError::TopicNotFound)?;
+        let local = self.local.read().unwrap();
+        let sender = local.get(topic).ok_or(PubSubError::TopicNotFound)?;
         let msg = TopicMessage {
             topic: topic.to_string(),
             from,
@@ -430,13 +431,15 @@ impl NetworkedPubSub {
     }
 
     /// List all active local topics.
-    pub fn topics(&self) -> Vec<&str> {
-        self.local.keys().map(|s| s.as_str()).collect()
+    pub fn topics(&self) -> Vec<String> {
+        self.local.read().unwrap().keys().cloned().collect()
     }
 
     /// Get the number of local subscribers for a topic.
     pub fn subscriber_count(&self, topic: &str) -> usize {
         self.local
+            .read()
+            .unwrap()
             .get(topic)
             .map(|s| s.receiver_count())
             .unwrap_or(0)
@@ -547,7 +550,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_subscribe_and_publish() {
-        let mut pubsub = NetworkedPubSub::new(make_agent_id(1));
+        let pubsub = NetworkedPubSub::new(make_agent_id(1));
         let mut rx = pubsub.subscribe("test-topic");
         let from = make_agent_id(2);
 
@@ -566,7 +569,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_local_subscribers() {
-        let mut pubsub = NetworkedPubSub::new(make_agent_id(1));
+        let pubsub = NetworkedPubSub::new(make_agent_id(1));
         let mut rx1 = pubsub.subscribe("topic");
         let mut rx2 = pubsub.subscribe("topic");
         let from = make_agent_id(2);
@@ -634,7 +637,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_remote_message_delivers_locally() {
-        let mut pubsub = NetworkedPubSub::new(make_agent_id(1));
+        let pubsub = NetworkedPubSub::new(make_agent_id(1));
         let mut rx = pubsub.subscribe("remote-topic");
         let from = make_agent_id(2);
 
@@ -651,7 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_remote_message_dedup() {
-        let mut pubsub = NetworkedPubSub::new(make_agent_id(1));
+        let pubsub = NetworkedPubSub::new(make_agent_id(1));
         pubsub.subscribe("dedup-topic");
         let from = make_agent_id(2);
 
@@ -666,7 +669,7 @@ mod tests {
 
     #[test]
     fn test_handle_remote_message_ttl_zero() {
-        let mut pubsub = NetworkedPubSub::new(make_agent_id(1));
+        let pubsub = NetworkedPubSub::new(make_agent_id(1));
         pubsub.subscribe("ttl-topic");
         let from = make_agent_id(2);
 
@@ -744,7 +747,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rpc_handler_publish() {
-        let mut pubsub = NetworkedPubSub::new(make_agent_id(1));
+        let pubsub = NetworkedPubSub::new(make_agent_id(1));
         let mut rx = pubsub.subscribe("rpc-topic");
         let pubsub = Arc::new(pubsub);
         let handler = PubSubRpcHandler::new(pubsub.clone());
