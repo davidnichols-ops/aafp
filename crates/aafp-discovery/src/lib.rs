@@ -43,3 +43,6 @@ pub use discovery_v1::{
 pub use persistent_dht::PersistentDht;
 pub use regional::{Region, RegionalDiscovery};
 pub use rpc_handler::{DiscoveryClient, DiscoveryRpcHandler, ShardedDiscoveryRpcHandler};
+
+/// Semantic Capability Graphs (Track U, Phases D1-D2).
+pub mod semantic;
