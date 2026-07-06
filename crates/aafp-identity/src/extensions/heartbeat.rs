@@ -75,20 +75,21 @@ pub struct HeartbeatUpdate {
 
 impl HeartbeatUpdate {
     /// Create and sign a new heartbeat update.
-    pub fn sign_heartbeat(agent_id: &AgentId, timestamp: u64, secret_key: &[u8]) -> Self {
+    ///
+    /// Returns `None` if the secret key is malformed.
+    pub fn sign_heartbeat(agent_id: &AgentId, timestamp: u64, secret_key: &[u8]) -> Option<Self> {
         use aafp_crypto::{MlDsa65, MlDsa65SecretKey, SignatureScheme};
-        let sk = MlDsa65SecretKey::from_bytes(secret_key)
-            .expect("valid secret key for heartbeat signing");
+        let sk = MlDsa65SecretKey::from_bytes(secret_key).ok()?;
         let mut input = Vec::new();
         input.extend_from_slice(b"aafp-heartbeat");
         input.extend_from_slice(&agent_id.0);
         input.extend_from_slice(&timestamp.to_be_bytes());
         let sig = MlDsa65::sign(&sk, &input);
-        Self {
+        Some(Self {
             agent_id: *agent_id,
             timestamp,
             signature: sig.0,
-        }
+        })
     }
 
     /// Verify the heartbeat signature against the agent's public key.
@@ -145,7 +146,10 @@ impl HeartbeatTracker {
 
     pub fn is_stale(&self, agent_id: &AgentId, now: u64) -> bool {
         match self.last_seen.get(agent_id) {
-            Some((ts, interval)) => now > ts + (*interval as u64 * STALENESS_MULTIPLIER),
+            Some((ts, interval)) => {
+                let threshold = (*interval as u64).saturating_mul(STALENESS_MULTIPLIER);
+                now > ts.saturating_add(threshold)
+            }
             None => false,
         }
     }
@@ -191,8 +195,12 @@ pub fn adaptive_ttl(
     let time_since_hb = now.saturating_sub(last_hb);
     let freshness_ratio = 1.0 - (time_since_hb as f64 / staleness_threshold as f64);
     let max_extension = 23 * 24 * 3600u64;
-    let extension = (max_extension as f64 * freshness_ratio) as u64;
-    base_ttl + extension
+    let extension = if freshness_ratio.is_finite() && freshness_ratio > 0.0 {
+        (max_extension as f64 * freshness_ratio) as u64
+    } else {
+        0
+    };
+    base_ttl.saturating_add(extension)
 }
 
 #[cfg(test)]

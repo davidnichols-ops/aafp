@@ -43,6 +43,8 @@ pub struct GossipSubConfig {
     pub heartbeat_interval: Duration,
     /// History retention for IWANT (how long to remember seen message IDs).
     pub fanout_ttl: Duration,
+    /// Maximum number of entries in the seen cache before forced eviction.
+    pub max_seen_entries: usize,
     /// Maximum message size (mirrors `ConnectionLimits.max_message_size`).
     pub max_message_size: usize,
     /// Peer scoring thresholds and weights.
@@ -58,6 +60,7 @@ impl Default for GossipSubConfig {
             d_lazy: D_LAZY,
             heartbeat_interval: Duration::from_secs(1),
             fanout_ttl: Duration::from_secs(60),
+            max_seen_entries: 10_000,
             max_message_size: 1024 * 1024,
             scoring: PeerScoringConfig::default(),
         }
@@ -384,11 +387,22 @@ impl GossipSubRouter {
                         r.maintain_mesh(topic, &peers);
                     }
 
-                    // 3. Evict expired seen messages.
+                    // 3. Evict expired seen messages, then enforce max size.
                     let now = Instant::now();
                     let fanout_ttl = r.config.fanout_ttl;
                     r.seen
                         .retain(|_, expiry| now.duration_since(*expiry) < fanout_ttl);
+                    // If still over the limit, evict oldest entries.
+                    let max_seen = r.config.max_seen_entries;
+                    if r.seen.len() > max_seen {
+                        let mut entries: Vec<([u8; 32], Instant)> =
+                            r.seen.iter().map(|(k, v)| (*k, *v)).collect();
+                        entries.sort_by_key(|(_, t)| *t);
+                        let to_remove = entries.len().saturating_sub(max_seen);
+                        for (k, _) in entries.into_iter().take(to_remove) {
+                            r.seen.remove(&k);
+                        }
+                    }
 
                     // 4. Emit IHAVE gossip to d_lazy peers per topic.
                     // (Control messages piggybacked on next publish frame.)

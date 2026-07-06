@@ -75,7 +75,7 @@ impl CircuitBreakerRegistry {
     /// Returns `(state, allowed)` where `allowed` indicates whether a request
     /// may proceed (HalfOpen only allows up to `half_open_max_probes` concurrent probes).
     pub fn acquire(&self, agent_id: &AgentId) -> (CircuitState, bool) {
-        let mut circuits = self.circuits.lock().unwrap();
+        let mut circuits = self.circuits.lock().expect("circuit lock poisoned");
         let entry = circuits.entry(*agent_id).or_default();
         Self::maybe_half_open(entry, &self.config);
         match entry.state {
@@ -94,7 +94,7 @@ impl CircuitBreakerRegistry {
 
     /// Record a successful outcome for a peer.
     pub fn record_success(&self, agent_id: &AgentId) {
-        let mut circuits = self.circuits.lock().unwrap();
+        let mut circuits = self.circuits.lock().expect("circuit lock poisoned");
         let entry = circuits.entry(*agent_id).or_default();
         entry.consecutive_failures = 0;
         if entry.state == CircuitState::HalfOpen {
@@ -105,9 +105,9 @@ impl CircuitBreakerRegistry {
 
     /// Record a failed outcome for a peer, potentially opening the circuit.
     pub fn record_failure(&self, agent_id: &AgentId) {
-        let mut circuits = self.circuits.lock().unwrap();
+        let mut circuits = self.circuits.lock().expect("circuit lock poisoned");
         let entry = circuits.entry(*agent_id).or_default();
-        entry.consecutive_failures += 1;
+        entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
         match entry.state {
             CircuitState::HalfOpen => {
                 entry.state = CircuitState::Open;
@@ -126,7 +126,7 @@ impl CircuitBreakerRegistry {
 
     /// Get the current circuit state without side effects (no transition).
     pub fn state(&self, agent_id: &AgentId) -> CircuitState {
-        let mut circuits = self.circuits.lock().unwrap();
+        let mut circuits = self.circuits.lock().expect("circuit lock poisoned");
         let entry = circuits.entry(*agent_id).or_default();
         Self::maybe_half_open(entry, &self.config);
         entry.state
@@ -134,7 +134,7 @@ impl CircuitBreakerRegistry {
 
     /// Reset the circuit for a peer back to Closed.
     pub fn reset(&self, agent_id: &AgentId) {
-        let mut circuits = self.circuits.lock().unwrap();
+        let mut circuits = self.circuits.lock().expect("circuit lock poisoned");
         circuits.insert(*agent_id, CircuitEntry::default());
     }
 
@@ -176,7 +176,7 @@ impl BulkheadRegistry {
     /// Attempt to acquire a concurrency slot for a peer.
     /// Returns `true` if the slot was acquired, `false` if the limit is reached.
     pub fn try_acquire(&self, agent_id: &AgentId) -> bool {
-        let mut limits = self.limits.lock().unwrap();
+        let mut limits = self.limits.lock().expect("circuit lock poisoned");
         let count = limits.entry(*agent_id).or_insert(0);
         if *count >= self.max_per_peer {
             return false;
@@ -187,7 +187,7 @@ impl BulkheadRegistry {
 
     /// Release a concurrency slot for a peer.
     pub fn release(&self, agent_id: &AgentId) {
-        let mut limits = self.limits.lock().unwrap();
+        let mut limits = self.limits.lock().expect("circuit lock poisoned");
         if let Some(count) = limits.get_mut(agent_id) {
             *count = count.saturating_sub(1);
         }
@@ -195,7 +195,7 @@ impl BulkheadRegistry {
 
     /// Get the current in-flight count for a peer.
     pub fn in_flight(&self, agent_id: &AgentId) -> u32 {
-        self.limits.lock().unwrap().get(agent_id).copied().unwrap_or(0)
+        self.limits.lock().expect("circuit lock poisoned").get(agent_id).copied().unwrap_or(0)
     }
 
     /// Get the configured max concurrency per peer.

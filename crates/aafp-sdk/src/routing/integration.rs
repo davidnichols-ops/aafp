@@ -71,6 +71,13 @@ impl AdaptiveRouter {
         candidates: &[AgentRecord],
         static_scores: &[f64],
     ) -> Result<AgentId, SdkError> {
+        if candidates.len() != static_scores.len() {
+            return Err(SdkError::Messaging(format!(
+                "candidates len {} != static_scores len {}",
+                candidates.len(),
+                static_scores.len()
+            )));
+        }
         // Filter out candidates with open circuits in the CircuitBreakerRegistry.
         let filtered: Vec<(AgentRecord, f64)> = candidates
             .iter()

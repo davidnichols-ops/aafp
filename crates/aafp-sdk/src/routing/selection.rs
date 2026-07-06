@@ -70,7 +70,7 @@ pub fn select_weighted_random(
         return None;
     }
     let total: f64 = candidates.iter().map(|c| c.score).sum();
-    if total <= 0.0 {
+    if !total.is_finite() || total <= 0.0 {
         let idx = rng.gen_range(0..candidates.len());
         return Some(candidates[idx].agent_id);
     }

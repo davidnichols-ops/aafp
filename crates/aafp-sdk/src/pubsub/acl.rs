@@ -142,18 +142,18 @@ impl AuthorizationContext for AclAuthContext {
             .strip_prefix("pubsub/")
             .or_else(|| capability.strip_prefix("pubsub."));
         let Some(rest) = parsed else {
-            return true; // unknown capability, defer to default-allow
+            return false; // unknown capability prefix — default deny
         };
         let last_sep = rest.rfind(['/', '.']);
         let Some(idx) = last_sep else {
-            return true;
+            return false; // no action separator — default deny
         };
         let (topic, action_str) = rest.split_at(idx);
         let action_str = &action_str[1..];
         let action = match action_str {
             "publish" => TopicAction::Publish,
             "subscribe" => TopicAction::Subscribe,
-            _ => return true,
+            _ => return false, // unknown action — default deny
         };
         let acl = self.acl.read().expect("acl lock poisoned");
         acl.check(&self.caller, topic, action)

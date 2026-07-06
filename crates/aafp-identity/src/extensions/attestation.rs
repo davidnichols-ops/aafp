@@ -79,19 +79,19 @@ impl AttestationData {
     pub fn from_cbor(val: &Value) -> Result<Self, IdentityError> {
         Ok(Self {
             observed_avg_latency_ms: match int_map_get(val, 1) {
-                Some(Value::Unsigned(n)) => Some(*n as u16),
+                Some(Value::Unsigned(n)) if *n <= u16::MAX as u64 => Some(*n as u16),
                 _ => None,
             },
             observed_success_rate_bps: match int_map_get(val, 2) {
-                Some(Value::Unsigned(n)) => Some(*n as u16),
+                Some(Value::Unsigned(n)) if *n <= u16::MAX as u64 => Some(*n as u16),
                 _ => None,
             },
             sample_count: match int_map_get(val, 3) {
-                Some(Value::Unsigned(n)) => *n as u32,
+                Some(Value::Unsigned(n)) if *n <= u32::MAX as u64 => *n as u32,
                 _ => 0,
             },
             trust_score: match int_map_get(val, 4) {
-                Some(Value::Unsigned(n)) => *n as u8,
+                Some(Value::Unsigned(n)) if *n <= u8::MAX as u64 => *n as u8,
                 _ => 0,
             },
             notes: match int_map_get(val, 5) {
@@ -149,7 +149,7 @@ impl Attestation {
             _ => return Err(IdentityError::MissingField("attester_agent_id")),
         };
         let attester_pk = match int_map_get(val, 4) {
-            Some(Value::ByteString(b)) => b.clone(),
+            Some(Value::ByteString(b)) if b.len() == aafp_crypto::ML_DSA_65_PUBKEY_LEN => b.clone(),
             _ => return Err(IdentityError::MissingField("attester_public_key")),
         };
         let attested_at = match int_map_get(val, 5) {

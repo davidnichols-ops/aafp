@@ -53,9 +53,15 @@ pub fn should_hedge_adaptive(
         return Some(config.min_delay);
     }
     let ewma = metrics.latency_ewma_ms.value();
+    if !ewma.is_finite() || ewma <= 0.0 {
+        return Some(config.min_delay);
+    }
     // Approximate the percentile as a multiple of EWMA.
     let p95_estimate = ewma * (1.0 + (config.latency_percentile - 0.5).max(0.0) * 2.0);
     let delay_ms = p95_estimate * config.delay_multiplier;
+    if !delay_ms.is_finite() || delay_ms <= 0.0 {
+        return Some(config.min_delay);
+    }
     let delay = Duration::from_millis(delay_ms.max(1.0) as u64);
     Some(delay.clamp(config.min_delay, config.max_delay))
 }

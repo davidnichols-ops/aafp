@@ -35,6 +35,10 @@ pub fn validate_publish_topic(topic: &str) -> Result<(), u16> {
     if segs.iter().any(|s| *s == "+" || *s == "#") {
         return Err(9009);
     }
+    // Publish topics must not contain empty segments (e.g. "foo//bar").
+    if segs.iter().any(|s| s.is_empty()) {
+        return Err(9009);
+    }
     Ok(())
 }
 

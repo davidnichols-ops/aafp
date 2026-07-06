@@ -392,10 +392,14 @@ impl CapabilityAttributes {
 impl PerformanceProfile {
     /// Encode to a CBOR `Value` (IntMap keys 1-4, floats scaled to uint).
     pub fn to_cbor(&self) -> Value {
+        let scale = |v: f64| -> u64 {
+            if v.is_finite() && v >= 0.0 { v as u64 } else { 0 }
+        };
         let mut entries = vec![
-            (1, Value::Unsigned((self.avg_latency_ms * 1000.0) as u64)),
-            (2, Value::Unsigned((self.p99_latency_ms * 1000.0) as u64)),
-            (3, Value::Unsigned(self.throughput_rps.round() as u64)),
+            (1, Value::Unsigned(scale(self.avg_latency_ms * 1000.0))),
+            (2, Value::Unsigned(scale(self.p99_latency_ms * 1000.0))),
+            (3, Value::Unsigned(scale(self.throughput_rps.round())),
+            ),
         ];
         if let Some(batch) = self.max_batch_size {
             entries.push((4, Value::Unsigned(batch as u64)));
@@ -437,13 +441,16 @@ impl PerformanceProfile {
 impl QualityMetrics {
     /// Encode to a CBOR `Value` (IntMap keys 1-4, floats scaled to uint).
     pub fn to_cbor(&self) -> Value {
+        let scale = |v: f64| -> u64 {
+            if v.is_finite() && v >= 0.0 { v as u64 } else { 0 }
+        };
         let mut entries = vec![
             (1, Value::Unsigned(self.trust_score as u64)),
-            (3, Value::Unsigned((self.uptime_pct * 100.0) as u64)),
+            (3, Value::Unsigned(scale(self.uptime_pct * 100.0))),
             (4, Value::Unsigned(self.success_count)),
         ];
         if let Some(acc) = self.accuracy {
-            entries.push((2, Value::Unsigned((acc * 1_000_000.0) as u64)));
+            entries.push((2, Value::Unsigned(scale(acc * 1_000_000.0))));
         }
         // Sort by key for deterministic ordering
         entries.sort_by_key(|(k, _)| *k);
@@ -453,7 +460,7 @@ impl QualityMetrics {
     /// Decode from a CBOR `Value`.
     pub fn from_cbor(val: &Value) -> Result<Self, SemanticError> {
         let trust_score = match int_map_get(val, 1) {
-            Some(Value::Unsigned(n)) => *n as u8,
+            Some(Value::Unsigned(n)) if *n <= u8::MAX as u64 => *n as u8,
             _ => return Err(SemanticError::MissingField("trust_score")),
         };
         let accuracy = match int_map_get(val, 2) {

@@ -150,21 +150,11 @@ pub fn frame_with_backchannel(mut frame: Frame, bc_topic: &str) -> Frame {
     frame
 }
 
-/// Generate an unguessable 128-bit request id, hex-encoded (32 chars).
+/// Generate a cryptographically random 128-bit request id, hex-encoded (32 chars).
 pub fn generate_request_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    // Simple non-crypto RNG for request IDs. In production, use rand.
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    // Mix in thread id for uniqueness
-    let tid = std::thread::current().id();
-    let tid_hash = format!("{:?}", tid)
-        .bytes()
-        .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
-    let mixed = nanos ^ (tid_hash as u128);
-    format!("{:032x}", mixed)
+    use rand::Rng;
+    let id: u128 = rand::thread_rng().gen();
+    format!("{:032x}", id)
 }
 
 #[cfg(test)]
