@@ -77,16 +77,12 @@ pub fn validate_filter(filter: &str) -> Result<(), u16> {
 pub fn check_reserved_prefix(topic: &str) -> Result<(), String> {
     let segs = split_topic(topic);
     match segs.first() {
-        Some(&"rpc") if !is_backchannel_topic(topic) => {
-            Err(format!(
-                "rpc/ prefix should be rpc/<server>/<req_id>/progress, got: {topic}"
-            ))
-        }
-        Some(&"agents") if segs.len() < 2 => {
-            Err(format!(
-                "agents/ prefix requires an agent id in segment 2, got: {topic}"
-            ))
-        }
+        Some(&"rpc") if !is_backchannel_topic(topic) => Err(format!(
+            "rpc/ prefix should be rpc/<server>/<req_id>/progress, got: {topic}"
+        )),
+        Some(&"agents") if segs.len() < 2 => Err(format!(
+            "agents/ prefix requires an agent id in segment 2, got: {topic}"
+        )),
         _ => Ok(()),
     }
 }
@@ -110,8 +106,8 @@ pub fn topic_matches(filter: &str, topic: &str) -> bool {
     let mut fi = 0;
     for seg in &t {
         match f.get(fi) {
-            Some(&"#") => return true, // multi-level: rest matches
-            Some(&"+") => fi += 1,     // single-level: match any
+            Some(&"#") => return true,        // multi-level: rest matches
+            Some(&"+") => fi += 1,            // single-level: match any
             Some(s) if *s == *seg => fi += 1, // exact segment match
             _ => return false,
         }

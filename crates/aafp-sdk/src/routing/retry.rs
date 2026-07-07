@@ -73,10 +73,7 @@ pub fn is_retryable(error: &str) -> bool {
 /// Calls `operation` up to `config.max_attempts` times. Between attempts,
 /// sleeps for the computed backoff delay. If `is_retryable` returns `false`
 /// for an error, retries stop immediately.
-pub async fn with_retry<T, E, F, Fut>(
-    config: &RetryConfig,
-    mut operation: F,
-) -> Result<T, E>
+pub async fn with_retry<T, E, F, Fut>(config: &RetryConfig, mut operation: F) -> Result<T, E>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
@@ -118,10 +115,22 @@ mod tests {
             ..Default::default()
         };
         let mut rng = StdRng::seed_from_u64(42);
-        assert_eq!(retry_delay(&config, 1, &mut rng), Duration::from_millis(100));
-        assert_eq!(retry_delay(&config, 2, &mut rng), Duration::from_millis(200));
-        assert_eq!(retry_delay(&config, 3, &mut rng), Duration::from_millis(400));
-        assert_eq!(retry_delay(&config, 4, &mut rng), Duration::from_millis(800));
+        assert_eq!(
+            retry_delay(&config, 1, &mut rng),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            retry_delay(&config, 2, &mut rng),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            retry_delay(&config, 3, &mut rng),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            retry_delay(&config, 4, &mut rng),
+            Duration::from_millis(800)
+        );
     }
 
     #[test]
@@ -219,10 +228,8 @@ mod tests {
             jitter: false,
             ..Default::default()
         };
-        let result: Result<i32, String> = with_retry(&config, || async {
-            Err("timeout".to_string())
-        })
-        .await;
+        let result: Result<i32, String> =
+            with_retry(&config, || async { Err("timeout".to_string()) }).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "timeout");
     }

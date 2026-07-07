@@ -199,6 +199,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "aafp-perception"
+version = "0.1.0"
+dependencies = [
+ "aafp-cbor",
+ "aafp-identity",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "aafp-sdk"
 version = "0.1.0"
 dependencies = [

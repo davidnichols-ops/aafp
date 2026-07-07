@@ -29,6 +29,8 @@ pub mod builder;
 pub mod client;
 pub mod connection_pool;
 pub mod cpu_affinity;
+#[cfg(feature = "adaptive-routing")]
+pub mod execution;
 pub mod handshake_driver;
 pub mod metrics;
 pub mod prometheus;

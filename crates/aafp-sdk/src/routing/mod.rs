@@ -16,14 +16,13 @@ pub mod hedging;
 pub mod integration;
 pub mod metrics;
 pub mod observability;
+pub mod prediction;
 pub mod retry;
 pub mod scoring;
 pub mod selection;
 
 pub use bulkhead::{try_acquire as bulkhead_try_acquire, BulkheadConfig, ConcurrencyGuard};
-pub use circuit::{
-    BulkheadRegistry, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState,
-};
+pub use circuit::{BulkheadRegistry, CircuitBreakerConfig, CircuitBreakerRegistry, CircuitState};
 pub use config::{AdaptiveRoutingConfig, AdaptiveRoutingConfigBuilder};
 pub use hedging::{
     call_with_hedging, call_with_hedging_boxed, should_hedge_adaptive, BoxedHedgeFuture,
@@ -34,6 +33,7 @@ pub use metrics::{Ewma, HealthProbeResult, PeerMetrics, PeerMetricsRegistry, Rol
 pub use observability::{
     export_snapshot, export_stats, PeerSnapshot, RoutingObserver, RoutingSnapshot, RoutingStats,
 };
+pub use prediction::{PredictionConfig, PredictionModel, TemporalPredictionEngine};
 pub use retry::{is_retryable, retry_delay, with_retry, RetryConfig};
 pub use scoring::{dynamic_score, score_candidates, DynamicScoreConfig, ScoredCandidate};
 pub use selection::{

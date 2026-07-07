@@ -106,9 +106,7 @@ impl RoutingSnapshot {
     pub fn healthy_peers(&self) -> Vec<&PeerSnapshot> {
         self.peers
             .iter()
-            .filter(|p| {
-                p.circuit == CircuitState::Closed && !p.stale && p.success_rate > 0.5
-            })
+            .filter(|p| p.circuit == CircuitState::Closed && !p.stale && p.success_rate > 0.5)
             .collect()
     }
 }
@@ -220,7 +218,10 @@ pub fn export_stats(stats: &RoutingStats) -> HashMap<&'static str, f64> {
     map.insert("routing_successes_total", stats.total_successes as f64);
     map.insert("routing_failures_total", stats.total_failures as f64);
     map.insert("routing_timeouts_total", stats.total_timeouts as f64);
-    map.insert("routing_circuit_opens_total", stats.total_circuit_opens as f64);
+    map.insert(
+        "routing_circuit_opens_total",
+        stats.total_circuit_opens as f64,
+    );
     map.insert("routing_hedges_sent_total", stats.total_hedges_sent as f64);
     map.insert("routing_retries_total", stats.total_retries as f64);
     map.insert(
@@ -236,12 +237,18 @@ pub fn export_snapshot(snapshot: &RoutingSnapshot) -> HashMap<&'static str, f64>
     let mut map = HashMap::new();
     map.insert("routing_total_peers", snapshot.total_peers as f64);
     map.insert("routing_open_circuits", snapshot.open_circuits as f64);
-    map.insert("routing_half_open_circuits", snapshot.half_open_circuits as f64);
+    map.insert(
+        "routing_half_open_circuits",
+        snapshot.half_open_circuits as f64,
+    );
     map.insert("routing_closed_circuits", snapshot.closed_circuits as f64);
     map.insert("routing_total_in_flight", snapshot.total_in_flight as f64);
     for p in &snapshot.peers {
         let prefix = format!("routing_peer_{:?}", p.agent_id);
-        map.insert(leak_str(format!("{prefix}_latency_ewma_ms")), p.latency_ewma_ms);
+        map.insert(
+            leak_str(format!("{prefix}_latency_ewma_ms")),
+            p.latency_ewma_ms,
+        );
         map.insert(leak_str(format!("{prefix}_success_rate")), p.success_rate);
         map.insert(leak_str(format!("{prefix}_in_flight")), p.in_flight as f64);
     }
@@ -335,12 +342,10 @@ mod tests {
     #[test]
     fn test_snapshot_open_circuit_peers() {
         let metrics = PeerMetricsRegistry::new();
-        let circuits = CircuitBreakerRegistry::new(
-            crate::routing::circuit::CircuitBreakerConfig {
-                failure_threshold: 1,
-                ..Default::default()
-            },
-        );
+        let circuits = CircuitBreakerRegistry::new(crate::routing::circuit::CircuitBreakerConfig {
+            failure_threshold: 1,
+            ..Default::default()
+        });
         let bulkhead = BulkheadRegistry::default();
         let id = AgentId([1u8; 32]);
         metrics.record_outcome(&id, 100.0, false);

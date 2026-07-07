@@ -204,13 +204,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_hedging_boxed() {
-        let primary: BoxedHedgeFuture<'static, i32, ()> =
-            Box::pin(async { Ok(42) });
-        let secondary: BoxedHedgeFuture<'static, i32, ()> =
-            Box::pin(async {
-                sleep(Duration::from_secs(10)).await;
-                Ok(99)
-            });
+        let primary: BoxedHedgeFuture<'static, i32, ()> = Box::pin(async { Ok(42) });
+        let secondary: BoxedHedgeFuture<'static, i32, ()> = Box::pin(async {
+            sleep(Duration::from_secs(10)).await;
+            Ok(99)
+        });
         let result = call_with_hedging_boxed(primary, secondary, Duration::from_millis(50)).await;
         assert_eq!(result, Ok(42));
     }

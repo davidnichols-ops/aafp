@@ -49,21 +49,11 @@ impl SemanticCapability {
         }
         entries.push((
             10,
-            Value::Array(
-                self.requirements
-                    .iter()
-                    .map(requirement_to_cbor)
-                    .collect(),
-            ),
+            Value::Array(self.requirements.iter().map(requirement_to_cbor).collect()),
         ));
         entries.push((
             11,
-            Value::Array(
-                self.provides
-                    .iter()
-                    .map(output_spec_to_cbor)
-                    .collect(),
-            ),
+            Value::Array(self.provides.iter().map(output_spec_to_cbor).collect()),
         ));
         int_map(entries)
     }
@@ -393,13 +383,16 @@ impl PerformanceProfile {
     /// Encode to a CBOR `Value` (IntMap keys 1-4, floats scaled to uint).
     pub fn to_cbor(&self) -> Value {
         let scale = |v: f64| -> u64 {
-            if v.is_finite() && v >= 0.0 { v as u64 } else { 0 }
+            if v.is_finite() && v >= 0.0 {
+                v as u64
+            } else {
+                0
+            }
         };
         let mut entries = vec![
             (1, Value::Unsigned(scale(self.avg_latency_ms * 1000.0))),
             (2, Value::Unsigned(scale(self.p99_latency_ms * 1000.0))),
-            (3, Value::Unsigned(scale(self.throughput_rps.round())),
-            ),
+            (3, Value::Unsigned(scale(self.throughput_rps.round()))),
         ];
         if let Some(batch) = self.max_batch_size {
             entries.push((4, Value::Unsigned(batch as u64)));
@@ -442,7 +435,11 @@ impl QualityMetrics {
     /// Encode to a CBOR `Value` (IntMap keys 1-4, floats scaled to uint).
     pub fn to_cbor(&self) -> Value {
         let scale = |v: f64| -> u64 {
-            if v.is_finite() && v >= 0.0 { v as u64 } else { 0 }
+            if v.is_finite() && v >= 0.0 {
+                v as u64
+            } else {
+                0
+            }
         };
         let mut entries = vec![
             (1, Value::Unsigned(self.trust_score as u64)),

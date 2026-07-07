@@ -108,8 +108,7 @@ impl RollingWindow {
 // CircuitState
 // ──────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CircuitState {
     #[default]
     Closed,
@@ -122,7 +121,6 @@ impl CircuitState {
         matches!(self, CircuitState::Closed | CircuitState::HalfOpen)
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────
 // HealthProbeResult

@@ -3,8 +3,8 @@
 //! Provides a `ConcurrencyLimit` guard that automatically releases on drop,
 //! and a `with_bulkhead` helper that integrates with `BulkheadRegistry`.
 
-use aafp_identity::identity_v1::AgentId;
 use crate::routing::circuit::BulkheadRegistry;
+use aafp_identity::identity_v1::AgentId;
 
 /// RAII guard that releases a bulkhead slot on drop.
 pub struct ConcurrencyGuard<'a> {

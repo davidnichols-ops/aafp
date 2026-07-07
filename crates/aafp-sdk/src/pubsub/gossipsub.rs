@@ -497,7 +497,9 @@ mod tests {
     #[test]
     fn test_maintain_mesh_grafts_peers() {
         let mut router = GossipSubRouter::with_defaults();
-        let peers = vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32], [6u8; 32]];
+        let peers = vec![
+            [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32], [6u8; 32],
+        ];
         router.maintain_mesh("test/topic", &peers);
         let state = router.mesh.get("test/topic").unwrap();
         // Should have grafted up to d (6) peers

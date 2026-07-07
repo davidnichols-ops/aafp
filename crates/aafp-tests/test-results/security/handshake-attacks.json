@@ -34,7 +34,7 @@
       "result": "rejected"
     }
   ],
-  "date": 1783378133,
+  "date": 1783385125,
   "test": "adversarial_handshake",
   "total_attacks": 8
 }

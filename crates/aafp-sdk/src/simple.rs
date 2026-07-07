@@ -45,11 +45,11 @@ use std::sync::{Arc, Mutex};
 use aafp_messaging::NetworkedPubSub;
 use tokio::sync::{broadcast, mpsc};
 
+use crate::pubsub::backchannel::extract_backchannel_topic;
 use crate::pubsub::bridge::PubSubBridge;
 use crate::pubsub::handler::{is_pubsub_method, should_reforward_publish};
 use crate::pubsub::Event;
 use crate::pubsub::SubscriptionStream;
-use crate::pubsub::backchannel::extract_backchannel_topic;
 
 // ─── OnPublishHandler type ─────────────────────────────────────
 
@@ -366,8 +366,9 @@ impl ServeBuilder {
         let running_clone = running.clone();
 
         // ── PubSub setup (P1/P2) + Back-channel (P3) ──
-        let has_pubsub =
-            !self.pubsub_topics.is_empty() || !self.pubsub_on_publish.is_empty() || backchannel_handler.is_some();
+        let has_pubsub = !self.pubsub_topics.is_empty()
+            || !self.pubsub_on_publish.is_empty()
+            || backchannel_handler.is_some();
 
         let (pubsub_bridge, pubsub_arc): (Option<Arc<PubSubBridge>>, Option<Arc<NetworkedPubSub>>) =
             if has_pubsub {

@@ -4,6 +4,7 @@
 //! scoring, selection, hedging, retry, and observability into a single
 //! cohesive routing engine.
 
+use crate::routing::bulkhead;
 use crate::routing::circuit::{BulkheadRegistry, CircuitBreakerRegistry, CircuitState};
 use crate::routing::config::AdaptiveRoutingConfig;
 use crate::routing::hedging::should_hedge_adaptive;
@@ -11,7 +12,6 @@ use crate::routing::metrics::PeerMetricsRegistry;
 use crate::routing::observability::{RoutingObserver, RoutingSnapshot, RoutingStats};
 use crate::routing::scoring::score_candidates;
 use crate::routing::selection::SelectionCandidate;
-use crate::routing::bulkhead;
 use crate::SdkError;
 
 #[cfg(test)]
@@ -92,7 +92,8 @@ impl AdaptiveRouter {
             self.observer.record_failure();
             return Err(SdkError::NoViableCandidate);
         }
-        let filtered_candidates: Vec<AgentRecord> = filtered.iter().map(|(r, _)| r.clone()).collect();
+        let filtered_candidates: Vec<AgentRecord> =
+            filtered.iter().map(|(r, _)| r.clone()).collect();
         let filtered_scores: Vec<f64> = filtered.iter().map(|(_, s)| *s).collect();
         let scored = score_candidates(
             &filtered_candidates,

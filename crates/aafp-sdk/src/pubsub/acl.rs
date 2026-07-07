@@ -210,10 +210,7 @@ pub async fn authorize_publish(
     caller: &AgentId,
     topic: &str,
 ) -> Result<(), ()> {
-    let ctx = acl
-        .authorize(caller, &[])
-        .await
-        .map_err(|_| ())?;
+    let ctx = acl.authorize(caller, &[]).await.map_err(|_| ())?;
     if ctx.is_authorized(&format!("pubsub/{topic}/publish")) {
         Ok(())
     } else {
@@ -230,10 +227,7 @@ pub async fn authorize_subscribe(
     caller: &AgentId,
     topic: &str,
 ) -> Result<(), ()> {
-    let ctx = acl
-        .authorize(caller, &[])
-        .await
-        .map_err(|_| ())?;
+    let ctx = acl.authorize(caller, &[]).await.map_err(|_| ())?;
     if ctx.is_authorized(&format!("pubsub/{topic}/subscribe")) {
         Ok(())
     } else {

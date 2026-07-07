@@ -15,9 +15,7 @@
 use aafp_cbor::{encode, Value};
 use aafp_messaging::extensions::find_extension;
 use aafp_messaging::framing::Frame;
-use aafp_messaging::{
-    decode_extensions, encode_extensions, Extension,
-};
+use aafp_messaging::{decode_extensions, encode_extensions, Extension};
 
 /// Extension type `0x0010`: back-channel topic (RFC-0006 registry).
 ///

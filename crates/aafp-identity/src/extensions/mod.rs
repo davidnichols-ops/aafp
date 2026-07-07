@@ -10,6 +10,7 @@ pub mod geo;
 pub mod heartbeat;
 pub mod performance;
 pub mod reputation;
+pub mod reputation_scoring;
 pub mod semantic;
 pub mod version;
 
@@ -87,6 +88,9 @@ pub use geo::GeoExtension;
 pub use heartbeat::{adaptive_ttl, HeartbeatExtension, HeartbeatTracker, HeartbeatUpdate};
 pub use performance::PerformanceExtension;
 pub use reputation::ReputationExtension;
+pub use reputation_scoring::{
+    Interaction, PerformanceHistory, ReputationConfig, ReputationScore, ReputationScoreEngine,
+};
 pub use semantic::SemanticExtension;
 pub use version::{CapabilityVersionExtension, SemanticVersion};
 

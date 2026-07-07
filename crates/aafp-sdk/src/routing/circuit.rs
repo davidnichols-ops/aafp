@@ -195,7 +195,12 @@ impl BulkheadRegistry {
 
     /// Get the current in-flight count for a peer.
     pub fn in_flight(&self, agent_id: &AgentId) -> u32 {
-        self.limits.lock().expect("circuit lock poisoned").get(agent_id).copied().unwrap_or(0)
+        self.limits
+            .lock()
+            .expect("circuit lock poisoned")
+            .get(agent_id)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Get the configured max concurrency per peer.

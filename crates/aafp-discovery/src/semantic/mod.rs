@@ -12,9 +12,12 @@
 //! - [`planner`] — `CapabilityPlanner` trait and `HeuristicPlanner` (D5).
 //! - [`bridge_capabilities`] — canonical descriptors for the 11 internet
 //!   bridge capabilities (D6).
+//! - [`dht_query`] — DHT-backed semantic query merging local and DHT results
+//!   (U7).
 
 pub mod bridge_capabilities;
 pub mod capability;
+pub mod dht_query;
 pub mod edge;
 pub mod encoding;
 pub mod evaluation;
@@ -26,6 +29,7 @@ pub use capability::{
     OutputSpec, PerformanceProfile, QualityMetrics, Requirement, SemanticCapability,
     SemanticVersion,
 };
+pub use dht_query::{DhtQueryConfig, DhtSemanticQuery, LocalIndex};
 pub use edge::{CapabilityEdge, EdgeType};
 pub use query::{
     CapabilityQuery, CostFilter, GeoFilter, PerformanceFilter, QualityFilter, QueryFilter, RangeOp,

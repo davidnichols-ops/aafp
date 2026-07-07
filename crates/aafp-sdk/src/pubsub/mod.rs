@@ -42,8 +42,8 @@ pub mod gossipsub;
 // consumers can access them as `aafp_sdk::pubsub::Event`, etc.
 pub use api::{ConnectedAgentPubSubExt, OnPublishHandler, ServeBuilderPubSubExt};
 pub use backchannel::{
-    backchannel_topic, extract_backchannel_topic, frame_with_backchannel,
-    generate_request_id, is_backchannel_topic, parse_backchannel_topic, EXT_BACKCHANNEL_TOPIC,
+    backchannel_topic, extract_backchannel_topic, frame_with_backchannel, generate_request_id,
+    is_backchannel_topic, parse_backchannel_topic, EXT_BACKCHANNEL_TOPIC,
 };
 pub use bridge::PubSubBridge;
 pub use event::Event;
