@@ -1,8 +1,10 @@
-//! Perception capabilities: search and web-browse.
+//! Perception capabilities: search, web-browse, and document-read.
 
+pub mod document_read;
 pub mod search;
 pub mod web_browse;
 
+pub use document_read::*;
 pub use search::*;
 pub use web_browse::*;
 

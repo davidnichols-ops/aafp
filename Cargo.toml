@@ -18,6 +18,7 @@ members = [
     "crates/aafp-loadtest",
     "crates/aafp-tests",
     "crates/aafp-perception",
+    "crates/aafp-economics",
 ]
 
 [workspace.package]
@@ -43,6 +44,7 @@ aafp-conformance = { path = "crates/aafp-conformance" }
 aafp-benchmark = { path = "crates/aafp-benchmark" }
 aafp-loadtest = { path = "crates/aafp-loadtest" }
 aafp-perception = { path = "crates/aafp-perception" }
+aafp-economics = { path = "crates/aafp-economics" }
 
 # External dependencies
 quinn = "0.11"
