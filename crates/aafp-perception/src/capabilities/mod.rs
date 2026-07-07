@@ -1,9 +1,14 @@
-//! Perception capabilities: search, web-browse, and document-read.
+//! Perception capabilities: search, web-browse, document-read, API-call,
+//! and API-discover.
 
+pub mod api_call;
+pub mod api_discover;
 pub mod document_read;
 pub mod search;
 pub mod web_browse;
 
+pub use api_call::*;
+pub use api_discover::*;
 pub use document_read::*;
 pub use search::*;
 pub use web_browse::*;
