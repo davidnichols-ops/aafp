@@ -6,12 +6,12 @@
 cargo fmt --all -- --check   # formatting check (0 diffs expected)
 cargo build --workspace       # build (0 warnings expected)
 cargo clippy --workspace      # lints (0 warnings expected)
-cargo test --workspace        # 1864 tests, 0 failures expected (7 ignored)
+cargo test --workspace        # 2857 tests, 0 failures expected (7 ignored)
 ```
 
 ## Project layout
 
-15-crate Cargo workspace under `implementations/rust/crates/`
+17-crate Cargo workspace under `implementations/rust/crates/`
 (plus 1 standalone crate `aafp-py` not in the workspace):
 
 | Crate | Purpose |
@@ -24,6 +24,8 @@ cargo test --workspace        # 1864 tests, 0 failures expected (7 ignored)
 | `aafp-messaging` | Frame encoding/decoding, RPC, stream multiplexing |
 | `aafp-discovery` | Capability-based DHT (Kademlia routing, bootstrap, replication, churn) |
 | `aafp-nat` | NAT traversal (relay forwarding, AutoNAT dial-back, DCuTR hole punching) |
+| `aafp-perception` | Agent perception capabilities (search, browse, document-read, API call/discover, code-execute, media OCR/transcribe, browsing sessions) |
+| `aafp-economics` | Resource accounting, pricing engine, priority queue, compensation protocol, slashing conditions |
 | `aafp-sdk` | High-level Agent SDK (client + server + handshake driver) |
 | `aafp-transport-mcp` | AAFP secure transport binding for MCP Rust SDK (rmcp) |
 | `aafp-transport-a2a` | AAFP secure transport binding for A2A protocol (RFC 0008) |
@@ -91,3 +93,20 @@ cargo test --workspace        # 1864 tests, 0 failures expected (7 ignored)
 - **Fuzz targets**: 8 fuzz targets in `fuzz/fuzz_targets/` covering CBOR
   decode, frame decode, handshake CBOR, RPC decode, agent record, relay
   request, discovery request. Run with `cargo +nightly fuzz run <target>`.
+- **Phase 4 Intelligence Plane** (v0.5-phase4-complete): 17 tracks across
+  5 waves implementing the full agent intelligence stack:
+  - **Execution** (aafp-sdk/execution): ExecutionPlan, TaskScheduler,
+    CheckpointManager, MigrationManager, ResultAggregator, FailureRecovery.
+  - **Perception** (aafp-perception): Search, WebBrowse, DocumentRead,
+    ApiCall, ApiDiscover, CodeExecute, Media (OCR/transcribe),
+    BrowsingSession.
+  - **Economics** (aafp-economics): ResourceAccount, PricingEngine,
+    PriorityQueue, CompensationProtocol, SlashingConditions.
+  - **Discovery** (aafp-discovery/semantic): DhtSemanticQuery, IntentResolver.
+  - **Identity** (aafp-identity/extensions): ReputationScoreEngine,
+    ReputationPropagation (gossip), UCAN capability chains.
+  - **Routing** (aafp-sdk/routing): TemporalPredictionEngine,
+    PredictivePrefetcher.
+  All new modules use pluggable provider traits, CBOR serialization,
+  ML-DSA-65 signatures where applicable, and comprehensive test suites
+  (993 new tests, total 2857).
