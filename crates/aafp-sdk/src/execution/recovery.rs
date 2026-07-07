@@ -76,8 +76,10 @@ fn now_millis() -> u64 {
 
 /// Strategy for recovering from a task execution failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum RecoveryStrategy {
     /// Retry the task, subject to the retry policy (max retries + backoff).
+    #[default]
     Retry,
     /// Try a chain of fallback agents/capabilities in order.
     Fallback,
@@ -89,11 +91,6 @@ pub enum RecoveryStrategy {
     Escalate,
 }
 
-impl Default for RecoveryStrategy {
-    fn default() -> Self {
-        Self::Retry
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────
 // RetryPolicy
@@ -438,7 +435,7 @@ impl FailureRecovery {
         current_retry_count: u32,
     ) -> RecoveryAction {
         let attempt = current_retry_count + 1;
-        let record = FailureRecord::new(task_id.clone(), agent_id.clone(), error, attempt);
+        let record = FailureRecord::new(task_id.clone(), *agent_id, error, attempt);
 
         // Record the failure.
         self.record_failure(record.clone());
@@ -478,7 +475,7 @@ impl FailureRecovery {
                 .write()
                 .expect("agent_failures lock poisoned");
             agent_failures
-                .entry(record.agent_id.clone())
+                .entry(record.agent_id)
                 .or_default()
                 .push(record);
         }
@@ -488,7 +485,7 @@ impl FailureRecovery {
     fn record_agent_failure(&self, agent_id: &AgentId) {
         let mut breakers = self.breakers.write().expect("breakers lock poisoned");
         let breaker = breakers
-            .entry(agent_id.clone())
+            .entry(*agent_id)
             .or_insert_with(AgentBreaker::new);
         breaker.consecutive_failures += 1;
         if breaker.consecutive_failures >= self.config.breaker_config.failure_threshold {
@@ -533,7 +530,7 @@ impl FailureRecovery {
             if self.config.escalate_on_exhausted {
                 let record = FailureRecord::new(
                     task_id.clone(),
-                    agent_id.clone(),
+                    *agent_id,
                     "retries_exhausted",
                     current_retry_count + 1,
                 );
@@ -559,7 +556,7 @@ impl FailureRecovery {
             if self.config.escalate_on_exhausted {
                 let record = FailureRecord::new(
                     task_id.clone(),
-                    agent_id.clone(),
+                    *agent_id,
                     "agent_circuit_open_no_fallback",
                     current_retry_count + 1,
                 );
@@ -569,7 +566,7 @@ impl FailureRecovery {
         }
 
         RecoveryAction::Retry {
-            agent_id: agent_id.clone(),
+            agent_id: *agent_id,
             attempt: current_retry_count + 1,
             delay,
         }
@@ -600,7 +597,7 @@ impl FailureRecovery {
         if self.config.escalate_on_exhausted {
             let record = FailureRecord::new(
                 task_id.clone(),
-                agent_id.clone(),
+                *agent_id,
                 "no_fallback_available",
                 1,
             );
@@ -619,7 +616,7 @@ impl FailureRecovery {
     fn find_available_fallback(&self) -> Option<(AgentId, String)> {
         for (agent_id, capability) in &self.config.fallback_chain {
             if self.is_agent_available(agent_id) {
-                return Some((agent_id.clone(), capability.clone()));
+                return Some((*agent_id, capability.clone()));
             }
         }
         None

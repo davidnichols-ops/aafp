@@ -539,10 +539,8 @@ impl MediaCapability {
 
         // Cache lookup.
         let cache_key = self.transcribe_cache_key(request);
-        if let Some(cached) = self.cache_get(&cache_key) {
-            if let CachedResult::Transcribe(resp) = cached {
-                return Ok(resp);
-            }
+        if let Some(CachedResult::Transcribe(resp)) = self.cache_get(&cache_key) {
+            return Ok(resp);
         }
 
         // Timeout enforcement.
@@ -578,10 +576,8 @@ impl MediaCapability {
 
         // Cache lookup.
         let cache_key = self.ocr_cache_key(request);
-        if let Some(cached) = self.cache_get(&cache_key) {
-            if let CachedResult::Ocr(resp) = cached {
-                return Ok(resp);
-            }
+        if let Some(CachedResult::Ocr(resp)) = self.cache_get(&cache_key) {
+            return Ok(resp);
         }
 
         // Timeout enforcement.

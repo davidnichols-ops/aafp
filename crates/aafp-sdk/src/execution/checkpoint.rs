@@ -555,11 +555,7 @@ impl CheckpointManager {
                 let should_delete =
                     if config.max_checkpoints > 0 && i >= config.max_checkpoints as usize {
                         true
-                    } else if config.max_age_secs > 0 && *timestamp < age_cutoff {
-                        true
-                    } else {
-                        false
-                    };
+                    } else { config.max_age_secs > 0 && *timestamp < age_cutoff };
 
                 if should_delete {
                     match fs::remove_file(path) {

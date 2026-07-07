@@ -113,9 +113,11 @@ fn now_millis() -> u64 {
 
 /// Strategy for aggregating results from parallel task executions.
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub enum AggregationStrategy {
     /// Return the first successful result. If no results succeed, return
     /// an error.
+    #[default]
     FirstSuccess,
     /// All results must succeed. The outputs are merged using the
     /// configured merge function (or concatenation if none is set).
@@ -128,11 +130,6 @@ pub enum AggregationStrategy {
     Quorum(usize),
 }
 
-impl Default for AggregationStrategy {
-    fn default() -> Self {
-        Self::FirstSuccess
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────
 // ResultVerifier
@@ -265,7 +262,7 @@ impl AggregationOutcome {
         let selected_agent = results
             .iter()
             .find(|r| r.success && r.output == output)
-            .map(|r| r.agent_id.clone());
+            .map(|r| r.agent_id);
         Self {
             output,
             results,

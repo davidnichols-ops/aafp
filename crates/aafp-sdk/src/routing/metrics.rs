@@ -201,7 +201,7 @@ impl PeerMetricsRegistry {
     }
 
     pub fn get_or_create(&self, agent_id: &AgentId) -> PeerMetrics {
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self.peers.lock().expect("peers lock poisoned");
         peers
             .entry(*agent_id)
             .or_insert_with(|| PeerMetrics::new(*agent_id))
@@ -209,7 +209,7 @@ impl PeerMetricsRegistry {
     }
 
     pub fn record_outcome(&self, agent_id: &AgentId, latency_ms: f64, success: bool) {
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self.peers.lock().expect("peers lock poisoned");
         let metrics = peers
             .entry(*agent_id)
             .or_insert_with(|| PeerMetrics::new(*agent_id));
@@ -242,7 +242,7 @@ impl PeerMetricsRegistry {
     }
 
     pub fn inflight_inc(&self, agent_id: &AgentId) {
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self.peers.lock().expect("peers lock poisoned");
         let m = peers
             .entry(*agent_id)
             .or_insert_with(|| PeerMetrics::new(*agent_id));
@@ -250,14 +250,14 @@ impl PeerMetricsRegistry {
     }
 
     pub fn inflight_dec(&self, agent_id: &AgentId) {
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self.peers.lock().expect("peers lock poisoned");
         if let Some(m) = peers.get_mut(agent_id) {
             m.in_flight = m.in_flight.saturating_sub(1);
         }
     }
 
     pub fn check_circuit(&self, agent_id: &AgentId) -> CircuitState {
-        let mut peers = self.peers.lock().unwrap();
+        let mut peers = self.peers.lock().expect("peers lock poisoned");
         if let Some(m) = peers.get_mut(agent_id) {
             if m.circuit == CircuitState::Open && m.last_seen.elapsed() >= self.cooldown {
                 m.circuit = CircuitState::HalfOpen;
@@ -269,7 +269,7 @@ impl PeerMetricsRegistry {
     }
 
     pub fn is_stale(&self, agent_id: &AgentId) -> bool {
-        let peers = self.peers.lock().unwrap();
+        let peers = self.peers.lock().expect("peers lock poisoned");
         match peers.get(agent_id) {
             Some(m) => m.last_seen.elapsed() >= self.staleness_threshold,
             None => true,
@@ -277,7 +277,7 @@ impl PeerMetricsRegistry {
     }
 
     pub fn snapshot_all(&self) -> Vec<PeerMetrics> {
-        self.peers.lock().unwrap().values().cloned().collect()
+        self.peers.lock().expect("peers lock poisoned").values().cloned().collect()
     }
 }
 

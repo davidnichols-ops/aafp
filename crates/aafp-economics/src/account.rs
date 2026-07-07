@@ -370,6 +370,7 @@ impl OverflowPolicy {
 /// The default limits are unlimited and the default overflow policy is
 /// [`OverflowPolicy::Reject`].
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct AccountConfig {
     /// Default limits applied to any agent without an explicit override.
     pub default_limits: ResourceLimits, // key 1
@@ -478,15 +479,6 @@ impl AccountConfig {
     }
 }
 
-impl Default for AccountConfig {
-    fn default() -> Self {
-        Self {
-            default_limits: ResourceLimits::unlimited(),
-            agent_limits: HashMap::new(),
-            overflow_policy: OverflowPolicy::default(),
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // LimitCheck
@@ -660,9 +652,7 @@ impl ResourceAccount {
     ///   to receive the [`LimitCheck`] inline).
     pub fn debit(&mut self, agent: &str, usage: &ResourceUsage) -> Result<(), EconomicsError> {
         self.debit_checked(agent, usage)
-            .map(|_| ())
-            .map_err(Into::into)
-    }
+            .map(|_| ())}
 
     /// Like [`Self::debit`] but returns a [`LimitCheck`] describing whether
     /// the debit was within limits or triggered a warning.

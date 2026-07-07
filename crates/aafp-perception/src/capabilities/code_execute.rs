@@ -275,6 +275,7 @@ impl CodeExecuteResponse {
 
 /// Sandbox security policy enforced by the capability.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct SandboxPolicy {
     /// Whether network access is allowed (default: false).
     pub allow_network: bool,
@@ -289,16 +290,6 @@ pub struct SandboxPolicy {
     pub read_only_paths: Vec<String>,
 }
 
-impl Default for SandboxPolicy {
-    fn default() -> Self {
-        Self {
-            allow_network: false,
-            allow_filesystem_writes: false,
-            inherit_env: false,
-            read_only_paths: Vec::new(),
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Config

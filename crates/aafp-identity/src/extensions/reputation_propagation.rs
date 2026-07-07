@@ -36,20 +36,17 @@ pub const DEFAULT_FRESHNESS_WINDOW_MS: u64 = 60_000;
 
 /// Trust level assigned to a peer, influencing how its updates are merged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum TrustLevel {
     /// Fully trusted peer; updates weighted highest.
     Trusted,
     /// Neutral peer; updates accepted at default weight.
+    #[default]
     Neutral,
     /// Untrusted peer; updates accepted only with corroboration.
     Untrusted,
 }
 
-impl Default for TrustLevel {
-    fn default() -> Self {
-        Self::Neutral
-    }
-}
 
 impl TrustLevel {
     /// Numeric weight used during merge (Trusted=2, Neutral=1, Untrusted=0).
@@ -393,8 +390,8 @@ impl ReputationPropagator {
 
     /// Record that a peer was reached (updates cumulative unique count).
     fn record_reached(&mut self, peer_id: AgentId) {
-        if !self.reached.contains_key(&peer_id) {
-            self.reached.insert(peer_id, ());
+        if let std::collections::hash_map::Entry::Vacant(e) = self.reached.entry(peer_id) {
+            e.insert(());
             self.stats.peers_reached = self.reached.len() as u64;
         }
     }
@@ -689,7 +686,7 @@ fn conflict_resolution(
     }
     // Find a score with strict majority.
     let mut majority_winner: Option<&ReputationUpdate> = None;
-    for (_score, group) in &tally {
+    for group in tally.values() {
         if group.len() * 2 > total {
             // Majority: pick the highest-timestamp update in this group.
             let best = group

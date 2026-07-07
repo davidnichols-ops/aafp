@@ -179,29 +179,29 @@ impl RoutingObserver {
     }
 
     pub fn record_success(&self) {
-        self.stats.lock().unwrap().record_success();
+        self.stats.lock().expect("stats lock poisoned").record_success();
     }
     pub fn record_failure(&self) {
-        self.stats.lock().unwrap().record_failure();
+        self.stats.lock().expect("stats lock poisoned").record_failure();
     }
     pub fn record_timeout(&self) {
-        self.stats.lock().unwrap().record_timeout();
+        self.stats.lock().expect("stats lock poisoned").record_timeout();
     }
     pub fn record_circuit_open(&self) {
-        self.stats.lock().unwrap().record_circuit_open();
+        self.stats.lock().expect("stats lock poisoned").record_circuit_open();
     }
     pub fn record_hedge(&self) {
-        self.stats.lock().unwrap().record_hedge();
+        self.stats.lock().expect("stats lock poisoned").record_hedge();
     }
     pub fn record_retry(&self) {
-        self.stats.lock().unwrap().record_retry();
+        self.stats.lock().expect("stats lock poisoned").record_retry();
     }
     pub fn record_bulkhead_rejection(&self) {
-        self.stats.lock().unwrap().record_bulkhead_rejection();
+        self.stats.lock().expect("stats lock poisoned").record_bulkhead_rejection();
     }
 
     pub fn snapshot(&self) -> RoutingStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().expect("stats lock poisoned").clone()
     }
 }
 
