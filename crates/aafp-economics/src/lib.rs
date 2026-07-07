@@ -1,7 +1,7 @@
-//! AAFP Economics Layer — resource accounting, pricing, priority queuing, and
-//! compensation (Phase 4, Tracks X1-X4).
+//! AAFP Economics Layer — resource accounting, pricing, priority queuing,
+//! compensation, and slashing (Phase 4, Tracks X1-X5).
 //!
-//! This crate provides four complementary subsystems for the Intelligence
+//! This crate provides five complementary subsystems for the Intelligence
 //! Plane:
 //!
 //! - **[`account`]** — `ResourceAccount` tracks per-agent resource consumption
@@ -17,6 +17,10 @@
 //! - **[`compensation`]** — `CompensationProtocol` manages refund and
 //!   compensation requests with auto-approval thresholds, batch processing,
 //!   dispute resolution, and integration with `ResourceAccount`.
+//! - **[`slashing`]** — `SlashingEngine` evaluates slashing conditions (downtime,
+//!   missed tasks, malicious behavior, resource misuse, contract violations,
+//!   repeated failures) and applies penalties to agent accounts, with an appeal
+//!   process and per-agent rate limiting.
 //!
 //! All persistent structures encode to canonical CBOR int-keyed maps (RFC-0002
 //! §8) via [`aafp_cbor`]. The crate is self-contained and depends only on
@@ -26,11 +30,13 @@ pub mod account;
 pub mod compensation;
 pub mod pricing;
 pub mod priority;
+pub mod slashing;
 
 pub use account::*;
 pub use compensation::*;
 pub use pricing::*;
 pub use priority::*;
+pub use slashing::*;
 
 use thiserror::Error;
 
@@ -110,4 +116,48 @@ pub enum EconomicsError {
     /// The compensation policy was violated.
     #[error("compensation policy violation: {0}")]
     CompensationPolicyViolation(String),
+    /// The referenced slash record was not found.
+    #[error("slash record not found: {0}")]
+    SlashNotFound(String),
+    /// The slash record is in a state that does not allow the requested action.
+    #[error("invalid slash state for {id}: {message}")]
+    InvalidSlashState {
+        /// The slash record identifier.
+        id: String,
+        /// Human-readable description of the problem.
+        message: String,
+    },
+    /// The slashing condition was not met for the given agent.
+    #[error("slashing condition not met for agent {agent}: {condition:?}")]
+    SlashConditionNotMet {
+        /// The agent identifier.
+        agent: String,
+        /// The condition that was not met.
+        condition: SlashingCondition,
+    },
+    /// The agent has been rate-limited for slashing (too many slashes in the
+    /// time window).
+    #[error("slash rate limited for agent {0}")]
+    SlashRateLimited(String),
+    /// A slashing cooldown is still active for the agent and condition.
+    #[error("slash cooldown active for agent {agent}, condition {condition:?}, {remaining_ms}ms remaining")]
+    SlashCooldownActive {
+        /// The agent identifier.
+        agent: String,
+        /// The condition on cooldown.
+        condition: SlashingCondition,
+        /// Milliseconds remaining in the cooldown.
+        remaining_ms: u64,
+    },
+    /// The slash amount exceeds the maximum percentage of the agent's balance.
+    #[error("slash amount {amount} exceeds maximum {max}")]
+    SlashExceedsMax {
+        /// The requested slash amount (milli-credits).
+        amount: i64,
+        /// The maximum allowed (milli-credits).
+        max: i64,
+    },
+    /// The slashing configuration is invalid.
+    #[error("invalid slashing config: {0}")]
+    InvalidSlashingConfig(String),
 }

@@ -14,6 +14,8 @@
 //!   bridge capabilities (D6).
 //! - [`dht_query`] — DHT-backed semantic query merging local and DHT results
 //!   (U7).
+//! - [`intent`] — `IntentResolver` translating natural-language intent into
+//!   structured capability queries (U8).
 
 pub mod bridge_capabilities;
 pub mod capability;
@@ -21,6 +23,7 @@ pub mod dht_query;
 pub mod edge;
 pub mod encoding;
 pub mod evaluation;
+pub mod intent;
 pub mod planner;
 pub mod query;
 
@@ -31,6 +34,10 @@ pub use capability::{
 };
 pub use dht_query::{DhtQueryConfig, DhtSemanticQuery, LocalIndex};
 pub use edge::{CapabilityEdge, EdgeType};
+pub use intent::{
+    DefaultParser, Intent, IntentConfig, IntentConstraint, IntentParser, IntentPriority,
+    IntentResolver, ResolvedIntent,
+};
 pub use query::{
     CapabilityQuery, CostFilter, GeoFilter, PerformanceFilter, QualityFilter, QueryFilter, RangeOp,
     VersionFilter,
