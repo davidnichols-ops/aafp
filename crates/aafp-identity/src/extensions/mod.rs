@@ -10,8 +10,10 @@ pub mod geo;
 pub mod heartbeat;
 pub mod performance;
 pub mod reputation;
+pub mod reputation_propagation;
 pub mod reputation_scoring;
 pub mod semantic;
+pub mod ucan;
 pub mod version;
 
 use crate::identity_v1::IdentityError;
@@ -88,6 +90,10 @@ pub use geo::GeoExtension;
 pub use heartbeat::{adaptive_ttl, HeartbeatExtension, HeartbeatTracker, HeartbeatUpdate};
 pub use performance::PerformanceExtension;
 pub use reputation::ReputationExtension;
+pub use reputation_propagation::{
+    GossipMessage, PeerInfo, PropagationConfig, PropagationStats, ReputationPropagator,
+    ReputationUpdate, TrustLevel, REPUTATION_DOMAIN_SEPARATOR,
+};
 pub use reputation_scoring::{
     Interaction, PerformanceHistory, ReputationConfig, ReputationScore, ReputationScoreEngine,
 };

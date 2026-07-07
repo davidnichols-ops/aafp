@@ -17,6 +17,7 @@ pub mod integration;
 pub mod metrics;
 pub mod observability;
 pub mod prediction;
+pub mod prefetch;
 pub mod retry;
 pub mod scoring;
 pub mod selection;
@@ -34,6 +35,10 @@ pub use observability::{
     export_snapshot, export_stats, PeerSnapshot, RoutingObserver, RoutingSnapshot, RoutingStats,
 };
 pub use prediction::{PredictionConfig, PredictionModel, TemporalPredictionEngine};
+pub use prefetch::{
+    AccessPattern, CacheEntry, PredictivePrefetcher, PrefetchRequest, PrefetchResult,
+    PrefetchStats, PrefetchStatus, PrefetcherConfig,
+};
 pub use retry::{is_retryable, retry_delay, with_retry, RetryConfig};
 pub use scoring::{dynamic_score, score_candidates, DynamicScoreConfig, ScoredCandidate};
 pub use selection::{

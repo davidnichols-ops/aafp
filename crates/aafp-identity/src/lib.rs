@@ -66,7 +66,8 @@ pub use extensions::{
     compute_reputation, delegate_attest_capability, verify_attestation_authorization,
     AgentRecordExtension, Attestation, AttestationData, AttestationError, AttestationKey,
     AttestationStore, AttestationStoreError, CapabilityVersionExtension, CostExtension,
-    GeoExtension, HeartbeatExtension, HeartbeatTracker, HeartbeatUpdate, PerformanceExtension,
-    ReputationExtension, SemanticExtension, SemanticVersion, ATTESTATION_DOMAIN_SEPARATOR,
-    ATTESTATION_TYPE_V1,
+    GeoExtension, GossipMessage, HeartbeatExtension, HeartbeatTracker, HeartbeatUpdate, PeerInfo,
+    PerformanceExtension, PropagationConfig, PropagationStats, ReputationExtension,
+    ReputationPropagator, ReputationUpdate, SemanticExtension, SemanticVersion, TrustLevel,
+    ATTESTATION_DOMAIN_SEPARATOR, ATTESTATION_TYPE_V1, REPUTATION_DOMAIN_SEPARATOR,
 };

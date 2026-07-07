@@ -3,6 +3,7 @@
 
 pub mod api_call;
 pub mod api_discover;
+pub mod browsing_session;
 pub mod code_execute;
 pub mod document_read;
 pub mod media;
@@ -11,6 +12,7 @@ pub mod web_browse;
 
 pub use api_call::*;
 pub use api_discover::*;
+pub use browsing_session::*;
 pub use code_execute::*;
 pub use document_read::*;
 pub use media::*;

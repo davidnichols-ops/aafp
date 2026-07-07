@@ -215,6 +215,7 @@ dependencies = [
  "aafp-cbor",
  "aafp-identity",
  "async-trait",
+ "hex",
  "serde",
  "serde_json",
  "sha2",
