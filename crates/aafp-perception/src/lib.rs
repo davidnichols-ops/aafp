@@ -6,9 +6,11 @@
 //! enabling deterministic consumption by autonomous agents.
 
 pub mod capabilities;
+pub mod providers;
 pub mod schema;
 
 pub use capabilities::*;
+pub use providers::*;
 pub use schema::*;
 
 use thiserror::Error;

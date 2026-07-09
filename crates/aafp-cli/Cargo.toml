@@ -14,6 +14,7 @@ aafp-identity = { workspace = true }
 aafp-crypto = { workspace = true }
 aafp-transport-quic = { workspace = true }
 aafp-messaging = { workspace = true }
+aafp-perception = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -23,3 +24,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 colored = "2"
+dotenvy = { workspace = true }

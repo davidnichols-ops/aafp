@@ -274,8 +274,7 @@ impl CodeExecuteResponse {
 // ---------------------------------------------------------------------------
 
 /// Sandbox security policy enforced by the capability.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SandboxPolicy {
     /// Whether network access is allowed (default: false).
     pub allow_network: bool,
@@ -289,7 +288,6 @@ pub struct SandboxPolicy {
     #[serde(default)]
     pub read_only_paths: Vec<String>,
 }
-
 
 // ---------------------------------------------------------------------------
 // Config

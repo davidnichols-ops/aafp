@@ -103,6 +103,47 @@ enum Commands {
     },
     /// Interactive quickstart wizard
     Quickstart,
+    /// Search the web (DuckDuckGo, free, no API key)
+    Search {
+        /// Search query
+        query: String,
+        /// Maximum results (default 10)
+        #[arg(long, default_value = "10")]
+        num: u32,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Browse a web page (Firecrawl, requires FIRECRAWL_API_KEY)
+    Browse {
+        /// URL to browse
+        url: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read a PDF document (PyMuPDF, requires pymupdf installed)
+    ReadPdf {
+        /// Path to PDF file
+        path: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Python interpreter path (default: python3 or AAFP_PYTHON env)
+        #[arg(long)]
+        python: Option<String>,
+    },
+    /// Run OCR on an image (Tesseract, requires tesseract installed)
+    Ocr {
+        /// Path to image file (.png, .jpg, .webp, .tiff)
+        path: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+        /// Language hint (e.g. "eng", "fra")
+        #[arg(long)]
+        lang: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -174,6 +215,18 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Quickstart => {
             commands::quickstart::run().await?;
+        }
+        Commands::Search { query, num, json } => {
+            commands::search::run(&query, num, json).await?;
+        }
+        Commands::Browse { url, json } => {
+            commands::browse::run(&url, json).await?;
+        }
+        Commands::ReadPdf { path, json, python } => {
+            commands::read_pdf::run(&path, json, python.as_deref()).await?;
+        }
+        Commands::Ocr { path, json, lang } => {
+            commands::ocr::run(&path, json, lang.as_deref()).await?;
         }
     }
 

@@ -6,12 +6,12 @@
 cargo fmt --all -- --check   # formatting check (0 diffs expected)
 cargo build --workspace       # build (0 warnings expected)
 cargo clippy --workspace      # lints (0 warnings expected)
-cargo test --workspace        # 2857 tests, 0 failures expected (7 ignored)
+cargo test --workspace        # 2869 tests, 0 failures expected (7 ignored)
 ```
 
 ## Project layout
 
-17-crate Cargo workspace under `implementations/rust/crates/`
+18-crate Cargo workspace under `implementations/rust/crates/`
 (plus 1 standalone crate `aafp-py` not in the workspace):
 
 | Crate | Purpose |
@@ -30,7 +30,7 @@ cargo test --workspace        # 2857 tests, 0 failures expected (7 ignored)
 | `aafp-transport-mcp` | AAFP secure transport binding for MCP Rust SDK (rmcp) |
 | `aafp-transport-a2a` | AAFP secure transport binding for A2A protocol (RFC 0008) |
 | `aafp-py` | Python PyO3 adapter (standalone, not in workspace) |
-| `aafp-cli` | Command-line tool for agent management |
+| `aafp-cli` | Command-line tool for agent management + perception commands (search/browse/read-pdf/ocr) |
 | `aafp-conformance` | RFC conformance test suite + golden trace generation |
 | `aafp-benchmark` | Criterion benchmarks for crypto/discovery/messaging/MCP transport |
 | `aafp-tests` | Cross-crate integration tests (WAN, adversarial, malformed, stress, multi-node DHT) |
@@ -110,3 +110,14 @@ cargo test --workspace        # 2857 tests, 0 failures expected (7 ignored)
   All new modules use pluggable provider traits, CBOR serialization,
   ML-DSA-65 signatures where applicable, and comprehensive test suites
   (993 new tests, total 2857).
+
+- **Perception CLI Integration**: The `aafp-cli` now imports `aafp-perception`
+  and exposes 4 real-world perception commands:
+  - `aafp search "<query>" [--num N] [--json]` — DuckDuckGo web search (free, no API key)
+  - `aafp browse <url> [--json]` — Firecrawl web browsing (requires `FIRECRAWL_API_KEY` in `.env`)
+  - `aafp read-pdf <path> [--json] [--python PATH]` — PyMuPDF PDF text extraction (uses `AAFP_PYTHON` env or `python3`)
+  - `aafp ocr <path> [--json] [--lang LANG]` — Tesseract OCR on images (.png/.jpg/.webp/.tiff)
+  All commands load `.env` via `dotenvy` for API keys. The `research-agent` example
+  (`examples/research-agent/`) chains search → browse → structured summary.
+  Firecrawl provider updated to v1 API (response wrapped in `data` field, no
+  `onlyMain_content` request param). Total tests: 2869 (12 new perception tests).

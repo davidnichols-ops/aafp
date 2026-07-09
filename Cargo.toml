@@ -75,6 +75,9 @@ rand_core = "0.6"
 hex = "0.4"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 rcgen = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+scraper = "0.20"
+dotenvy = "0.15"
 
 [profile.release]
 opt-level = 3
